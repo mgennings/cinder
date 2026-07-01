@@ -42,4 +42,26 @@ describe('note-crypto', () => {
 		const { payload, fragmentKey } = await encryptNote(msg);
 		expect(await decryptNote(payload, fragmentKey)).toBe(msg);
 	});
+
+	it('round-trips an empty string', async () => {
+		const { payload, fragmentKey } = await encryptNote('');
+		expect(await decryptNote(payload, fragmentKey)).toBe('');
+	});
+
+	it('round-trips a large note (100k chars)', async () => {
+		const big = 'x'.repeat(100_000);
+		const { payload, fragmentKey } = await encryptNote(big);
+		expect(await decryptNote(payload, fragmentKey)).toBe(big);
+	});
+
+	it('fails to decrypt with a wrong (but well-formed) key', async () => {
+		const { payload } = await encryptNote('secret');
+		const { fragmentKey: otherKey } = await encryptNote('decoy');
+		await expect(decryptNote(payload, otherKey)).rejects.toThrow();
+	});
+
+	it('fails on a malformed fragment key', async () => {
+		const { payload } = await encryptNote('secret');
+		await expect(decryptNote(payload, 'not-a-real-key!!')).rejects.toThrow();
+	});
 });

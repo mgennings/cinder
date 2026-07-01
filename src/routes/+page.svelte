@@ -93,6 +93,7 @@
 			<section class="rounded-2xl border border-line bg-ink-soft p-6">
 				<textarea
 					bind:value={text}
+					aria-label="Your secret note"
 					placeholder="Type your secret. It never leaves this device unencrypted."
 					rows="6"
 					class="w-full resize-none rounded-xl border border-line bg-ink px-4 py-3 text-[15px] leading-relaxed text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
@@ -123,7 +124,7 @@
 						<input
 							type="password"
 							bind:value={passphrase}
-							placeholder="Passphrase (needed to open, on top of the link)"
+							aria-label="Passphrase" placeholder="Passphrase (needed to open, on top of the link)"
 							class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
 						/>
 						<p class="mt-1.5 text-xs text-ghost">

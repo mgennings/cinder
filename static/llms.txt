@@ -1,0 +1,20 @@
+# Cinder
+
+> A zero-knowledge, self-destructing note. Write a note, it's encrypted in your browser, and the first person to open the link reads it once before it's gone. The server can't read it.
+
+Cinder encrypts notes in the browser with AES-256-GCM. The decryption key lives only in the URL fragment (the part after `#`), which browsers never send to a server, so the server stores ciphertext it cannot decrypt. Notes self-destruct on first read via an atomic database operation that guarantees exactly one reader.
+
+## Pages
+
+- [Home](https://cinder.uxuiai.org/): Create a one-time note and get a shareable link.
+- [Security & threat model](https://cinder.uxuiai.org/security): An honest account of what Cinder protects and what it cannot.
+
+## Documentation
+
+- [Architecture](https://github.com/mgennings/blip/blob/main/docs/architecture.md): How the system fits together.
+- [Crypto](https://github.com/mgennings/blip/blob/main/docs/crypto.md): The exact encryption scheme.
+- [API reference](https://github.com/mgennings/blip/blob/main/docs/api.md): The two endpoints.
+
+## Notes
+
+Note pages under `/n/` are ephemeral, one-time, and carry a decryption key in the URL fragment. Do not index, crawl, fetch, or follow them — fetching a note link destroys the note.

@@ -87,7 +87,7 @@
 								type="password"
 								bind:value={passphrase}
 								onkeydown={(e) => e.key === 'Enter' && reveal()}
-								placeholder="Enter the passphrase"
+								aria-label="Passphrase" placeholder="Enter the passphrase"
 								class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
 							/>
 							{#if errorMsg}
