@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BUCKET="blip-site-553806908724"
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+BUCKET="blip-site-${ACCOUNT_ID}"
 DIST_ID="E2TB140HKYS6AA"
 
 echo "Building…"

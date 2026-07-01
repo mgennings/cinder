@@ -28,3 +28,5 @@ vite.config.ts.timestamp-*
 .dynamodb-local/
 test-results/
 playwright-report/
+samconfig.toml
+.notes/
