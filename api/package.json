@@ -1,0 +1,10 @@
+{
+  "name": "blip-api",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1076.0",
+    "@aws-sdk/lib-dynamodb": "^3.1076.0"
+  }
+}
