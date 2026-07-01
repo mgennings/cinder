@@ -49,25 +49,25 @@
 </script>
 
 <svelte:head>
-	<title>How private is blip, really?</title>
+	<title>How private is Cinder, really?</title>
 	<meta
 		name="description"
-		content="An honest account of what blip's zero-knowledge encryption protects against — and what it can't."
+		content="An honest account of what Cinder's zero-knowledge encryption protects against — and what it can't."
 	/>
 </svelte:head>
 
 <main class="mx-auto max-w-2xl px-5 py-16">
-	<a href="/" class="text-2xl font-bold tracking-tight">blip<span class="text-ember">.</span></a>
+	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
 
 	<h1 class="mt-8 text-2xl font-bold">How private is this, really?</h1>
 	<p class="mt-3 leading-relaxed text-mist">
-		blip is zero-knowledge: your note is encrypted in your browser and the key travels only in the
+		Cinder is zero-knowledge: your note is encrypted in your browser and the key travels only in the
 		link's fragment, which browsers never send to a server. We store ciphertext we cannot read. But
 		a privacy tool that oversells itself is worse than one that's honest, so here is the whole
 		picture.
 	</p>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-soft">What blip protects</h2>
+	<h2 class="mt-10 text-lg font-semibold text-ember-soft">What Cinder protects</h2>
 	<div class="mt-4 space-y-4">
 		{#each protects as row (row.title)}
 			<div class="rounded-xl border border-line bg-ink-soft p-4">
@@ -77,7 +77,7 @@
 		{/each}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-soft">What blip can't protect</h2>
+	<h2 class="mt-10 text-lg font-semibold text-ember-soft">What Cinder can't protect</h2>
 	<div class="mt-4 space-y-4">
 		{#each cannot as row (row.title)}
 			<div class="rounded-xl border border-line bg-ink-soft p-4">
@@ -88,7 +88,7 @@
 	</div>
 
 	<p class="mt-10 text-sm text-ghost">
-		The short version: trust the link to a person, not the internet. blip removes our ability to read
+		The short version: trust the link to a person, not the internet. Cinder removes our ability to read
 		your note — it can't remove your responsibility to share the link carefully.
 	</p>
 
