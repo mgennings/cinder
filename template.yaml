@@ -3,17 +3,25 @@ Transform: AWS::Serverless-2016-10-31
 Description: Cinder - zero-knowledge self-destructing notes
 
 Parameters:
+  PrimaryDomain:
+    Type: String
+    Default: cinder.ink
+    Description: The keeper brand domain
+  WwwDomain:
+    Type: String
+    Default: www.cinder.ink
+    Description: www variant of the brand domain
   SiteDomain:
     Type: String
     Default: cinder.uxuiai.org
-    Description: Primary custom domain for the CloudFront distribution
+    Description: Subdomain alias (kept live)
   LegacyDomain:
     Type: String
     Default: blip.uxuiai.org
     Description: Former domain, kept as an alias so old links keep resolving
   CertificateArn:
     Type: String
-    Description: ACM cert ARN covering both domains (must be in us-east-1 for CloudFront)
+    Description: ACM cert ARN covering all four names (must be in us-east-1 for CloudFront)
 
 Globals:
   Function:
@@ -111,6 +119,8 @@ Resources:
         DefaultRootObject: index.html
         PriceClass: PriceClass_100
         Aliases:
+          - !Ref PrimaryDomain
+          - !Ref WwwDomain
           - !Ref SiteDomain
           - !Ref LegacyDomain
         ViewerCertificate:
