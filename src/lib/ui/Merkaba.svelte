@@ -30,6 +30,13 @@
 		transform-style: preserve-3d;
 	}
 
+	/* On a light background the faint ember washes out — give it more presence. */
+	@media (prefers-color-scheme: light) {
+		.merkaba {
+			opacity: 0.32;
+		}
+	}
+
 	/* Two triangles, one up, one down → the Star-of-David projection of the
 	   merkaba. Each counter-rotates on its own GPU layer. */
 	.tri {
@@ -65,7 +72,7 @@
 	}
 	.tri.down::before {
 		transform: rotate(180deg);
-		background: linear-gradient(135deg, var(--color-ember-soft), #ffd0c2);
+		background: linear-gradient(135deg, var(--color-ember-soft), var(--color-ember));
 	}
 	.tri.down::after {
 		transform: rotate(180deg);

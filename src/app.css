@@ -1,7 +1,12 @@
 @import 'tailwindcss';
 
-/* blip — a focused "vault" aesthetic. Dark, calm, a single warm accent (ember)
-   that nods at the burn. Everything breathes; nothing shouts. */
+/* Cinder — a focused aesthetic with one warm accent (ember) that nods at the
+   burn. Dark by default (the "vault"); a light theme mirrors it and honors the
+   OS preference. Ember stays constant across themes; only the neutrals flip.
+
+   Tailwind 4 exposes @theme tokens as --color-* custom properties, so utilities
+   like `bg-ink` resolve to var(--color-ink). Overriding those variables under
+   prefers-color-scheme is what flips the whole UI. */
 
 @theme {
 	--color-ink: #0a0a0f;
@@ -11,21 +16,44 @@
 	--color-ghost: #6b6b85;
 	--color-ember: #ff6b4a;
 	--color-ember-soft: #ff8f73;
+	--color-ember-ink: #ff8f73; /* ember used as small text/headings; darkens in light mode for contrast */
+	--color-body: #eaeaf2;
 	--font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	/* the ambient glow, themed */
+	--glow-strong: rgba(255, 107, 74, 0.12);
+	--glow-soft: rgba(255, 107, 74, 0.06);
+}
+
+/* Light theme: warm off-whites, deep ember text stays legible. Neutrals flip,
+   ember accent holds. */
+@media (prefers-color-scheme: light) {
+	:root {
+		--color-ink: #fbf7f4;
+		--color-ink-soft: #ffffff;
+		--color-line: #ecdfd8;
+		--color-mist: #6a6460;
+		--color-ghost: #9a938d;
+		--color-ember: #e8502a;
+		--color-ember-soft: #ff7a56;
+		--color-ember-ink: #c23d1a; /* darker ember for small text on light surfaces (AA) */
+		--color-body: #241a15;
+		--glow-strong: rgba(232, 80, 42, 0.1);
+		--glow-soft: rgba(232, 80, 42, 0.05);
+	}
 }
 
 html,
 body {
 	background: var(--color-ink);
-	color: #eaeaf2;
+	color: var(--color-body);
 	-webkit-font-smoothing: antialiased;
 }
 
-/* Ambient ember glow behind the card — subtle, alive. */
+/* Ambient ember glow behind the card — subtle, alive, theme-aware. */
 .vault-glow {
 	background:
-		radial-gradient(60% 50% at 50% 0%, rgba(255, 107, 74, 0.12), transparent 70%),
-		radial-gradient(40% 40% at 80% 100%, rgba(255, 107, 74, 0.06), transparent 70%);
+		radial-gradient(60% 50% at 50% 0%, var(--glow-strong), transparent 70%),
+		radial-gradient(40% 40% at 80% 100%, var(--glow-soft), transparent 70%);
 }
 
 /* The burn: a note dissolving upward as it self-destructs. */
@@ -43,4 +71,10 @@ body {
 }
 .burning {
 	animation: ember-rise 900ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.burning {
+		animation: none;
+	}
 }

@@ -67,21 +67,21 @@
 		picture.
 	</p>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-soft">What Cinder protects</h2>
+	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder protects</h2>
 	<div class="mt-4 space-y-4">
 		{#each protects as row (row.title)}
 			<div class="rounded-xl border border-line bg-ink-soft p-4">
-				<h3 class="font-medium text-white">{row.title}</h3>
+				<h3 class="font-medium text-body">{row.title}</h3>
 				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
 			</div>
 		{/each}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-soft">What Cinder can't protect</h2>
+	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder can't protect</h2>
 	<div class="mt-4 space-y-4">
 		{#each cannot as row (row.title)}
 			<div class="rounded-xl border border-line bg-ink-soft p-4">
-				<h3 class="font-medium text-white">{row.title}</h3>
+				<h3 class="font-medium text-body">{row.title}</h3>
 				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
 			</div>
 		{/each}
@@ -94,7 +94,7 @@
 
 	<a
 		href="/"
-		class="mt-8 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-white hover:border-ember/50"
+		class="mt-8 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-body hover:border-ember/50"
 		>Write a note</a
 	>
 </main>

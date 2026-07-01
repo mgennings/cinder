@@ -82,7 +82,7 @@
 								bind:value={passphrase}
 								onkeydown={(e) => e.key === 'Enter' && reveal()}
 								placeholder="Enter the passphrase"
-								class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-white placeholder:text-ghost focus:border-ember/50 focus:outline-none"
+								class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
 							/>
 							{#if errorMsg}
 								<p class="mt-2 text-sm text-ember">{errorMsg}</p>
@@ -103,12 +103,12 @@
 				</div>
 			{:else if view === 'revealed'}
 				<div in:fade={{ duration: 400 }}>
-					<div class="mb-4 flex items-center gap-2 text-xs font-medium text-ember-soft">
+					<div class="mb-4 flex items-center gap-2 text-xs font-medium text-ember-ink">
 						<span class="inline-block h-2 w-2 rounded-full bg-ember"></span>
 						This note is now destroyed. Copy anything you need before you leave.
 					</div>
 					<pre
-						class="whitespace-pre-wrap break-words rounded-xl border border-line bg-ink px-4 py-4 text-[15px] leading-relaxed text-white">{plaintext}</pre>
+						class="whitespace-pre-wrap break-words rounded-xl border border-line bg-ink px-4 py-4 text-[15px] leading-relaxed text-body">{plaintext}</pre>
 				</div>
 			{:else if view === 'gone'}
 				<div in:fade={{ duration: 300 }} class="text-center">
@@ -118,7 +118,7 @@
 					</p>
 					<a
 						href="/"
-						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-white hover:border-ember/50"
+						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-body hover:border-ember/50"
 						>Write your own</a
 					>
 				</div>
@@ -128,7 +128,7 @@
 					<p class="mt-2 text-sm text-mist">{errorMsg}</p>
 					<a
 						href="/"
-						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-white hover:border-ember/50"
+						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-body hover:border-ember/50"
 						>Go to Cinder</a
 					>
 				</div>

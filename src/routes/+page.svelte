@@ -71,12 +71,12 @@
 				in:fly={{ y: 12, duration: 350 }}
 				class="rounded-2xl border border-line bg-ink-soft p-6"
 			>
-				<h2 class="mb-1 text-sm font-semibold text-ember-soft">Your one-time link is ready</h2>
+				<h2 class="mb-1 text-sm font-semibold text-ember-ink">Your one-time link is ready</h2>
 				<p class="mb-4 text-xs text-ghost">It self-destructs the moment it's read.</p>
 				<CopyLink {link} />
 				<button
 					onclick={reset}
-					class="mt-5 text-xs text-mist underline-offset-4 hover:text-white hover:underline"
+					class="mt-5 text-xs text-mist underline-offset-4 hover:text-body hover:underline"
 				>
 					Write another note
 				</button>
@@ -87,7 +87,7 @@
 					bind:value={text}
 					placeholder="Type your secret. It never leaves this device unencrypted."
 					rows="6"
-					class="w-full resize-none rounded-xl border border-line bg-ink px-4 py-3 text-[15px] leading-relaxed text-white placeholder:text-ghost focus:border-ember/50 focus:outline-none"
+					class="w-full resize-none rounded-xl border border-line bg-ink px-4 py-3 text-[15px] leading-relaxed text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
 				></textarea>
 
 				<div class="mt-4 flex flex-wrap items-center gap-4">
@@ -95,7 +95,7 @@
 						<span>Burns after</span>
 						<select
 							bind:value={ttl}
-							class="rounded-lg border border-line bg-ink px-2 py-1.5 text-sm text-white focus:outline-none"
+							class="rounded-lg border border-line bg-ink px-2 py-1.5 text-sm text-body focus:outline-none"
 						>
 							{#each ttlOptions as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
@@ -116,7 +116,7 @@
 							type="password"
 							bind:value={passphrase}
 							placeholder="Passphrase (needed to open, on top of the link)"
-							class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-white placeholder:text-ghost focus:border-ember/50 focus:outline-none"
+							class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
 						/>
 						<p class="mt-1.5 text-xs text-ghost">
 							Two-factor: the reader needs both the link and this passphrase. Share the passphrase
