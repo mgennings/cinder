@@ -6,3 +6,4 @@ region = "us-east-1"
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = false
+parameter_overrides = "SiteDomain=blip.uxuiai.org CertificateArn=arn:aws:acm:us-east-1:553806908724:certificate/aa965418-a5dd-47c4-8e55-24aa10294ea0"

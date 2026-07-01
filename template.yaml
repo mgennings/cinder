@@ -1,6 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: blip - zero-knowledge self-destructing notes
+Description: Cinder - zero-knowledge self-destructing notes
+
+Parameters:
+  SiteDomain:
+    Type: String
+    Default: blip.uxuiai.org
+    Description: Custom domain for the CloudFront distribution
+  CertificateArn:
+    Type: String
+    Description: ACM cert ARN (must be in us-east-1 for CloudFront)
 
 Globals:
   Function:
@@ -97,6 +106,12 @@ Resources:
         Enabled: true
         DefaultRootObject: index.html
         PriceClass: PriceClass_100
+        Aliases:
+          - !Ref SiteDomain
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
         Origins:
           - Id: s3-site
             DomainName: !GetAtt SiteBucket.RegionalDomainName
