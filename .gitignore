@@ -8,3 +8,20 @@ build/
 .aws-sam/
 *.log
 .remember/
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+# OS
+Thumbs.db
+# Env
+!.env.example
+!.env.test
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
