@@ -69,7 +69,7 @@ The reason DynamoDB was chosen over anything else is covered in [design decision
 2. The browser generates a random AES-256 key and a random IV, then encrypts the note. In two-factor mode, a passphrase-derived key is mixed into the random key first.
 3. The browser sends `{ ciphertext, iv, salt?, ttlSeconds }` to `POST /notes`. **The key is never in this request.**
 4. `createNote` validates the payload, clamps the TTL to a maximum, generates a random ID, and stores the item.
-5. The browser receives the ID and assembles the link: `https://blip.uxuiai.org/n/{id}#{key}`. The key is appended as the fragment — the part browsers keep local.
+5. The browser receives the ID and assembles the link: `https://cinder.uxuiai.org/n/{id}#{key}`. The key is appended as the fragment — the part browsers keep local.
 
 ### Reading (and burning) a note
 

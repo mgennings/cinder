@@ -64,11 +64,16 @@
 		clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
 	}
 
+	/* Different periods + a starting offset so the two tetrahedra never settle
+	   into the flat symmetric hexagram — it always reads as 3D geometry turning,
+	   never a Star of David at rest. */
 	.tri.up {
+		transform: translateZ(0) rotate(22deg);
 		animation: spin-cw 26s linear infinite;
 	}
 	.tri.down {
-		animation: spin-ccw 26s linear infinite;
+		transform: translateZ(0) rotate(-14deg);
+		animation: spin-ccw 19s linear infinite;
 	}
 	.tri.down::before {
 		transform: rotate(180deg);

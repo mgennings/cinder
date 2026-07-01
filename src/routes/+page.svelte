@@ -51,6 +51,14 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Cinder — a note that's read once, then gone</title>
+	<meta
+		name="description"
+		content="Write a note, Cinder encrypts it in your browser, and hands you one link. The first person to open it reads it once, then it's gone. The server can't read it."
+	/>
+</svelte:head>
+
 <main class="vault-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-16">
 	<div class="relative w-full max-w-lg">
 		<header class="mb-8 text-center">

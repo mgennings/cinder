@@ -4,6 +4,30 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+
+		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
+		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+		<meta name="theme-color" content="#0a0a0f" />
+
+		<!-- Default social card. Per-page titles/descriptions override via <svelte:head>. -->
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="Cinder" />
+		<meta property="og:title" content="Cinder — a note that's read once, then gone" />
+		<meta
+			property="og:description"
+			content="Encrypted in your browser, the key never touches the server. The first person to open the link reads the note once, then it's gone."
+		/>
+		<meta property="og:image" content="https://cinder.uxuiai.org/og.png" />
+		<meta property="og:url" content="https://cinder.uxuiai.org" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content="Cinder — a note that's read once, then gone" />
+		<meta
+			name="twitter:description"
+			content="Encrypted in your browser, the key never touches the server. Read once, then gone."
+		/>
+		<meta name="twitter:image" content="https://cinder.uxuiai.org/og.png" />
+
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

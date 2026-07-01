@@ -61,6 +61,12 @@
 	}
 </script>
 
+<svelte:head>
+	<title>A one-time note · Cinder</title>
+	<!-- Reader pages are noindex: they're ephemeral and carry a key in the fragment. -->
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <main class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16">
 	<div class="w-full max-w-lg">
 		<header class="mb-8 text-center">

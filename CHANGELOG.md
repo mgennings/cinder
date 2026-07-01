@@ -14,7 +14,7 @@ The first working release: a zero-knowledge, self-destructing note service, live
 - **Bot-safe reveal.** The reader page fetches nothing until a human clicks, and the burn endpoint is POST-only, so link-preview crawlers cannot destroy a note.
 - **Honest security page.** An in-app `/security` page and a companion doc state plainly what the tool protects and what it cannot.
 - **AWS serverless stack.** API Gateway, two Lambdas, DynamoDB with TTL, and S3 + CloudFront, all defined in one AWS SAM template.
-- **Custom domain.** Live at [blip.uxuiai.org](https://blip.uxuiai.org) over HTTPS.
+- **Custom domain.** Live at [cinder.uxuiai.org](https://cinder.uxuiai.org) over HTTPS.
 - **Full documentation.** Architecture, crypto, security, API reference, local-development, and deployment guides.
 - **25 tests** across unit, API, and end-to-end browser layers.
 
