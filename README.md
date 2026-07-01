@@ -4,7 +4,7 @@
 
 **A note that's read once, then gone. Encrypted in your browser — the server can't read it.**
 
-[![Live](https://img.shields.io/badge/live-cinder.uxuiai.org-ff6b4a)](https://cinder.uxuiai.org)
+[![Live](https://img.shields.io/badge/live-cinder.ink-ff6b4a)](https://cinder.ink)
 [![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)](#testing)
 [![Crypto](https://img.shields.io/badge/crypto-AES--256--GCM-blue)](docs/crypto.md)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
@@ -32,7 +32,7 @@ Most "private note" services encrypt on the server, which means the server holds
 
 ## How it works
 
-The trick is the URL fragment — everything after the `#`. Browsers keep it strictly on the device and never send it in an HTTP request. So a Cinder link like `cinder.uxuiai.org/n/abc123#SECRETKEY` sends `abc123` to the server (which note) but keeps `SECRETKEY` on the device (how to decrypt it). The server stores ciphertext it cannot open.
+The trick is the URL fragment — everything after the `#`. Browsers keep it strictly on the device and never send it in an HTTP request. So a Cinder link like `cinder.ink/n/abc123#SECRETKEY` sends `abc123` to the server (which note) but keeps `SECRETKEY` on the device (how to decrypt it). The server stores ciphertext it cannot open.
 
 ```
 ┌─ Sender's browser ───────────┐                    ┌─ AWS ─────────────────────┐

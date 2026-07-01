@@ -6,8 +6,8 @@ Cinder encrypts notes in the browser with AES-256-GCM. The decryption key lives 
 
 ## Pages
 
-- [Home](https://cinder.uxuiai.org/): Create a one-time note and get a shareable link.
-- [Security & threat model](https://cinder.uxuiai.org/security): An honest account of what Cinder protects and what it cannot.
+- [Home](https://cinder.ink/): Create a one-time note and get a shareable link.
+- [Security & threat model](https://cinder.ink/security): An honest account of what Cinder protects and what it cannot.
 
 ## Documentation
 

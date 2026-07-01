@@ -1,6 +1,6 @@
 # Security & threat model
 
-A privacy tool that oversells itself is worse than one that is honest. This document states plainly what Cinder protects, and — without hedging — what it cannot. The same account is presented in-app at [/security](https://cinder.uxuiai.org/security).
+A privacy tool that oversells itself is worse than one that is honest. This document states plainly what Cinder protects, and — without hedging — what it cannot. The same account is presented in-app at [/security](https://cinder.ink/security).
 
 ## What Cinder protects
 
