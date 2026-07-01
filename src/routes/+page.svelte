@@ -22,6 +22,12 @@
 
 	async function create() {
 		if (!text.trim()) return;
+		// A checked-but-empty passphrase would silently create an unprotected note —
+		// make the user's intent real instead of dropping it on the floor.
+		if (usePassphrase && !passphrase.trim()) {
+			error = 'Enter a passphrase, or uncheck the box.';
+			return;
+		}
 		busy = true;
 		error = '';
 		try {
