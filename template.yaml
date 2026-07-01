@@ -70,7 +70,82 @@ Resources:
             Path: /notes/{id}/burn
             Method: POST
 
+  # --- Static site: private S3 bucket fronted by CloudFront (OAC) ---
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'blip-site-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'blip-oac-${AWS::AccountId}'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: s3-site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref SiteOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: s3-site
+          ViewerProtocolPolicy: redirect-to-https
+          # CachingOptimized managed policy
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # SPA fallback: any unresolved path (e.g. /n/<id>) serves the app shell.
+        # NOTE for the future Android/TWA phase: a /.well-known/assetlinks.json
+        # behavior MUST be added ABOVE this fallback, or CloudFront will return
+        # the SPA shell for it and silently break the TWA URL-bar removal.
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /200.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /200.html
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: 's3:GetObject'
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}'
+
 Outputs:
   ApiUrl:
     Description: Base URL of the blip API
     Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  SiteBucketName:
+    Description: S3 bucket for the static site
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: CloudFront distribution id (for invalidations)
+    Value: !Ref SiteDistribution
+  SiteUrl:
+    Description: Public site URL
+    Value: !Sub 'https://${SiteDistribution.DomainName}'
