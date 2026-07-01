@@ -66,8 +66,8 @@ The burn is a single atomic DynamoDB operation — a conditional `DeleteItem` th
 Clone and run the front end:
 
 ```bash
-git clone https://github.com/mgennings/blip.git
-cd blip
+git clone https://github.com/mgennings/cinder.git
+cd cinder
 pnpm install
 pnpm dev
 ```
