@@ -21,7 +21,7 @@
 		/>
 		<button
 			onclick={copy}
-			class="shrink-0 rounded-xl bg-ember px-4 py-3 text-sm font-semibold text-ink transition-transform hover:scale-[1.03] active:scale-95"
+			class="shrink-0 rounded-xl bg-ember px-4 py-3 text-sm font-semibold text-black shadow-[0_4px_20px_-4px_rgba(255,107,74,0.5)] transition-all hover:scale-[1.03] hover:bg-ember-soft active:scale-95"
 		>
 			{copied ? 'Copied' : 'Copy'}
 		</button>

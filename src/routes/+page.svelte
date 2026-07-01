@@ -4,6 +4,7 @@
 	import { createNote } from '$lib/api';
 	import { buildLink } from '$lib/link';
 	import CopyLink from '$lib/ui/CopyLink.svelte';
+	import Merkaba from '$lib/ui/Merkaba.svelte';
 
 	let text = $state('');
 	let passphrase = $state('');
@@ -44,11 +45,15 @@
 	}
 </script>
 
-<main class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16">
-	<div class="w-full max-w-lg">
+<main class="vault-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-16">
+	<div class="relative w-full max-w-lg">
 		<header class="mb-8 text-center">
+			<!-- The merkaba as a crest: two counter-rotating tetrahedra = two-factor, made visible. -->
+			<div class="relative mx-auto mb-5 h-24 w-24">
+				<Merkaba size={96} />
+			</div>
 			<h1 class="text-3xl font-bold tracking-tight">
-				blip<span class="text-ember">.</span>
+				Cinder<span class="text-ember">.</span>
 			</h1>
 			<p class="mt-2 text-sm text-mist">
 				A note that's read once, then gone. Encrypted in your browser — we never see it.
@@ -121,7 +126,10 @@
 				<button
 					onclick={create}
 					disabled={busy || !text.trim()}
-					class="mt-5 w-full rounded-xl bg-ember py-3 text-sm font-semibold text-ink transition-transform hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+					class="mt-5 w-full rounded-xl py-3 text-sm font-semibold transition-all
+						{busy || !text.trim()
+						? 'cursor-not-allowed border border-line bg-transparent text-ghost'
+						: 'bg-ember text-black shadow-[0_4px_20px_-4px_rgba(255,107,74,0.5)] hover:scale-[1.01] hover:bg-ember-soft active:scale-[0.99]'}"
 				>
 					{busy ? 'Sealing…' : 'Create one-time link'}
 				</button>

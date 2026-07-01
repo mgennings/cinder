@@ -64,7 +64,7 @@
 <main class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16">
 	<div class="w-full max-w-lg">
 		<header class="mb-8 text-center">
-			<a href="/" class="text-2xl font-bold tracking-tight">blip<span class="text-ember">.</span></a>
+			<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
 		</header>
 
 		<section class="rounded-2xl border border-line bg-ink-soft p-6">
@@ -92,7 +92,10 @@
 					<button
 						onclick={reveal}
 						disabled={busy}
-						class="mt-6 w-full rounded-xl bg-ember py-3 text-sm font-semibold text-ink transition-transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-40"
+						class="mt-6 w-full rounded-xl py-3 text-sm font-semibold transition-all
+							{busy
+							? 'cursor-not-allowed border border-line bg-transparent text-ghost'
+							: 'bg-ember text-black shadow-[0_4px_20px_-4px_rgba(255,107,74,0.5)] hover:scale-[1.01] hover:bg-ember-soft active:scale-[0.99]'}"
 					>
 						{busy ? 'Opening…' : needsPassphrase ? 'Unlock & reveal' : 'Reveal note'}
 					</button>
@@ -125,7 +128,7 @@
 					<a
 						href="/"
 						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-white hover:border-ember/50"
-						>Go to blip</a
+						>Go to Cinder</a
 					>
 				</div>
 			{/if}
