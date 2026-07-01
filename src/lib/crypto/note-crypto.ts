@@ -17,28 +17,35 @@ const dec = new TextDecoder();
 
 const PBKDF2_ITERATIONS = 600_000; // OWASP-current for PBKDF2-HMAC-SHA256
 
+// WebCrypto wants a BufferSource backed by a plain ArrayBuffer. Copy into a
+// fresh ArrayBuffer so TypeScript's Uint8Array<ArrayBufferLike> generic (which
+// admits SharedArrayBuffer) doesn't fight the BufferSource parameter types.
+function toBuf(bytes: Uint8Array): ArrayBuffer {
+	return bytes.slice().buffer as ArrayBuffer;
+}
+
 async function deriveWithPassphrase(
 	raw: Uint8Array,
 	passphrase: string,
 	salt: Uint8Array
 ): Promise<CryptoKey> {
-	const material = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, [
+	const material = await crypto.subtle.importKey('raw', toBuf(enc.encode(passphrase)), 'PBKDF2', false, [
 		'deriveBits'
 	]);
 	const derived = new Uint8Array(
 		await crypto.subtle.deriveBits(
-			{ name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+			{ name: 'PBKDF2', salt: toBuf(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
 			material,
 			256
 		)
 	);
 	// Both factors required: XOR the passphrase-derived bytes into the random key.
 	const mixed = raw.map((b, i) => b ^ derived[i]);
-	return crypto.subtle.importKey('raw', mixed, 'AES-GCM', false, ['encrypt', 'decrypt']);
+	return crypto.subtle.importKey('raw', toBuf(mixed), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
 function importRaw(raw: Uint8Array): Promise<CryptoKey> {
-	return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+	return crypto.subtle.importKey('raw', toBuf(raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
 export async function encryptNote(text: string, passphrase?: string): Promise<EncryptResult> {
@@ -54,7 +61,7 @@ export async function encryptNote(text: string, passphrase?: string): Promise<En
 		key = await importRaw(raw);
 	}
 
-	const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(text));
+	const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: toBuf(iv) }, key, toBuf(enc.encode(text)));
 	const payload: EncryptedPayload = {
 		ct: bytesToBase64(new Uint8Array(ctBuf)),
 		iv: bytesToBase64(iv),
@@ -80,6 +87,6 @@ export async function decryptNote(
 		key = await importRaw(raw);
 	}
 
-	const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+	const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toBuf(iv) }, key, toBuf(ct));
 	return dec.decode(plainBuf);
 }
