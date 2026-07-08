@@ -70,7 +70,7 @@
 	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder protects</h2>
 	<div class="mt-4 space-y-4">
 		{#each protects as row (row.title)}
-			<div class="rounded-xl border border-line bg-ink-soft p-4">
+			<div class="card p-4">
 				<h3 class="font-medium text-body">{row.title}</h3>
 				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
 			</div>
@@ -80,7 +80,7 @@
 	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder can't protect</h2>
 	<div class="mt-4 space-y-4">
 		{#each cannot as row (row.title)}
-			<div class="rounded-xl border border-line bg-ink-soft p-4">
+			<div class="card p-4">
 				<h3 class="font-medium text-body">{row.title}</h3>
 				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
 			</div>
@@ -92,9 +92,5 @@
 		your note — it can't remove your responsibility to share the link carefully.
 	</p>
 
-	<a
-		href="/"
-		class="mt-8 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-body hover:border-ember/50"
-		>Write a note</a
-	>
+	<a href="/" class="btn btn-ghost mt-8 px-5 py-2.5 text-sm">Write a note</a>
 </main>

@@ -86,6 +86,7 @@ Cinder's docs are task-oriented — pick the one that matches what you want to d
 | Run it on my machine end-to-end | [Local development](docs/local-development.md) |
 | Deploy my own copy to AWS | [Deployment](docs/deployment.md) |
 | Call the API directly | [API reference](docs/api.md) |
+| Understand or extend the look | [Theme & design system](docs/theme.md) |
 | Contribute | [Contributing](CONTRIBUTING.md) |
 
 ## Tech stack

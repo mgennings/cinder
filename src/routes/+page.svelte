@@ -75,37 +75,26 @@
 		</header>
 
 		{#if link}
-			<section
-				in:fly={{ y: 12, duration: 350 }}
-				class="rounded-2xl border border-line bg-ink-soft p-6"
-			>
+			<section in:fly={{ y: 12, duration: 350 }} class="card p-6">
 				<h2 class="mb-1 text-sm font-semibold text-ember-ink">Your one-time link is ready</h2>
 				<p class="mb-4 text-xs text-ghost">It self-destructs the moment it's read.</p>
 				<CopyLink {link} />
-				<button
-					onclick={reset}
-					class="mt-5 text-xs text-mist underline-offset-4 hover:text-body hover:underline"
-				>
-					Write another note
-				</button>
+				<button onclick={reset} class="link-quiet mt-5 text-xs">Write another note</button>
 			</section>
 		{:else}
-			<section class="rounded-2xl border border-line bg-ink-soft p-6">
+			<section class="card p-6">
 				<textarea
 					bind:value={text}
 					aria-label="Your secret note"
 					placeholder="Type your secret. It never leaves this device unencrypted."
 					rows="6"
-					class="w-full resize-none rounded-xl border border-line bg-ink px-4 py-3 text-[15px] leading-relaxed text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
+					class="field resize-none px-4 py-3 text-[15px] leading-relaxed"
 				></textarea>
 
 				<div class="mt-4 flex flex-wrap items-center gap-4">
 					<label class="flex items-center gap-2 text-sm text-mist">
 						<span>Burns after</span>
-						<select
-							bind:value={ttl}
-							class="rounded-lg border border-line bg-ink px-2 py-1.5 text-sm text-body focus:outline-none"
-						>
+						<select bind:value={ttl} class="field w-auto px-2 py-1.5 text-sm">
 							{#each ttlOptions as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
 							{/each}
@@ -125,7 +114,7 @@
 							type="password"
 							bind:value={passphrase}
 							aria-label="Passphrase" placeholder="Passphrase (needed to open, on top of the link)"
-							class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
+							class="field px-4 py-2.5 text-sm"
 						/>
 						<p class="mt-1.5 text-xs text-ghost">
 							Two-factor: the reader needs both the link and this passphrase. Share the passphrase
@@ -141,20 +130,16 @@
 				<button
 					onclick={create}
 					disabled={busy || !text.trim()}
-					class="mt-5 w-full rounded-xl py-3 text-sm font-semibold transition-all
-						{busy || !text.trim()
-						? 'cursor-not-allowed border border-line bg-transparent text-ghost'
-						: 'bg-ember text-black shadow-[0_4px_20px_-4px_rgba(255,107,74,0.5)] hover:scale-[1.01] hover:bg-ember-soft active:scale-[0.99]'}"
+					class="btn btn-ember mt-5 w-full py-3 text-sm"
 				>
+					{#if busy}<span class="pulse-dot inline-block h-2 w-2 rounded-full bg-black/70"></span>{/if}
 					{busy ? 'Sealing…' : 'Create one-time link'}
 				</button>
 			</section>
 		{/if}
 
-		<footer class="mt-8 text-center text-xs text-ghost">
-			<a href="/security" class="underline-offset-4 hover:text-mist hover:underline"
-				>How private is this, really?</a
-			>
+		<footer class="mt-8 text-center text-xs">
+			<a href="/security" class="link-quiet">How private is this, really?</a>
 		</footer>
 	</div>
 </main>

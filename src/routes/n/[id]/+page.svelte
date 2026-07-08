@@ -73,7 +73,7 @@
 			<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
 		</header>
 
-		<section class="rounded-2xl border border-line bg-ink-soft p-6">
+		<section class="card p-6">
 			{#if view === 'gate'}
 				<div class="text-center">
 					<h1 class="text-lg font-semibold">Someone left you a one-time note</h1>
@@ -88,7 +88,7 @@
 								bind:value={passphrase}
 								onkeydown={(e) => e.key === 'Enter' && reveal()}
 								aria-label="Passphrase" placeholder="Enter the passphrase"
-								class="w-full rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-body placeholder:text-ghost focus:border-ember/50 focus:outline-none"
+								class="field px-4 py-2.5 text-sm"
 							/>
 							{#if errorMsg}
 								<p class="mt-2 text-sm text-ember">{errorMsg}</p>
@@ -96,25 +96,19 @@
 						</div>
 					{/if}
 
-					<button
-						onclick={reveal}
-						disabled={busy}
-						class="mt-6 w-full rounded-xl py-3 text-sm font-semibold transition-all
-							{busy
-							? 'cursor-not-allowed border border-line bg-transparent text-ghost'
-							: 'bg-ember text-black shadow-[0_4px_20px_-4px_rgba(255,107,74,0.5)] hover:scale-[1.01] hover:bg-ember-soft active:scale-[0.99]'}"
-					>
+					<button onclick={reveal} disabled={busy} class="btn btn-ember mt-6 w-full py-3 text-sm">
+						{#if busy}<span class="pulse-dot inline-block h-2 w-2 rounded-full bg-black/70"></span>{/if}
 						{busy ? 'Opening…' : needsPassphrase ? 'Unlock & reveal' : 'Reveal note'}
 					</button>
 				</div>
 			{:else if view === 'revealed'}
 				<div in:fade={{ duration: 400 }}>
 					<div class="mb-4 flex items-center gap-2 text-xs font-medium text-ember-ink">
-						<span class="inline-block h-2 w-2 rounded-full bg-ember"></span>
+						<span class="pulse-dot inline-block h-2 w-2 rounded-full bg-ember"></span>
 						This note is now destroyed. Copy anything you need before you leave.
 					</div>
 					<pre
-						class="whitespace-pre-wrap break-words rounded-xl border border-line bg-ink px-4 py-4 text-[15px] leading-relaxed text-body">{plaintext}</pre>
+						class="field whitespace-pre-wrap break-words px-4 py-4 text-[15px] leading-relaxed">{plaintext}</pre>
 				</div>
 			{:else if view === 'gone'}
 				<div in:fade={{ duration: 300 }} class="text-center">
@@ -122,21 +116,13 @@
 					<p class="mt-2 text-sm text-mist">
 						It was already read, or it expired. Self-destructing notes only open once.
 					</p>
-					<a
-						href="/"
-						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-body hover:border-ember/50"
-						>Write your own</a
-					>
+					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Write your own</a>
 				</div>
 			{:else}
 				<div in:fade={{ duration: 300 }} class="text-center">
 					<h1 class="text-lg font-semibold">Couldn't open this note</h1>
 					<p class="mt-2 text-sm text-mist">{errorMsg}</p>
-					<a
-						href="/"
-						class="mt-6 inline-block rounded-xl border border-line px-5 py-2.5 text-sm text-body hover:border-ember/50"
-						>Go to Cinder</a
-					>
+					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Go to Cinder</a>
 				</div>
 			{/if}
 		</section>
