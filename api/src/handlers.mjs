@@ -108,9 +108,11 @@ export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
 
 		const locator = newCapability();
 		const uploadCapability = newCapability();
-		const objectKey = newObjectKey();
-
 		const ttl = Math.min(Math.max(Number(ttlSeconds) || 0, 1), MAX_TTL);
+		// Keyed into a lifetime band so a short transfer's bytes are swept the
+		// next day rather than sitting for the flat maximum.
+		const objectKey = newObjectKey(ttl);
+
 		const createdAt = Math.floor(Date.now() / 1000);
 
 		// The upload authorization is signed against this exact key, length, and

@@ -2,11 +2,11 @@
 	import { page } from '$app/state';
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
-	import { claimFile, TransferGoneError, DeliveryFailedError } from '$lib/api';
+	import { claimFile, TransferGoneError, DeliveryFailedError, TransferBusyError } from '$lib/api';
 	import { decryptFile, type DecryptedFile } from '$lib/crypto/file-crypto';
 	import { parseFragmentKey } from '$lib/link';
 
-	type View = 'gate' | 'delivered' | 'gone' | 'lost' | 'error';
+	type View = 'gate' | 'delivered' | 'gone' | 'lost' | 'busy' | 'error';
 
 	const locator = $derived(page.params.locator ?? '');
 	// The fragment (key) is read from the browser only — it never reached the server.
@@ -125,6 +125,12 @@
 			if (e instanceof TransferGoneError) {
 				view = 'gone';
 				announcement = 'This transfer is gone. Cinder has no stored copy to return.';
+			} else if (e instanceof TransferBusyError) {
+				// The one recoverable failure in the whole product. Nothing was
+				// consumed, so this must never render as destruction.
+				view = 'busy';
+				announcement =
+					'Cinder is busy and could not start the delivery. Nothing was used up. This link still works — try again in a moment.';
 			} else if (e instanceof DeliveryFailedError) {
 				view = 'lost';
 				announcement =
@@ -277,6 +283,25 @@
 						Cinder has no stored copy to return. That is all it can tell you.
 					</p>
 					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Send your own</a>
+				</div>
+			{:else if view === 'busy'}
+				<div in:fade={{ duration: dur(300) }} class="text-center">
+					<h1 bind:this={headingEl} tabindex="-1" class="text-lg font-semibold outline-none">
+						Cinder is busy right now
+					</h1>
+					<p class="mt-2 text-sm text-mist">
+						The delivery never started, so nothing was used up. This link still works. Wait a moment
+						and try again — you have not lost anything.
+					</p>
+					<button
+						onclick={() => {
+							view = 'gate';
+							errorMsg = '';
+						}}
+						class="btn btn-ember mt-6 w-full py-3 text-sm"
+					>
+						Try again
+					</button>
 				</div>
 			{:else if view === 'lost'}
 				<div in:fade={{ duration: dur(300) }} class="text-center">

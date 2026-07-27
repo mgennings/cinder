@@ -23,8 +23,17 @@ export function hashCapability(capability) {
 // Object keys are random and carry no meaning — not the filename, not the
 // locator, not a timestamp. A key seen in isolation says nothing about who
 // uploaded what, and cannot be derived from a locator.
-export function newObjectKey() {
-	return randomBytes(32).toString('hex');
+//
+// The one exception is a coarse lifetime band, and it exists to honor the
+// sender rather than to describe them. S3 lifecycle rules are per-prefix and
+// day-granular, so a single flat rule meant a one-hour transfer's ciphertext
+// sat for eight days after it stopped being readable. Banding by prefix lets
+// the short-lived case be swept the next day. The band says only "this was
+// under a day or over it" — no time, no size, no identity — and the only role
+// that can list the bucket at all is the claim function.
+export function newObjectKey(ttlSeconds) {
+	const band = Number(ttlSeconds) <= 86_400 ? 'd1' : 'd8';
+	return `${band}/${randomBytes(32).toString('hex')}`;
 }
 
 // The authoritative capability check is still the DynamoDB condition

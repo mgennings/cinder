@@ -29,17 +29,29 @@ Globals:
     Architectures: [arm64]
     Timeout: 5
     MemorySize: 128
-    # A ceiling AND a floor, and it is the cheapest protection in this file.
+    # A ceiling AND a floor, and the honest description of it is narrower than
+    # it first looks.
     #
     # Lambda concurrency is one pool per account, shared with every other
     # project here. Unreserved, a flood against cinder.ink could consume all
-    # 987 available executions and starve everything else in the account — and
-    # bill for it. Reserving 10 per function bounds the worst case to roughly
-    # $14/day instead of roughly $1,400/day, and simultaneously guarantees
-    # Cinder those 10 so another project's spike cannot starve a delivery.
+    # 987 available executions and starve everything else — so this bounds
+    # blast radius AND guarantees Cinder its own slots.
     #
-    # Ten concurrent claims is far above real use. It collects nothing about
-    # anyone and adds no friction: this is a resource boundary, not a filter.
+    # What it bounds: Lambda COMPUTE. Roughly $17/day fully saturated, not the
+    # $14 an earlier version of this comment claimed. It does NOT bound API
+    # Gateway request charges (far larger at the same saturation), DynamoDB
+    # writes, or S3 storage from abandoned uploads. Do not quote a total-bill
+    # number here; nothing in this template bounds the total bill.
+    #
+    # What it is NOT: a security control. Measured, 40 concurrent claims yield
+    # exactly 10 served and 30 shed, and warm service is ~165ms — so ~61 req/s
+    # from ONE machine can hold every slot and deny delivery for about nothing.
+    # A rate limit does not fix that at this pool size either. What redeems it
+    # is that shedding is non-destructive: a throttled request never invokes the
+    # function, so the atomic claim never runs and no transfer is consumed.
+    #
+    # It collects nothing about anyone. That is the rare property here — it
+    # sheds by "no worker is free", never by recognising who is asking.
     ReservedConcurrentExecutions: 10
     Environment:
       Variables:
@@ -148,8 +160,18 @@ Resources:
           # Backstop only. The claim path deletes its object synchronously; this
           # sweeps abandoned uploads and grants that expired unread. Eight days
           # clears the seven-day maximum TTL with a day to spare.
+          # Two tiers, because a flat 8 days ignored what the sender chose.
+          # createFile prefixes the object key by TTL band, so a one-hour
+          # transfer's bytes are swept the next day instead of lingering a
+          # week. The prefix reveals only a coarse band, and only to a caller
+          # that can already list — which is ClaimFileFn alone.
+          - Id: expire-short-lived-ciphertext
+            Status: Enabled
+            Prefix: d1/
+            ExpirationInDays: 1
           - Id: expire-orphaned-ciphertext
             Status: Enabled
+            Prefix: d8/
             ExpirationInDays: 8
           - Id: abort-incomplete-uploads
             Status: Enabled
@@ -277,6 +299,50 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /files/claim
             Method: POST
+
+  # Retention pinned in code. Lambda auto-creates these groups at "Never
+  # Expire", and CloudFormation does not manage them, so a logical-id change or
+  # a stack rebuild silently reverts to keeping logs forever. Today they hold
+  # only lifecycle lines, but "forever" plus one future console.error is how a
+  # privacy promise dies quietly.
+  ClaimFileLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ClaimFileFn}'
+      RetentionInDays: 14
+
+  # The denial has to be visible. Reserved concurrency sheds silently, and with
+  # no alarm the first signal Matt gets is a monthly statement. This watches the
+  # shed count only — a number, never a request, never an address.
+  ThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'cinder-delivery-throttled-${AWS::AccountId}'
+      AlarmDescription: >-
+        Cinder is shedding delivery requests. Recipients are seeing "Cinder is
+        busy". Nothing has been destroyed — a throttled claim never runs — but
+        the product is effectively down for the people being shed.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ClaimFileFn
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 25
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperatorAlerts
+
+  OperatorAlerts:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'cinder-operator-alerts-${AWS::AccountId}'
+      DisplayName: Cinder alerts
 
   # --- Static site: private S3 bucket fronted by CloudFront (OAC) ---
   SiteBucket:

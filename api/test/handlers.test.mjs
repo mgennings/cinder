@@ -465,3 +465,26 @@ test('claim refuses ciphertext of the wrong length', async () => {
 	s3.put(key, Buffer.concat([BODY, Buffer.from('x')]));
 	await assert.rejects(() => h.claimFile({ body: JSON.stringify({ locator }) }));
 });
+
+test('object keys carry a lifetime band so short transfers sweep sooner', async () => {
+	// S3 lifecycle rules are per-prefix and day-granular, so one flat rule left
+	// a one-hour transfer's ciphertext sitting for the full maximum after it
+	// stopped being readable. The band is the whole mechanism that fixes it.
+	const s3 = fakeS3();
+	const h = makeHandlers(doc, s3);
+	const body = JSON.stringify({ ciphertextBytes: BODY.length, ciphertextSha256: BODY_SHA });
+
+	const short = JSON.parse(
+		(await h.createFile({ body: JSON.stringify({ ...JSON.parse(body), ttlSeconds: 3600 }) })).body
+	);
+	const long = JSON.parse(
+		(await h.createFile({ body: JSON.stringify({ ...JSON.parse(body), ttlSeconds: 604_800 }) })).body
+	);
+
+	assert.match(new URL(short.upload.url).pathname, /\/d1\//);
+	assert.match(new URL(long.upload.url).pathname, /\/d8\//);
+
+	// The band must be the ONLY thing the key reveals — no locator, no time.
+	assert.ok(!short.upload.url.includes(short.locator));
+	assert.match(new URL(short.upload.url).pathname, /\/d1\/[0-9a-f]{64}$/);
+});

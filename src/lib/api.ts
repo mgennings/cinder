@@ -56,6 +56,22 @@ export class DeliveryFailedError extends Error {
 	}
 }
 
+// Cinder refused to start. This is the ONLY recoverable failure in the whole
+// product, and telling it apart from DeliveryFailedError is the difference
+// between "try again in a moment" and "your file is gone forever."
+//
+// It exists because the two were conflated: every non-410 refusal used to
+// render as permanent destruction. Under load that is a lie — a throttled or
+// shed request never reaches the Lambda, so the atomic claim never runs and the
+// stored copy is untouched. Reserved concurrency makes shedding MORE likely,
+// which made the lie more frequent rather than less.
+export class TransferBusyError extends Error {
+	constructor() {
+		super('Cinder could not start the delivery. Nothing was consumed.');
+		this.name = 'TransferBusyError';
+	}
+}
+
 export type UploadGrant = { url: string; headers: Record<string, string> };
 export type TransferGrant = {
 	locator: string;
@@ -138,17 +154,36 @@ export async function claimFile(locator: string): Promise<Uint8Array> {
 			body: JSON.stringify({ locator })
 		});
 	} catch {
-		throw new DeliveryFailedError();
+		// No response at all. Genuinely ambiguous — the request may never have
+		// left, or it may have run and died on the way back. Treated as busy
+		// rather than lost ON PURPOSE: if it really was consumed, trying again
+		// returns 410 and tells the truth, whereas guessing "destroyed" when it
+		// wasn't makes someone abandon a file that is still there. The kinder
+		// wrong answer is also the self-correcting one.
+		throw new TransferBusyError();
 	}
 
 	if (res.status === 410) throw new TransferGoneError();
+
+	// Refused before the handler ever ran. A gateway 502/503/504 and a 429 are
+	// produced by API Gateway or by Lambda's concurrency ceiling; in every one
+	// of those cases the function was never invoked, so the atomic claim never
+	// executed and the stored copy is untouched. Measured under a 200-request
+	// burst: 189 × 503, Throttles 286, Invocations 27, Errors 0 — a shed request
+	// does not enter the function at all.
+	if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
+		throw new TransferBusyError();
+	}
+
+	// Anything else — notably a 500 — means the handler DID run and threw, which
+	// can be after the claim. That one really is spent.
 	if (!res.ok) throw new DeliveryFailedError();
 
 	try {
 		return new Uint8Array(await res.arrayBuffer());
 	} catch {
-		// Connection died partway through the body. The stored copy is already
-		// gone; there is nothing to go back for.
+		// A 200 arrived, so the claim provably succeeded and the stored copy is
+		// already deleted. The body died on the way. Nothing to go back for.
 		throw new DeliveryFailedError();
 	}
 }
