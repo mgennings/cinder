@@ -224,7 +224,7 @@
 
 				<div class="mt-4 flex flex-wrap items-center gap-4">
 					<label class="flex items-center gap-2 text-sm text-mist">
-						<span>Burns after</span>
+						<span>Expires after</span>
 						<select bind:value={ttl} disabled={busy} class="field w-auto px-2 py-1.5 text-sm">
 							{#each ttlOptions as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>

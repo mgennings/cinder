@@ -1,3 +1,7 @@
-# Crawl the landing and security pages; never index ephemeral one-time notes.
+# Crawl the landing and security pages; never index ephemeral one-time links.
+# Both reader routes carry a decryption key in the URL fragment, and the
+# `noindex` meta on them is injected client-side — a crawler that does not run
+# JavaScript never sees it, so this file is the only layer it reads.
 User-agent: *
 Disallow: /n/
+Disallow: /f/

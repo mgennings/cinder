@@ -34,7 +34,7 @@ Each component has one job. The table is the fastest way to see the whole system
 | Reader page | Human-gated reveal: burn the note, then decrypt it | `src/routes/n/[id]/+page.svelte` |
 | Crypto core | AES-256-GCM encrypt/decrypt, two-factor passphrase derivation | `src/lib/crypto/note-crypto.ts` |
 | Codec | base64 / base64url conversion with a fallback for older browsers | `src/lib/crypto/codec.ts` |
-| API client | Talk to the two endpoints; map wire names to crypto names | `src/lib/api.ts` |
+| API client | Talk to the five endpoints; map wire names to crypto names | `src/lib/api.ts` |
 | Link helpers | Build `/n/{id}#{key}` links; parse the fragment | `src/lib/link.ts` |
 | createNote Lambda | Validate, clamp TTL, store ciphertext, return an ID | `api/src/handlers.mjs` |
 | readNote Lambda | Atomically burn the note and return it, or 410 | `api/src/handlers.mjs` |
@@ -55,18 +55,21 @@ Dynamic note URLs like `/n/abc123` are handled by the SPA fallback: CloudFront s
 
 The landing and security pages are the exception: they carry no secrets, so they are prerendered and indexable for speed and discoverability.
 
-### API (two Lambdas behind API Gateway)
+### API (five Lambdas behind API Gateway)
 
-The API is intentionally two endpoints and nothing more:
+The API is intentionally five endpoints and nothing more:
 
 - `POST /notes` → `createNote` — stores a ciphertext blob, returns an ID.
 - `POST /notes/{id}/burn` → `readNote` — atomically deletes and returns the note.
+- `POST /files` → `createFile` — reserves a transfer, issues a constrained one-use upload.
+- `POST /files/finalize` → `finalizeFile` — inspects the stored object, then marks it ready.
+- `POST /files/claim` → `claimFile` — the one delivery attempt.
 
-Both are AWS Lambda functions (Node.js 22, ARM64) fronted by an API Gateway HTTP API. The handlers take the DynamoDB client as an argument (`makeHandlers(doc)`), which is what lets the tests run them against a local DynamoDB with no mocking. See [the API reference](api.md) for exact request and response shapes.
+All five are AWS Lambda functions (Node.js 22, ARM64) fronted by an API Gateway HTTP API. The handlers take the DynamoDB client as an argument (`makeHandlers(doc)`), which is what lets the tests run them against a local DynamoDB with no mocking. See [the API reference](api.md) for exact request and response shapes.
 
 ### Storage (DynamoDB)
 
-One table, `blip-notes`, with a single partition key `pk` (the note ID). Each item is `{ pk, ciphertext, iv, salt?, expiresAt }`. Time-to-live is enabled on `expiresAt` so expired notes are eventually reaped automatically.
+One table, `blip-notes`, with a single partition key `pk`. A note item is keyed by the note ID and holds `{ pk, ciphertext, iv, salt?, expiresAt }`. A file grant shares the table under `sha256(locator)` and holds `{ pk, kind, state, objectKey, uploadCapabilityHash, ciphertextBytes, ciphertextSha256, createdAt, expiresAt }` — hashes only, never a raw capability. Time-to-live is enabled on `expiresAt` so expired notes are eventually reaped automatically.
 
 The reason DynamoDB was chosen over anything else is covered in [design decisions](#design-decisions) — in short, its conditional `DeleteItem` *is* the atomic burn, so the hardest correctness requirement in the whole app becomes a single API call.
 
@@ -182,7 +185,7 @@ A self-destructing-note service is bursty and low-volume for personal use. Serve
 
 ### Why so little code
 
-For a privacy tool, every line shipped to the browser is a line a security-conscious user has to trust. SvelteKit compiles its own framework away, Cinder uses the browser's native Web Crypto rather than a third-party crypto library, and the API is two small functions. Less code is less attack surface and less to audit — that minimalism is a feature, not a shortcut.
+For a privacy tool, every line shipped to the browser is a line a security-conscious user has to trust. SvelteKit compiles its own framework away, Cinder uses the browser's native Web Crypto rather than a third-party crypto library, and the API is five small functions. Less code is less attack surface and less to audit — that minimalism is a feature, not a shortcut.
 
 ## Related documents
 

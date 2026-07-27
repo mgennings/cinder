@@ -107,8 +107,9 @@ Resources:
   # --- File transfer: private ciphertext bucket + three separated roles ---
   #
   # Nothing about this bucket is reachable from the internet. The only paths in
-  # or out are a five-minute presigned PUT and the claim Lambda, and no role
-  # below can list it — knowing the bucket exists tells you nothing about what
+  # or out are a five-minute presigned PUT and the claim Lambda. Only the claim
+  # function can list it, and only so a deleted object answers 404 instead of
+  # 403 (see ClaimFileFn) — knowing the bucket exists tells you nothing about what
   # is in it, and an object key cannot be derived from a link.
   MediaBucket:
     Type: AWS::S3::Bucket

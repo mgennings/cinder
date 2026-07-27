@@ -19,7 +19,7 @@ This guide provisions your own copy of Cinder on AWS: the API, the database, and
 | --- | --- |
 | DynamoDB table `blip-notes` | Stores ciphertext, with TTL enabled on `expiresAt` |
 | Two Lambda functions | `createNote` and `readNote`, Node 22 on ARM64 |
-| API Gateway HTTP API | Fronts the two Lambdas with CORS |
+| API Gateway HTTP API | Fronts the five Lambdas with CORS |
 | S3 bucket | Holds the static site (private, served only via CloudFront) |
 | CloudFront distribution | HTTPS delivery with SPA fallback |
 | IAM roles | Least-privilege: create can only `PutItem`, read can only `DeleteItem` |

@@ -56,7 +56,9 @@ const s3 = {
 		};
 	},
 
-	// Size and checksum without the body. Needs only s3:GetObjectAttributes.
+	// Size and checksum without the body — but AWS requires s3:GetObject alongside
+	// s3:GetObjectAttributes, so this role CAN read the object. What is real:
+	// no delete, no list.
 	async attributes({ key }) {
 		try {
 			const res = await s3client.send(

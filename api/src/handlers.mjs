@@ -39,8 +39,14 @@ const json = (statusCode, obj) => ({
 // existed, malformed locator, still uploading, expired, or already claimed.
 // Distinguishing them would turn this endpoint into an oracle that confirms a
 // link once existed.
-const GONE = () =>
-	json(410, { error: 'This transfer is no longer available.' });
+// `no-store` matches the successful claim so the two answers differ only in the
+// thing they cannot help differing in — one carries octets and one carries
+// JSON. Nothing here is secret, but header parity costs a line.
+const GONE = () => ({
+	statusCode: 410,
+	headers: { 'content-type': 'application/json', 'cache-control': 'no-store, private' },
+	body: JSON.stringify({ error: 'This transfer is no longer available.' })
+});
 
 const isBase64Sha256 = (s) => typeof s === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(s);
 

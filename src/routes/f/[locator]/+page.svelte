@@ -172,9 +172,10 @@
 						Delivered. Copy it somewhere safe before you leave.
 					</div>
 
-					<!-- Every row below is a fact entailed by the bytes this page is
-					     holding: the server cannot return a body until the delete and
-					     the absence check have both succeeded. -->
+					<!-- Every row below is a fact. Four are entailed by the bytes this
+					     page is holding — the server cannot return a body until the
+					     delete and the absence check have both succeeded. The fifth is
+					     entailed by the key never having left the fragment. -->
 					<div class="record">
 						<div class="record-row">
 							<span class="record-label">File</span>

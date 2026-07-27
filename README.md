@@ -27,7 +27,7 @@ Most "private note" services encrypt on the server, which means the server holds
 | --- | --- | --- |
 | Where encryption happens | On the server | In your browser |
 | Who holds the decryption key | The server | Only the link (URL fragment) |
-| Can the operator read your note? | Yes, technically | No — it's mathematically impossible |
+| Can the operator read what's stored? | Yes, technically | No — the key never reaches us |
 | What "self-destruct" means | The server deletes it | Atomic delete-and-return: one successful server retrieval |
 | Survives link-preview bots | Often no | Yes — human-gated reveal |
 | Honest about its limits | Rarely | [Yes, explicitly](docs/security.md) |
