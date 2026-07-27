@@ -420,6 +420,9 @@ body::before {
 
 	/* LINK — quiet by default, ember-underline on intent. */
 	.link-quiet {
+		display: inline-flex;
+		min-height: 2.75rem;
+		align-items: center;
 		color: var(--color-mist);
 		text-underline-offset: 4px;
 		transition: color var(--dur-fast) var(--ease-crisp);
