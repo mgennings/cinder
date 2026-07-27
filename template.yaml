@@ -32,6 +32,7 @@ Globals:
     Environment:
       Variables:
         TABLE_NAME: !Ref NotesTable
+        MEDIA_BUCKET: !Ref MediaBucket
 
 Resources:
   NotesTable:
@@ -50,10 +51,22 @@ Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      # Exact origins, not '*'. The API hands out ciphertext and one-use upload
+      # authorizations; there is no reason for a page Cinder did not serve to be
+      # able to read either.
       CorsConfiguration:
-        AllowOrigins: ['*']
+        AllowOrigins:
+          - !Sub 'https://${PrimaryDomain}'
+          - !Sub 'https://${WwwDomain}'
+          - !Sub 'https://${SiteDomain}'
+          - !Sub 'https://${LegacyDomain}'
         AllowMethods: [POST, OPTIONS]
         AllowHeaders: [content-type]
+      # A self-destructing-note service has no legitimate burst shape. This is
+      # generous for humans and hostile to anyone grinding locators.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 40
+        ThrottlingRateLimit: 20
 
   CreateNoteFn:
     Type: AWS::Serverless::Function
@@ -89,6 +102,144 @@ Resources:
           Properties:
             ApiId: !Ref HttpApi
             Path: /notes/{id}/burn
+            Method: POST
+
+  # --- File transfer: private ciphertext bucket + three separated roles ---
+  #
+  # Nothing about this bucket is reachable from the internet. The only paths in
+  # or out are a five-minute presigned PUT and the claim Lambda, and no role
+  # below can list it — knowing the bucket exists tells you nothing about what
+  # is in it, and an object key cannot be derived from a link.
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'blip-media-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # ACLs off entirely. There is one owner and no sharing model to get wrong.
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      # Deliberately NOT versioned. A version history of a file whose whole
+      # promise is deletion would quietly keep the thing we said we destroyed.
+      LifecycleConfiguration:
+        Rules:
+          # Backstop only. The claim path deletes its object synchronously; this
+          # sweeps abandoned uploads and grants that expired unread. Eight days
+          # clears the seven-day maximum TTL with a day to spare.
+          - Id: expire-orphaned-ciphertext
+            Status: Enabled
+            ExpirationInDays: 8
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - !Sub 'https://${PrimaryDomain}'
+              - !Sub 'https://${WwwDomain}'
+              - !Sub 'https://${SiteDomain}'
+              - !Sub 'https://${LegacyDomain}'
+            AllowedMethods: [PUT]
+            AllowedHeaders: [content-type, x-amz-checksum-sha256]
+            MaxAge: 300
+
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyPlaintextTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt MediaBucket.Arn
+              - !Sub '${MediaBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  CreateFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.createFile
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt NotesTable.Arn
+            # Needed for the presigned PUT to carry any authority at all — a
+            # presigned URL can never exceed its signer's own permissions.
+            - Effect: Allow
+              Action: [s3:PutObject]
+              Resource: !Sub '${MediaBucket.Arn}/*'
+      Events:
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files
+            Method: POST
+
+  FinalizeFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.finalizeFile
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt NotesTable.Arn
+            # GetObjectAttributes returns size and checksum and nothing else.
+            # This role deliberately has no s3:GetObject: the function that
+            # decides a transfer is ready cannot read what it is approving.
+            - Effect: Allow
+              Action: [s3:GetObjectAttributes]
+              Resource: !Sub '${MediaBucket.Arn}/*'
+      Events:
+        Finalize:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/finalize
+            Method: POST
+
+  ClaimFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.claimFile
+      # The one delivery attempt buffers the whole ciphertext and base64-encodes
+      # it. Memory here is really CPU: at 1024 MB the encode is milliseconds
+      # rather than seconds, which shortens the window in which a disconnect
+      # permanently eats someone's file.
+      Timeout: 15
+      MemorySize: 1024
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:DeleteItem]
+              Resource: !GetAtt NotesTable.Arn
+            # GetObject covers HeadObject, which is the absence check.
+            - Effect: Allow
+              Action: [s3:GetObject, s3:DeleteObject]
+              Resource: !Sub '${MediaBucket.Arn}/*'
+      Events:
+        Claim:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/claim
             Method: POST
 
   # --- Static site: private S3 bucket fronted by CloudFront (OAC) ---
