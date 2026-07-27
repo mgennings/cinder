@@ -5,7 +5,7 @@
 **An encrypted note or file retrieved once from Cinder. The server can't read it.**
 
 [![Live](https://img.shields.io/badge/live-cinder.ink-ff6b4a)](https://cinder.ink)
-[![Tests](https://img.shields.io/badge/tests-91%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-97%20passing-brightgreen)](#testing)
 [![Crypto](https://img.shields.io/badge/crypto-AES--256--GCM-blue)](docs/crypto.md)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
@@ -105,11 +105,11 @@ Cinder's docs are task-oriented — pick the one that matches what you want to d
 
 ## Testing
 
-91 tests across three layers, all green:
+97 tests across three layers, all green:
 
 ```bash
 pnpm vitest run                    # 41 unit tests: crypto, codec, links, claims
-node --test api/test/*.mjs         # 42 API tests: burn, claim, race-safety, validation (needs DynamoDB Local)
+node --test api/test/*.mjs         # 48 API tests: burn, claim, race-safety, S3 error reading (needs DynamoDB Local)
 pnpm exec playwright test          # 8 end-to-end tests in a real browser
 ```
 
@@ -120,6 +120,7 @@ The tests that matter most prove the security claims rather than the happy path:
 - Twenty concurrent claims on one file yield exactly one body and nineteen byte-identical refusals.
 - The destructive path is broken at every seam — S3 open, delete, and the absence check — and each time the assertion is the same: no response byte ever existed, and the transfer stays permanently consumed.
 - A delete that silently succeeds without deleting is caught by the absence check, which is the entire reason that check exists.
+- The absence check refuses to accept a `403` as proof of deletion. Without `s3:ListBucket`, S3 answers a request for a missing object with `403` rather than `404`, and "I am not allowed to look" is not evidence that something is gone. Two deliberately different readings of the same S3 error live in `api/src/s3-errors.mjs`, and a test asserts they still disagree.
 - In a real browser: arriving at a file link claims nothing, the reveal cannot be double-activated, a file over the ceiling never reaches the server, and the fragment key appears in no request URL or body.
 
 ## A word on honesty
