@@ -2,10 +2,10 @@
 
 # Cinder
 
-**A note that's read once, then gone. Encrypted in your browser — the server can't read it.**
+**An encrypted note or file retrieved once from Cinder. The server can't read it.**
 
 [![Live](https://img.shields.io/badge/live-cinder.ink-ff6b4a)](https://cinder.ink)
-[![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-104%20passing-brightgreen)](#testing)
 [![Crypto](https://img.shields.io/badge/crypto-AES--256--GCM-blue)](docs/crypto.md)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
@@ -13,7 +13,9 @@
 
 ---
 
-Cinder is a zero-knowledge, self-destructing note service. You write a note, Cinder encrypts it in your browser, and hands you a single link. The first person to open that link reads the note once — then it's gone, permanently, from everywhere. The server that stores the note can never read it. That last property is the entire point: this is a genuine privacy tool, not a demo that merely feels private.
+Cinder is a zero-knowledge, self-destructing note and file service. You write a note or choose a file, Cinder encrypts it in your browser, and hands you a single link. The first successful reader atomically removes Cinder's stored copy and receives the encrypted content. Cinder cannot erase copies someone already captured. The server that stores it can never read it. That last property is the entire point: this is a genuine privacy tool, not a demo that merely feels private.
+
+Files make one additional promise, and it is deliberately narrow: **exactly one server delivery attempt**, up to 4 MiB. Cinder deletes its own stored encrypted copy and verifies the object is gone before any response byte exists, so receiving the bytes is itself proof the deletion already happened. Any failure after that claim permanently consumes the transfer — there is no retry, and the reveal screen says so before anyone presses the button. The filename and MIME type are encrypted alongside the bytes.
 
 The bar was "the best one out there." Concretely that means clearing the bar the respected tools clear — client-side encryption with the key held only in the URL fragment — and doing it on real AWS infrastructure with an atomic, race-proof burn, wrapped in a UI that's a pleasure to use.
 
@@ -25,8 +27,8 @@ Most "private note" services encrypt on the server, which means the server holds
 | --- | --- | --- |
 | Where encryption happens | On the server | In your browser |
 | Who holds the decryption key | The server | Only the link (URL fragment) |
-| Can the operator read your note? | Yes, technically | No — it's mathematically impossible |
-| What "self-destruct" means | The server deletes it | Atomic delete-and-return: exactly one reader, ever |
+| Can the operator read what's stored? | Yes, technically | No — the key never reaches us |
+| What "self-destruct" means | The server deletes it | Atomic delete-and-return: one successful server retrieval |
 | Survives link-preview bots | Often no | Yes — human-gated reveal |
 | Honest about its limits | Rarely | [Yes, explicitly](docs/security.md) |
 
@@ -49,7 +51,7 @@ The trick is the URL fragment — everything after the `#`. Browsers keep it str
 │ human clicks "Reveal" ───────┼──► API Gateway ──► Lambda ──► DynamoDB          │
 │ ◄── ciphertext (now burned) ─┼────                │   atomic conditional      │
 │ decrypt with key from #      │                    │   DeleteItem + ALL_OLD    │
-│ read once — then it's gone   │                    │                           │
+│ read once — gone from Cinder │                    │                           │
 └──────────────────────────────┘                    └───────────────────────────┘
 ```
 
@@ -103,15 +105,23 @@ Cinder's docs are task-oriented — pick the one that matches what you want to d
 
 ## Testing
 
-25 tests across three layers, all green:
+104 tests across three layers, all green:
 
 ```bash
-pnpm vitest run                    # 13 unit tests: crypto, codec, links
-cd api && node --test test/*.mjs   # 10 API tests: burn, race-safety, validation (needs DynamoDB Local)
-pnpm exec playwright test          # 2 end-to-end tests in a real browser
+pnpm vitest run                    # 43 unit tests: crypto, codec, links, shipped claims
+node --test api/test/*.mjs         # 51 API tests: burn, claim, race-safety, S3 error reading (needs DynamoDB Local)
+pnpm exec playwright test          # 10 end-to-end tests in a real browser
 ```
 
-The tests that matter most prove the security claims: a tampered ciphertext fails to decrypt, an expired note is never served, and three concurrent readers of the same note yield exactly one winner.
+The tests that matter most prove the security claims rather than the happy path:
+
+- A tampered ciphertext fails to decrypt, and so does a tampered filename — both live inside the same authenticated envelope.
+- An expired note or transfer is never served, even before DynamoDB's TTL sweep reaps it.
+- Twenty concurrent claims on one file yield exactly one body and nineteen byte-identical refusals.
+- The destructive path is broken at every seam — S3 open, delete, and the absence check — and each time the assertion is the same: no response byte ever existed, and the transfer stays permanently consumed.
+- A delete that silently succeeds without deleting is caught by the absence check, which is the entire reason that check exists.
+- The absence check refuses to accept a `403` as proof of deletion. Without `s3:ListBucket`, S3 answers a request for a missing object with `403` rather than `404`, and "I am not allowed to look" is not evidence that something is gone. Two deliberately different readings of the same S3 error live in `api/src/s3-errors.mjs`, and a test asserts they still disagree.
+- In a real browser: arriving at a file link claims nothing, the reveal cannot be double-activated, a file over the ceiling never reaches the server, and the fragment key appears in no request URL or body.
 
 ## A word on honesty
 

@@ -4,8 +4,9 @@
 /// <reference lib="webworker" />
 
 // A minimal service worker: precache the built app shell so Cinder is
-// installable and opens instantly offline. Note content is never cached — it's
-// one-time and always fetched live — so this only ever holds static assets.
+// installable and opens instantly offline. Note and file content is never
+// cached — it's one-time and always fetched live — so this only ever holds
+// static assets.
 
 import { build, files, version } from '$service-worker';
 
@@ -33,8 +34,15 @@ sw.addEventListener('fetch', (event) => {
 	if (request.method !== 'GET') return;
 
 	const url = new URL(request.url);
-	// Never touch the API — note create/burn must always hit the network live.
-	if (url.pathname.startsWith('/notes')) return;
+	// Never touch the API. Note burns and file claims are one-shot and
+	// destructive: a cached response would be a copy of something Cinder
+	// promised it no longer has. Claims are POSTs and already excluded above,
+	// but this is the rule stated where someone will actually read it.
+	if (url.pathname.startsWith('/notes') || url.pathname.startsWith('/files')) return;
+
+	// Cross-origin requests (the presigned upload to the private bucket) are
+	// never ours to cache or serve.
+	if (url.origin !== location.origin) return;
 
 	// Cache-first for our own precached static assets; network for everything else.
 	if (ASSETS.includes(url.pathname)) {

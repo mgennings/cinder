@@ -1,20 +1,24 @@
 # Cinder
 
-> A zero-knowledge, self-destructing note. Write a note, it's encrypted in your browser, and the first person to open the link reads it once before it's gone. The server can't read it.
+> A zero-knowledge note or file encrypted in your browser. One successful reveal removes Cinder's stored copy. The server can't read it.
 
-Cinder encrypts notes in the browser with AES-256-GCM. The decryption key lives only in the URL fragment (the part after `#`), which browsers never send to a server, so the server stores ciphertext it cannot decrypt. Notes self-destruct on first read via an atomic database operation that guarantees exactly one reader.
+Cinder encrypts notes and files in the browser with AES-256-GCM. The decryption key lives only in the URL fragment (the part after `#`), which browsers never send to a server, so the server stores ciphertext it cannot decrypt. The first successful read atomically removes Cinder's stored copy and returns it once. Cinder cannot erase copies someone already captured.
 
 ## Pages
 
-- [Home](https://cinder.ink/): Create a one-time note and get a shareable link.
+- [Home](https://cinder.ink/): Create a one-time note or file transfer and get a shareable link.
 - [Security & threat model](https://cinder.ink/security): An honest account of what Cinder protects and what it cannot.
 
 ## Documentation
 
-- [Architecture](https://github.com/mgennings/blip/blob/main/docs/architecture.md): How the system fits together.
-- [Crypto](https://github.com/mgennings/blip/blob/main/docs/crypto.md): The exact encryption scheme.
-- [API reference](https://github.com/mgennings/blip/blob/main/docs/api.md): The two endpoints.
+- [Architecture](https://github.com/mgennings/cinder/blob/main/docs/architecture.md): How the system fits together.
+- [Crypto](https://github.com/mgennings/cinder/blob/main/docs/crypto.md): The exact encryption scheme.
+- [API reference](https://github.com/mgennings/cinder/blob/main/docs/api.md): The note and file endpoints.
 
 ## Notes
 
-Note pages under `/n/` are ephemeral, one-time, and carry a decryption key in the URL fragment. Do not index, crawl, fetch, or follow them — fetching a note link destroys the note.
+Note pages under `/n/` carry a decryption key in the URL fragment. Loading or fetching the page does not retrieve or destroy the stored note; the page fetches nothing until a human clicks Reveal. Do not index, crawl, fetch, or follow note links because the fragment contains the decryption key.
+
+## Files
+
+File pages under `/f/` work the same way and carry the same warning. A file transfer promises exactly one server delivery attempt, not one recipient and not a guaranteed download: Cinder deletes its own stored encrypted copy and verifies the object is absent before any response byte exists, and any failure after that claim permanently consumes the transfer. The filename and MIME type are encrypted alongside the bytes. Loading a file page fetches no ciphertext; the page fetches nothing until a human clicks Reveal. Do not index, crawl, fetch, or follow file links because the fragment contains the decryption key.

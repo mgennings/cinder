@@ -25,7 +25,7 @@
 	</div>
 
 	<p class="text-xs leading-relaxed text-ghost">
-		Anyone with this link can read the note once, then it's gone. Share it over a channel you
-		trust — the link is the only key, and we can't recover it.
+		One successful reveal removes Cinder's stored copy. Share this link over a channel you trust
+		— it is the only key, and anyone who captures it can keep a copy.
 	</p>
 </div>

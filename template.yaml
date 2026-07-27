@@ -29,9 +29,22 @@ Globals:
     Architectures: [arm64]
     Timeout: 5
     MemorySize: 128
+    # A ceiling AND a floor, and it is the cheapest protection in this file.
+    #
+    # Lambda concurrency is one pool per account, shared with every other
+    # project here. Unreserved, a flood against cinder.ink could consume all
+    # 987 available executions and starve everything else in the account — and
+    # bill for it. Reserving 10 per function bounds the worst case to roughly
+    # $14/day instead of roughly $1,400/day, and simultaneously guarantees
+    # Cinder those 10 so another project's spike cannot starve a delivery.
+    #
+    # Ten concurrent claims is far above real use. It collects nothing about
+    # anyone and adds no friction: this is a resource boundary, not a filter.
+    ReservedConcurrentExecutions: 10
     Environment:
       Variables:
         TABLE_NAME: !Ref NotesTable
+        MEDIA_BUCKET: !Ref MediaBucket
 
 Resources:
   NotesTable:
@@ -50,10 +63,27 @@ Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      # Exact origins, not '*'. The API hands out ciphertext and one-use upload
+      # authorizations; there is no reason for a page Cinder did not serve to be
+      # able to read either.
       CorsConfiguration:
-        AllowOrigins: ['*']
+        AllowOrigins:
+          - !Sub 'https://${PrimaryDomain}'
+          - !Sub 'https://${WwwDomain}'
+          - !Sub 'https://${SiteDomain}'
+          - !Sub 'https://${LegacyDomain}'
         AllowMethods: [POST, OPTIONS]
         AllowHeaders: [content-type]
+      # A cost and abuse ceiling, NOT the defense against locator guessing.
+      # Measured on the deployed stage: 150 concurrent claims at ~265 req/s were
+      # not throttled at all, and shedding only began somewhere past 200
+      # concurrent. HTTP API stage throttling is best-effort, so do not credit
+      # it with a security property. What actually makes guessing hopeless is
+      # 256 bits of locator entropy. If real enforcement is ever needed, it has
+      # to be CloudFront + WAF with a rate-based rule in front of this API.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 40
+        ThrottlingRateLimit: 20
 
   CreateNoteFn:
     Type: AWS::Serverless::Function
@@ -91,6 +121,163 @@ Resources:
             Path: /notes/{id}/burn
             Method: POST
 
+  # --- File transfer: private ciphertext bucket + three separated roles ---
+  #
+  # Nothing about this bucket is reachable from the internet. The only paths in
+  # or out are a five-minute presigned PUT and the claim Lambda. Only the claim
+  # function can list it, and only so a deleted object answers 404 instead of
+  # 403 (see ClaimFileFn) — knowing the bucket exists tells you nothing about what
+  # is in it, and an object key cannot be derived from a link.
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'blip-media-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # ACLs off entirely. There is one owner and no sharing model to get wrong.
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      # Deliberately NOT versioned. A version history of a file whose whole
+      # promise is deletion would quietly keep the thing we said we destroyed.
+      LifecycleConfiguration:
+        Rules:
+          # Backstop only. The claim path deletes its object synchronously; this
+          # sweeps abandoned uploads and grants that expired unread. Eight days
+          # clears the seven-day maximum TTL with a day to spare.
+          - Id: expire-orphaned-ciphertext
+            Status: Enabled
+            ExpirationInDays: 8
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - !Sub 'https://${PrimaryDomain}'
+              - !Sub 'https://${WwwDomain}'
+              - !Sub 'https://${SiteDomain}'
+              - !Sub 'https://${LegacyDomain}'
+            AllowedMethods: [PUT]
+            AllowedHeaders: [content-type, x-amz-checksum-sha256]
+            MaxAge: 300
+
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyPlaintextTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt MediaBucket.Arn
+              - !Sub '${MediaBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  CreateFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.createFile
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt NotesTable.Arn
+            # Needed for the presigned PUT to carry any authority at all — a
+            # presigned URL can never exceed its signer's own permissions.
+            - Effect: Allow
+              Action: [s3:PutObject]
+              Resource: !Sub '${MediaBucket.Arn}/*'
+      Events:
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files
+            Method: POST
+
+  FinalizeFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.finalizeFile
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt NotesTable.Arn
+            # GetObjectAttributes returns size and checksum without the body,
+            # but AWS requires s3:GetObject alongside it ("you need the
+            # s3:GetObject and s3:GetObjectAttributes permissions" —
+            # API_GetObjectAttributes). So this role CAN read a stored object.
+            # An earlier draft claimed it could not; that was wrong, and S3's
+            # permission model offers no way to make it true. What still holds:
+            # no s3:DeleteObject, and no s3:ListBucket, so finalize cannot
+            # destroy anything or discover a key it was not handed.
+            - Effect: Allow
+              Action: [s3:GetObject, s3:GetObjectAttributes]
+              Resource: !Sub '${MediaBucket.Arn}/*'
+      Events:
+        Finalize:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/finalize
+            Method: POST
+
+  ClaimFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.claimFile
+      # The one delivery attempt buffers the whole ciphertext and base64-encodes
+      # it. Memory here is really CPU: at 1024 MB the encode is milliseconds
+      # rather than seconds, which shortens the window in which a disconnect
+      # permanently eats someone's file.
+      Timeout: 15
+      MemorySize: 1024
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:DeleteItem]
+              Resource: !GetAtt NotesTable.Arn
+            # GetObject covers HeadObject, which is the absence check.
+            - Effect: Allow
+              Action: [s3:GetObject, s3:DeleteObject]
+              Resource: !Sub '${MediaBucket.Arn}/*'
+            # This one grant is a deliberate, documented exception to the
+            # otherwise strict no-ListBucket rule, and it exists for exactly one
+            # reason: without s3:ListBucket, S3 answers a request for a missing
+            # object with 403 instead of 404. The post-delete absence check
+            # would then be unable to tell "the object is gone" from "I am not
+            # allowed to look" — and "not allowed to look" is not a deletion
+            # proof. Withholding it would either break every claim or force the
+            # check to accept an ambiguous answer, which is worse than not
+            # having the check. Only the claim function gets it; create and
+            # finalize still cannot list.
+            - Effect: Allow
+              Action: [s3:ListBucket]
+              Resource: !GetAtt MediaBucket.Arn
+      Events:
+        Claim:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/claim
+            Method: POST
+
   # --- Static site: private S3 bucket fronted by CloudFront (OAC) ---
   SiteBucket:
     Type: AWS::S3::Bucket
@@ -101,6 +288,41 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+
+  # Transport and framing headers at the edge. The Content-Security-Policy
+  # itself is emitted by SvelteKit as a hashed <meta> (see vite.config.ts),
+  # because the inline bootstrap script's hash changes every build and a static
+  # header could only cover it with 'unsafe-inline'. `frame-ancestors` lives
+  # here instead, since it is ignored inside a meta tag.
+  SiteHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub 'cinder-security-headers-${AWS::AccountId}'
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Preload: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            Override: false
+        CustomHeadersConfig:
+          Items:
+            # Cinder asks for no device capability anywhere. Say so, so a
+            # compromised or injected script cannot quietly start asking.
+            - Header: Permissions-Policy
+              Value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()'
+              Override: true
 
   SiteOAC:
     Type: AWS::CloudFront::OriginAccessControl
@@ -138,6 +360,7 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
           # CachingOptimized managed policy
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref SiteHeadersPolicy
         # SPA fallback: any unresolved path (e.g. /n/<id>) serves the app shell.
         # NOTE for the future Android/TWA phase: a /.well-known/assetlinks.json
         # behavior MUST be added ABOVE this fallback, or CloudFront will return

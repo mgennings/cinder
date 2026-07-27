@@ -16,6 +16,27 @@
 		}
 	];
 
+	// The file promise is narrower than the note promise, and the difference
+	// matters enough to say separately rather than fold into the list above.
+	const files: Row[] = [
+		{
+			title: 'One server delivery attempt',
+			body: 'That is the exact promise, and it is narrower than "one download." Cinder allows a single atomic claim on a file. It deletes its own encrypted stored copy and confirms the copy is gone before any response byte exists — so holding the bytes is itself proof the deletion already happened.'
+		},
+		{
+			title: 'A failed delivery is permanent',
+			body: 'If the connection drops after the claim, Cinder has already deleted its copy and will not recreate it. There is no retry, no resume, and no second attempt. This is the cost of the guarantee above, and it is real: ask the sender for a new link.'
+		},
+		{
+			title: 'The filename is encrypted too',
+			body: 'The file name and its type are encrypted inside the same authenticated envelope as the bytes. A stored object reveals its size and nothing else — not what the file is called, not what kind of file it is.'
+		},
+		{
+			title: 'What Cinder still cannot control',
+			body: 'Copies saved by the sender, the recipient, a browser, an operating system, or another service remain outside Cinder’s control. Deleting our stored copy is the only deletion any server can honestly promise.'
+		}
+	];
+
 	const cannot: Row[] = [
 		{
 			title: 'A compromised server serving bad JavaScript',
@@ -70,6 +91,16 @@
 	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder protects</h2>
 	<div class="mt-4 space-y-4">
 		{#each protects as row (row.title)}
+			<div class="card p-4">
+				<h3 class="font-medium text-body">{row.title}</h3>
+				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
+			</div>
+		{/each}
+	</div>
+
+	<h2 class="mt-10 text-lg font-semibold text-ember-ink">Sending a file</h2>
+	<div class="mt-4 space-y-4">
+		{#each files as row (row.title)}
 			<div class="card p-4">
 				<h3 class="font-medium text-body">{row.title}</h3>
 				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
