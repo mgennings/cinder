@@ -5,10 +5,13 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
 
-		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
+		<!-- Sized so a 16px tab strip downscales the 32 instead of the 64: the mark
+	     was measured at both and the 32 keeps a readable void around the ember. -->
+		<link rel="icon" type="image/png" sizes="32x32" href="%sveltekit.assets%/favicon-32.png" />
+		<link rel="icon" type="image/png" sizes="64x64" href="%sveltekit.assets%/favicon.png" />
 		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
 		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
-		<meta name="theme-color" content="#0a0a0f" />
+		<meta name="theme-color" content="#0d0b0a" />
 
 		<!-- Default social card. Per-page titles/descriptions override via <svelte:head>. -->
 		<meta property="og:type" content="website" />

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Cinder">
+  <title>Cinder</title>
+  <!--
+    THE MARK — the merkaba, held off-rest, with the ember at its center.
+
+    Two interlocked tetrahedra are already Cinder's own geometry: two fields
+    that only work as one, which is exactly the two-factor model (link key +
+    passphrase). The figure lives in the product as src/lib/ui/Merkaba.svelte,
+    breathing behind the hero. This is that same figure made still.
+
+    THE 24 DEGREE OFFSET IS LOAD-BEARING, NOT STYLING. Two equilateral
+    triangles exactly 60 degrees apart resolve into a hexagram, a religious and
+    national symbol this product has no claim on. Held 36 degrees apart they
+    never can. The upward tetrahedron carries +18 degrees and the downward one
+    +42, which is the one pairing in that family that is also mirror-symmetric
+    about the vertical axis, so the mark stands up straight instead of leaning.
+    "Cleaning up" these angles draws a different mark for a different
+    organization. Don't.
+
+    Ember on transparent, so it sits on the vault floor or on warm paper.
+    cinder-mark-light.svg is the same geometry in the light-theme ember for
+    surfaces Cinder does not control the background of.
+
+    STROKE 3.5 IN A 64 UNIT BOX IS MEASURED, NOT PICKED. Rendered at 16px
+    against the vault floor and against white, 3, 3.5, 4, and 4.5 were compared
+    pixel by pixel: 3.5 is the heaviest stroke that still leaves a readable void
+    between the triangles and the ember core at favicon size, and it holds up at
+    32 and above. Going heavier fills that void in and the mark becomes a blob.
+  -->
+  <g fill="none" stroke="#ff6b4a" stroke-width="3.5" stroke-linejoin="round">
+    <polygon points="39.73,8.22 48.73,50.58 7.55,37.20" />
+    <polygon points="15.27,50.58 24.27,8.22 56.45,37.20" />
+  </g>
+  <!-- The still center the two fields turn around. Also the cinder itself. -->
+  <circle cx="32" cy="32" r="4" fill="#ff8f73" />
+</svg>

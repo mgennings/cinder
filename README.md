@@ -89,6 +89,8 @@ Cinder's docs are task-oriented — pick the one that matches what you want to d
 | Deploy my own copy to AWS | [Deployment](docs/deployment.md) |
 | Call the API directly | [API reference](docs/api.md) |
 | Understand or extend the look | [Theme & design system](docs/theme.md) |
+| Use the mark, or rebuild the icons | [`static/brand/`](static/brand/), built by [`scripts/build-brand.py`](scripts/build-brand.py) |
+| Take payments through this account | [Stripe account cleanup](docs/stripe-account-cleanup.md) |
 | Contribute | [Contributing](CONTRIBUTING.md) |
 
 ## Tech stack
