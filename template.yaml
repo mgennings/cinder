@@ -29,6 +29,18 @@ Globals:
     Architectures: [arm64]
     Timeout: 5
     MemorySize: 128
+    # A ceiling AND a floor, and it is the cheapest protection in this file.
+    #
+    # Lambda concurrency is one pool per account, shared with every other
+    # project here. Unreserved, a flood against cinder.ink could consume all
+    # 987 available executions and starve everything else in the account — and
+    # bill for it. Reserving 10 per function bounds the worst case to roughly
+    # $14/day instead of roughly $1,400/day, and simultaneously guarantees
+    # Cinder those 10 so another project's spike cannot starve a delivery.
+    #
+    # Ten concurrent claims is far above real use. It collects nothing about
+    # anyone and adds no friction: this is a resource boundary, not a filter.
+    ReservedConcurrentExecutions: 10
     Environment:
       Variables:
         TABLE_NAME: !Ref NotesTable
