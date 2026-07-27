@@ -20,11 +20,15 @@ const PBKDF2_ITERATIONS = 600_000; // OWASP-current for PBKDF2-HMAC-SHA256
 // WebCrypto wants a BufferSource backed by a plain ArrayBuffer. Copy into a
 // fresh ArrayBuffer so TypeScript's Uint8Array<ArrayBufferLike> generic (which
 // admits SharedArrayBuffer) doesn't fight the BufferSource parameter types.
-function toBuf(bytes: Uint8Array): ArrayBuffer {
+//
+// Exported (with the two key derivations below) so file-crypto can reuse the
+// exact same key handling rather than growing a second, subtly different copy.
+// One scheme, two envelopes.
+export function toBuf(bytes: Uint8Array): ArrayBuffer {
 	return bytes.slice().buffer as ArrayBuffer;
 }
 
-async function deriveWithPassphrase(
+export async function deriveWithPassphrase(
 	raw: Uint8Array,
 	passphrase: string,
 	salt: Uint8Array
@@ -44,7 +48,7 @@ async function deriveWithPassphrase(
 	return crypto.subtle.importKey('raw', toBuf(mixed), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
-function importRaw(raw: Uint8Array): Promise<CryptoKey> {
+export function importRaw(raw: Uint8Array): Promise<CryptoKey> {
 	return crypto.subtle.importKey('raw', toBuf(raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
