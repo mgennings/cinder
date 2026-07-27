@@ -57,7 +57,7 @@ Open `http://localhost:5173`, write a note, copy the link, open it in a new tab,
 
 ## Running the tests
 
-Cinder has 25 tests across three layers.
+Cinder has 113 tests across three layers.
 
 | Command | Layer | Needs DynamoDB Local? |
 | --- | --- | --- |
