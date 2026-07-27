@@ -1,9 +1,14 @@
 // Local dev API — mounts the real Lambda handlers behind a tiny Node HTTP
-// server, backed by DynamoDB Local. This is the same handler code that runs in
-// production; only the transport and the DynamoDB endpoint differ. Used for
-// end-to-end testing without Docker/sam local.
+// server, backed by DynamoDB Local and an in-memory stand-in for the private
+// media bucket. This is the same handler code that runs in production; only the
+// transport, the DynamoDB endpoint, and the bucket differ.
+//
+// The fake bucket enforces the same things real S3 enforces on a presigned PUT
+// — exact length, exact SHA-256 — because a local bucket that accepted anything
+// would let a broken upload path pass here and fail in production.
 
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import {
 	DynamoDBClient,
 	CreateTableCommand,
@@ -21,7 +26,38 @@ const raw = new DynamoDBClient({
 	credentials: { accessKeyId: 'x', secretAccessKey: 'x' }
 });
 const doc = DynamoDBDocumentClient.from(raw);
-const { createNote, readNote } = makeHandlers(doc);
+
+// --- in-memory private bucket ---------------------------------------------
+
+const objects = new Map(); // key -> { body: Buffer, sha: string }
+const grants = new Map(); // key -> { bytes, sha, expiresAtMs }
+
+const devS3 = {
+	async presignPut({ key, bytes, sha256, expiresIn }) {
+		grants.set(key, { bytes, sha: sha256, expiresAtMs: Date.now() + expiresIn * 1000 });
+		return {
+			url: `http://localhost:${PORT}/dev-bucket/${key}`,
+			headers: { 'content-length': String(bytes), 'x-amz-checksum-sha256': sha256 }
+		};
+	},
+	async attributes({ key }) {
+		const o = objects.get(key);
+		return o ? { contentLength: o.body.length, checksumSha256: o.sha } : null;
+	},
+	async get({ key }) {
+		const o = objects.get(key);
+		if (!o) throw new Error('NoSuchKey');
+		return o.body;
+	},
+	async delete({ key }) {
+		objects.delete(key);
+	},
+	async head({ key }) {
+		return objects.has(key) ? {} : null;
+	}
+};
+
+const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, devS3);
 
 async function ensureTable() {
 	try {
@@ -40,17 +76,37 @@ async function ensureTable() {
 
 function readBody(req) {
 	return new Promise((resolve) => {
-		let data = '';
-		req.on('data', (c) => (data += c));
-		req.on('end', () => resolve(data));
+		const chunks = [];
+		req.on('data', (c) => chunks.push(c));
+		req.on('end', () => resolve(Buffer.concat(chunks)));
 	});
 }
 
 const cors = {
 	'access-control-allow-origin': '*',
-	'access-control-allow-methods': 'POST, OPTIONS',
-	'access-control-allow-headers': 'content-type'
+	'access-control-allow-methods': 'GET, PUT, POST, OPTIONS',
+	'access-control-allow-headers': 'content-type, x-amz-checksum-sha256'
 };
+
+// Stands in for S3's own enforcement of a presigned PUT.
+async function handleBucketPut(req, res, key) {
+	const grant = grants.get(key);
+	if (!grant) return { status: 403, message: 'no such upload grant' };
+	if (Date.now() > grant.expiresAtMs) return { status: 403, message: 'upload grant expired' };
+
+	const body = await readBody(req);
+	if (body.length !== grant.bytes) return { status: 400, message: 'content-length mismatch' };
+
+	const sha = createHash('sha256').update(body).digest('base64');
+	if (sha !== grant.sha) return { status: 400, message: 'checksum mismatch' };
+	if (req.headers['x-amz-checksum-sha256'] !== grant.sha) {
+		return { status: 400, message: 'declared checksum mismatch' };
+	}
+
+	objects.set(key, { body, sha });
+	grants.delete(key); // one use, like the signature's window
+	return { status: 200, message: 'ok' };
+}
 
 const server = createServer(async (req, res) => {
 	if (req.method === 'OPTIONS') {
@@ -61,22 +117,35 @@ const server = createServer(async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	let result;
 	try {
+		const bucket = url.pathname.match(/^\/dev-bucket\/(.+)$/);
+		if (req.method === 'PUT' && bucket) {
+			const { status, message } = await handleBucketPut(req, res, bucket[1]);
+			res.writeHead(status, { ...cors, 'content-type': 'text/plain' });
+			return res.end(message);
+		}
+
+		const burn = url.pathname.match(/^\/notes\/([^/]+)\/burn$/);
 		if (req.method === 'POST' && url.pathname === '/notes') {
-			result = await createNote({ body: await readBody(req) });
+			result = await createNote({ body: (await readBody(req)).toString() });
+		} else if (req.method === 'POST' && burn) {
+			result = await readNote({ pathParameters: { id: decodeURIComponent(burn[1]) } });
+		} else if (req.method === 'POST' && url.pathname === '/files') {
+			result = await createFile({ body: (await readBody(req)).toString() });
+		} else if (req.method === 'POST' && url.pathname === '/files/finalize') {
+			result = await finalizeFile({ body: (await readBody(req)).toString() });
+		} else if (req.method === 'POST' && url.pathname === '/files/claim') {
+			result = await claimFile({ body: (await readBody(req)).toString() });
 		} else {
-			const m = url.pathname.match(/^\/notes\/([^/]+)\/burn$/);
-			if (req.method === 'POST' && m) {
-				result = await readNote({ pathParameters: { id: decodeURIComponent(m[1]) } });
-			} else {
-				result = { statusCode: 404, body: JSON.stringify({ error: 'not found' }) };
-			}
+			result = { statusCode: 404, body: JSON.stringify({ error: 'not found' }) };
 		}
 	} catch (e) {
 		result = { statusCode: 500, body: JSON.stringify({ error: String(e?.message || e) }) };
 	}
 
 	res.writeHead(result.statusCode, { ...cors, ...(result.headers || {}) });
-	res.end(result.body);
+	// API Gateway decodes a base64 body into binary before it reaches the
+	// browser; do the same here so the client sees identical bytes either way.
+	res.end(result.isBase64Encoded ? Buffer.from(result.body, 'base64') : result.body);
 });
 
 await ensureTable();
