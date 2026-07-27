@@ -62,8 +62,13 @@ Resources:
           - !Sub 'https://${LegacyDomain}'
         AllowMethods: [POST, OPTIONS]
         AllowHeaders: [content-type]
-      # A self-destructing-note service has no legitimate burst shape. This is
-      # generous for humans and hostile to anyone grinding locators.
+      # A cost and abuse ceiling, NOT the defense against locator guessing.
+      # Measured on the deployed stage: 150 concurrent claims at ~265 req/s were
+      # not throttled at all, and shedding only began somewhere past 200
+      # concurrent. HTTP API stage throttling is best-effort, so do not credit
+      # it with a security property. What actually makes guessing hopeless is
+      # 256 bits of locator entropy. If real enforcement is ever needed, it has
+      # to be CloudFront + WAF with a rate-based rule in front of this API.
       DefaultRouteSettings:
         ThrottlingBurstLimit: 40
         ThrottlingRateLimit: 20
@@ -272,6 +277,41 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  # Transport and framing headers at the edge. The Content-Security-Policy
+  # itself is emitted by SvelteKit as a hashed <meta> (see vite.config.ts),
+  # because the inline bootstrap script's hash changes every build and a static
+  # header could only cover it with 'unsafe-inline'. `frame-ancestors` lives
+  # here instead, since it is ignored inside a meta tag.
+  SiteHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub 'cinder-security-headers-${AWS::AccountId}'
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Preload: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            Override: false
+        CustomHeadersConfig:
+          Items:
+            # Cinder asks for no device capability anywhere. Say so, so a
+            # compromised or injected script cannot quietly start asking.
+            - Header: Permissions-Policy
+              Value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()'
+              Override: true
+
   SiteOAC:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
@@ -308,6 +348,7 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
           # CachingOptimized managed policy
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref SiteHeadersPolicy
         # SPA fallback: any unresolved path (e.g. /n/<id>) serves the app shell.
         # NOTE for the future Android/TWA phase: a /.well-known/assetlinks.json
         # behavior MUST be added ABOVE this fallback, or CloudFront will return

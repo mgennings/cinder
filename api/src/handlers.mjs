@@ -11,7 +11,8 @@ import {
 	markFileReady,
 	claimFileGrant
 } from './store.mjs';
-import { newId, newCapability, hashCapability, newObjectKey } from './id.mjs';
+import { createHash } from 'node:crypto';
+import { newId, newCapability, hashCapability, newObjectKey, capabilityMatches } from './id.mjs';
 
 const MAX_CT = 100_000; // reject oversized ciphertext (chars)
 const MAX_TTL = 604_800; // 7 days
@@ -29,9 +30,17 @@ const MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024 + 4096;
 // anyone can use it.
 const UPLOAD_WINDOW_SECONDS = 300;
 
+// Every response this API produces is one-shot and secret-adjacent, so nothing
+// it returns should ever be written to a cache — including a burned note, whose
+// body IS the plaintext-bearing ciphertext.
 const json = (statusCode, obj) => ({
 	statusCode,
-	headers: { 'content-type': 'application/json' },
+	headers: {
+		'content-type': 'application/json',
+		'cache-control': 'no-store, private',
+		'x-content-type-options': 'nosniff',
+		'referrer-policy': 'no-referrer'
+	},
 	body: JSON.stringify(obj)
 });
 
@@ -39,14 +48,7 @@ const json = (statusCode, obj) => ({
 // existed, malformed locator, still uploading, expired, or already claimed.
 // Distinguishing them would turn this endpoint into an oracle that confirms a
 // link once existed.
-// `no-store` matches the successful claim so the two answers differ only in the
-// thing they cannot help differing in — one carries octets and one carries
-// JSON. Nothing here is secret, but header parity costs a line.
-const GONE = () => ({
-	statusCode: 410,
-	headers: { 'content-type': 'application/json', 'cache-control': 'no-store, private' },
-	body: JSON.stringify({ error: 'This transfer is no longer available.' })
-});
+const GONE = () => json(410, { error: 'This transfer is no longer available.' });
 
 const isBase64Sha256 = (s) => typeof s === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(s);
 
@@ -156,6 +158,17 @@ export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
 		// only thing that grants readiness, and it re-checks every fact.
 		if (!grant) return GONE();
 
+		// Reject a wrong capability BEFORE touching S3. This is not the security
+		// boundary — the conditional write below is — but it is load-bearing for
+		// a different reason: an unknown locator costs one DynamoDB round trip
+		// and a known one used to cost two, which made response time a reliable
+		// oracle for "this link still exists". Measured at ~72 ms of separation
+		// with non-overlapping distributions, enough to poll for the moment a
+		// recipient opens a transfer. Now both paths cost exactly one trip.
+		if (!capabilityMatches(hashCapability(uploadCapability), grant.uploadCapabilityHash)) {
+			return GONE();
+		}
+
 		// `attributes` asks S3 for size and checksum rather than the body. Note
 		// that this does NOT make the finalize role unable to read ciphertext —
 		// AWS requires s3:GetObject alongside s3:GetObjectAttributes, so the
@@ -215,6 +228,23 @@ export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
 		const after = await s3.head({ key: grant.objectKey });
 		if (after) throw new Error('stored copy still present after delete');
 		onEvent('s3-head-404');
+
+		// Deliver only what was finalized. The grant carries the exact length and
+		// checksum the server verified at finalize time, and until now the claim
+		// path fetched the object and returned it without ever looking at either.
+		// Anyone who could write to the bucket between finalize and claim could
+		// therefore spend a recipient's single delivery attempt on bytes the
+		// server had the evidence to reject. AES-GCM means they get a decryption
+		// failure rather than forged content — but a decryption failure is
+		// indistinguishable from a wrong passphrase, and the transfer is gone
+		// either way. Refusing here is the difference between "something was
+		// tampered with" and "your file silently didn't work."
+		if (
+			ciphertext.length !== grant.ciphertextBytes ||
+			createHash('sha256').update(ciphertext).digest('base64') !== grant.ciphertextSha256
+		) {
+			throw new Error('stored ciphertext does not match the finalized transfer');
+		}
 
 		// First moment any response byte exists anywhere in this process.
 		onEvent('response-first-byte');

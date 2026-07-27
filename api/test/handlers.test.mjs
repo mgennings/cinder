@@ -26,11 +26,13 @@ process.env.TABLE_NAME = 'blip-notes-h';
 // exists to catch.
 function fakeS3({ fail = {}, stickyDelete = false } = {}) {
 	const objects = new Map();
+	const calls = [];
 	const boom = (op) => {
 		throw new Error(`injected ${op} failure`);
 	};
 	return {
 		objects,
+		calls,
 		put(key, body) {
 			objects.set(key, { body, sha: createHash('sha256').update(body).digest('base64') });
 		},
@@ -43,6 +45,7 @@ function fakeS3({ fail = {}, stickyDelete = false } = {}) {
 		},
 		// Finalize's narrow view: size and checksum, never the body.
 		async attributes({ key }) {
+			calls.push('attributes');
 			if (fail.attributes) boom('attributes');
 			const o = objects.get(key);
 			return o ? { contentLength: o.body.length, checksumSha256: o.sha } : null;
@@ -404,4 +407,61 @@ test('a malformed or absent locator is refused like everything else', async () =
 		assert.equal(res.statusCode, unknown.statusCode);
 		assert.equal(res.body, unknown.body);
 	}
+});
+
+// --- what the adversarial pass found ---------------------------------------
+
+test('a wrong upload capability costs the same S3 work as an unknown locator', async () => {
+	// Finalize used to read the grant, then call S3, and only check the
+	// capability at the very end. An unknown locator therefore cost one round
+	// trip and a known one cost two — a ~72ms difference that let anyone
+	// holding only a locator poll to learn whether a transfer was still live.
+	const s3 = fakeS3();
+	const { h, locator } = await makeTransfer(s3);
+
+	s3.calls.length = 0;
+	const wrongCap = await h.finalizeFile({
+		body: JSON.stringify({ locator, uploadCapability: 'attacker-supplied' })
+	});
+	const knownLocatorCalls = [...s3.calls];
+
+	s3.calls.length = 0;
+	const unknown = await h.finalizeFile({
+		body: JSON.stringify({ locator: 'never-existed', uploadCapability: 'attacker-supplied' })
+	});
+	const unknownLocatorCalls = [...s3.calls];
+
+	assert.equal(wrongCap.statusCode, unknown.statusCode);
+	assert.equal(wrongCap.body, unknown.body);
+	// The observable that leaked was work, not bytes. Both paths must do none.
+	assert.deepEqual(knownLocatorCalls, []);
+	assert.deepEqual(unknownLocatorCalls, []);
+});
+
+test('claim refuses ciphertext that does not match what was finalized', async () => {
+	const s3 = fakeS3();
+	const events = [];
+	const { h, locator, uploadCapability, key } = await makeTransfer(s3, events);
+	await h.finalizeFile({ body: JSON.stringify({ locator, uploadCapability }) });
+
+	// Someone with bucket write swaps the body for one of identical length.
+	const tampered = Buffer.from(BODY);
+	tampered[0] ^= 0xff;
+	s3.put(key, tampered);
+
+	events.length = 0;
+	await assert.rejects(() => h.claimFile({ body: JSON.stringify({ locator }) }));
+	assert.ok(!events.includes('response-first-byte'), 'tampered bytes must not be delivered');
+
+	// The transfer is still consumed — the claim already happened.
+	assert.equal((await h.claimFile({ body: JSON.stringify({ locator }) })).statusCode, 410);
+});
+
+test('claim refuses ciphertext of the wrong length', async () => {
+	const s3 = fakeS3();
+	const { h, locator, uploadCapability, key } = await makeTransfer(s3);
+	await h.finalizeFile({ body: JSON.stringify({ locator, uploadCapability }) });
+
+	s3.put(key, Buffer.concat([BODY, Buffer.from('x')]));
+	await assert.rejects(() => h.claimFile({ body: JSON.stringify({ locator }) }));
 });

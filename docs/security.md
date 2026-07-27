@@ -18,7 +18,7 @@ A file transfer makes a narrower promise than a note, and the difference is wort
 
 **A failed delivery is permanent, by design.** If the connection drops after the claim — at byte zero or midstream — Cinder has already deleted its copy and will not recreate it. There is no retry, no resume, and no second attempt. This is the price of the guarantee above rather than a bug in it, and the reveal screen says so before anyone presses the button.
 
-**The filename and MIME type are encrypted.** They live inside the same AES-256-GCM envelope as the bytes, not beside it. A stored object reveals its approximate size and nothing else. "severance-agreement.pdf" is frequently the whole secret, and a design that authenticated the filename while leaving it readable would be protecting the wrong half.
+**The filename and MIME type are encrypted.** They live inside the same AES-256-GCM envelope as the bytes, not beside it. A stored object reveals its exact byte length and nothing else — and because ciphertext is the plaintext plus a fixed-size envelope, that length gives away the original file's size to within a few bytes. "severance-agreement.pdf" is frequently the whole secret, and a design that authenticated the filename while leaving it readable would be protecting the wrong half.
 
 **The stored ciphertext is unreachable except through that one path.** The bucket is private, non-versioned, and blocks all public access; there is no presigned `GET`, no redirect, no Range request, and no public path. Each of the three functions holds only what it needs: create can write but not read, finalize can read but not delete or list, and only the claim function can delete. Only the claim function can list, and it holds that permission for one reason — without `s3:ListBucket`, S3 answers a request for a missing object with `403` instead of `404`, and the post-delete absence check would be unable to tell "the object is gone" from "I am not allowed to look."
 
@@ -28,13 +28,19 @@ An earlier draft of this document claimed the finalize function could not read t
 
 **What it still cannot do.** Copies saved by the sender, the recipient, a browser, an operating system, or another service remain outside Cinder's control. Deleting its own stored copy is the only deletion any server can honestly promise, and everything below in this document applies to files exactly as it applies to notes.
 
+**An unclaimed transfer's stored copy can outlive its expiry.** The expiry you choose governs *availability* exactly: past it, the server refuses to deliver, immediately and unconditionally. Actual removal of the stored bytes is a separate, slower process. The DynamoDB grant is swept by TTL within roughly two days, and the S3 object by a flat eight-day lifecycle rule counted from upload, not from your chosen expiry. So a one-hour transfer that is never claimed becomes unreadable in one hour and is physically deleted within eight days. A *claimed* transfer is different: its object is deleted synchronously, during the delivery, and that deletion is verified before any byte is sent.
+
 **Size ceiling.** 4 MiB, derived from the transport rather than chosen: the buffered response is capped at 6 MB and travels base64, leaving about 11% headroom at that size. Raising it would mean changing the transport and re-proving the deletion guarantee.
 
 ## What Cinder cannot protect
 
 These are real limits. Some are inherent to browser-delivered crypto and cannot be fixed by any amount of better engineering.
 
-**A compromised server serving malicious JavaScript.** This is the fundamental limit. Because the same server that stores your note also ships the code that encrypts it, a compromised server could serve modified code that captures your note or key before encryption. "Zero-knowledge" holds only while the served code is honest, and no website can cryptographically prove that to you. Subresource Integrity and code review mitigate this; they do not eliminate it. Any tool that delivers crypto over the web shares this limitation, whether it admits it or not.
+**A compromised server serving malicious JavaScript.** This is the fundamental limit. Because the same server that stores your note also ships the code that encrypts it, a compromised server could serve modified code that captures your note or key before encryption. "Zero-knowledge" holds only while the served code is honest, and no website can cryptographically prove that to you. Any tool that delivers crypto over the web shares this limitation, whether it admits it or not.
+
+An earlier version of this paragraph offered Subresource Integrity as a mitigation. That was wrong twice over: SRI is not deployed here, and it would not help if it were. SRI protects you from a compromised *third-party* CDN by letting the first-party page pin what it expects. Cinder serves its own bundles, so an attacker who can change the JavaScript can change the `integrity` attribute in the same breath. What is actually deployed is a strict Content-Security-Policy that permits scripts only from Cinder's own origin and blocks inline injection, plus a published, auditable source tree — neither of which defends against Cinder itself. The honest summary is that this limit is real and unmitigated by anything technical: it rests on the operator, which is why the rest of this page exists.
+
+This also means the risk is not only "compromised." A dishonest operator has exactly the same capability without anyone breaking in.
 
 **Anyone who obtains the link.** The key lives in the link. Whoever holds the full link can read the note once. Send it over a channel you trust, and only to the person you mean.
 

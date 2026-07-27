@@ -86,6 +86,9 @@ export async function getFileGrant(doc, pk) {
 	return {
 		state: item.state,
 		objectKey: item.objectKey,
+		// A hash, never the capability itself — finalize compares against this
+		// before it touches S3 so a wrong capability costs no extra round trip.
+		uploadCapabilityHash: item.uploadCapabilityHash,
 		ciphertextBytes: item.ciphertextBytes,
 		ciphertextSha256: item.ciphertextSha256,
 		expiresAt: item.expiresAt

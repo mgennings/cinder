@@ -142,7 +142,11 @@ The API sends CORS headers for `POST` and `OPTIONS` restricted to Cinder's exact
 
 ## Rate limiting
 
-The API stage throttles at 20 requests per second with a burst of 40, across all routes. A self-destructing-transfer service has no legitimate burst shape, and locator guessing should be expensive.
+The API stage is configured to throttle at 20 requests per second with a burst of 40, across all routes. Treat that as a cost and abuse ceiling, not as a security control.
+
+Measured against the deployed stage, sustained load does converge on the configured rate — 31 seconds of offered load at 535 rps was 93% throttled, settling around 20 rps admitted. Instantaneous bursts are far more permissive than the configured burst allowance suggests: a cold bucket admitted 600 requests in 0.59 seconds with zero rejections. API Gateway HTTP API stage throttling is best-effort, so nothing here should be credited with preventing a determined burst.
+
+What actually makes locator guessing hopeless is the locator: 256 bits from the platform CSPRNG, stored only as a SHA-256 hash. If real burst enforcement is ever needed, it has to come from CloudFront plus a WAF rate-based rule in front of this API.
 
 ## Related documents
 

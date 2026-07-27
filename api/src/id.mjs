@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 
 // 16 random bytes → 22-char base64url id. Enough entropy that ids are
 // unguessable, short enough to sit cleanly in a URL.
@@ -27,7 +27,14 @@ export function newObjectKey() {
 	return randomBytes(32).toString('hex');
 }
 
-// ponytail: there is deliberately no local capability comparison here. Every
-// capability check is a DynamoDB condition expression instead, which is both
-// atomic with the write it guards and free of a read-then-compare window. A
-// local constant-time compare would be strictly weaker.
+// The authoritative capability check is still the DynamoDB condition
+// expression, which is atomic with the write it guards. This comparison exists
+// for a different reason: finalize has to reject a wrong capability BEFORE it
+// touches S3, or the extra round trip makes response time a reliable signal
+// that a grant exists. Constant time, because comparing a secret in variable
+// time is how you turn one oracle into two.
+export function capabilityMatches(presented, stored) {
+	const a = Buffer.from(String(presented), 'utf8');
+	const b = Buffer.from(String(stored ?? ''), 'utf8');
+	return a.length === b.length && timingSafeEqual(a, b);
+}
