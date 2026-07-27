@@ -1,7 +1,7 @@
 {
 	"name": "Cinder",
 	"short_name": "Cinder",
-	"description": "An encrypted note retrieved once from Cinder. The server can't read it.",
+	"description": "An encrypted note or file retrieved once from Cinder. The server can't read it.",
 	"start_url": "/",
 	"scope": "/",
 	"display": "standalone",

@@ -5,7 +5,7 @@
 **An encrypted note or file retrieved once from Cinder. The server can't read it.**
 
 [![Live](https://img.shields.io/badge/live-cinder.ink-ff6b4a)](https://cinder.ink)
-[![Tests](https://img.shields.io/badge/tests-104%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-113%20passing-brightgreen)](#testing)
 [![Crypto](https://img.shields.io/badge/crypto-AES--256--GCM-blue)](docs/crypto.md)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
@@ -105,11 +105,11 @@ Cinder's docs are task-oriented — pick the one that matches what you want to d
 
 ## Testing
 
-104 tests across three layers, all green:
+113 tests across three layers, all green:
 
 ```bash
-pnpm vitest run                    # 43 unit tests: crypto, codec, links, shipped claims
-node --test api/test/*.mjs         # 51 API tests: burn, claim, race-safety, S3 error reading (needs DynamoDB Local)
+pnpm vitest run                    # 51 unit tests: crypto, codec, links, shipped claims
+node --test api/test/*.mjs         # 52 API tests: burn, claim, race-safety, S3 error reading (needs DynamoDB Local)
 pnpm exec playwright test          # 10 end-to-end tests in a real browser
 ```
 

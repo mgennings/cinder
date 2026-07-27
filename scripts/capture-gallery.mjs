@@ -171,7 +171,7 @@ const SCENES = [
 		assert: (page) => page.getByRole('heading', { name: /how private is this, really/i })
 	},
 	{
-		name: 'privacy-detail',
+		name: 'file-promise',
 		note: '/security — the file promise and its permanent-loss cost',
 		async setup(page) {
 			await page.goto(`${BASE}/security`, { waitUntil: 'domcontentloaded' });
