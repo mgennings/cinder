@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fade, fly } from 'svelte/transition';
+	import { prefersReducedMotion } from 'svelte/motion';
 	import { encryptNote } from '$lib/crypto/note-crypto';
 	import {
 		encryptFile,
@@ -34,6 +35,18 @@
 	let link = $state('');
 
 	let aborter: AbortController | null = null;
+
+	// After the link appears, focus has to land on it — otherwise a keyboard
+	// user is silently returned to the top of the document at the exact moment
+	// the thing they came for is on screen.
+	let readyHeading: HTMLElement | null = $state(null);
+	$effect(() => {
+		if (link) readyHeading?.focus();
+	});
+
+	// A Svelte transition is a WAAPI animation, which no CSS rule can stop —
+	// `prefers-reduced-motion` has to be honored here, at its source.
+	const dur = (ms: number) => (prefersReducedMotion.current ? 0 : ms);
 
 	const busy = $derived(phase !== 'idle');
 	const ready = $derived(mode === 'note' ? text.trim().length > 0 : file !== null);
@@ -170,8 +183,14 @@
 		</header>
 
 		{#if link}
-			<section in:fly={{ y: 12, duration: 350 }} class="card p-6">
-				<h2 class="mb-1 text-sm font-semibold text-ember-ink">Your one-time link is ready</h2>
+			<section in:fly={{ y: 12, duration: dur(350) }} class="card p-6">
+				<h2
+					bind:this={readyHeading}
+					tabindex="-1"
+					class="mb-1 text-sm font-semibold text-ember-ink outline-none"
+				>
+					Your one-time link is ready
+				</h2>
 				<p class="mb-4 text-xs text-ghost">Opening is safe. Reveal removes Cinder's stored copy.</p>
 				<CopyLink {link} />
 				<button onclick={reset} class="link-quiet mt-5 text-xs">Send something else</button>
@@ -215,23 +234,37 @@
 							class="field cursor-pointer px-4 py-3 text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-ink-raised file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-body"
 						/>
 						{#if file}
-							<p in:fade={{ duration: 200 }} class="mt-2 truncate text-xs text-ghost">
-								{file.name} · {humanSize(file.size)}
+							<!-- Size first: right-truncation was eating it entirely on a long
+							     filename, leaving only a name the file input already shows. -->
+							<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs text-ghost">
+								{humanSize(file.size)} · <span class="break-all">{file.name}</span>
 							</p>
 						{/if}
 					</div>
 				{/if}
 
 				<div class="mt-4 flex flex-wrap items-center gap-4">
-					<label class="flex items-center gap-2 text-sm text-mist">
-						<span>Expires after</span>
-						<select bind:value={ttl} disabled={busy} class="field w-auto px-2 py-1.5 text-sm">
+					<!-- A plain div, not a wrapping label: wrapping the select made its
+					     accessible name concatenate every option ("Expires after 1 hour1
+					     day7 days if unread"). flex-wrap because at 200% zoom on a 320px
+					     screen "if unread" was pushed 130px offscreen inside an
+					     overflow-hidden main — unreachable, and it is the qualifier that
+					     makes the sentence true. -->
+					<div class="flex flex-wrap items-center gap-2 text-sm text-mist">
+						<label for="ttl">Expires after</label>
+						<select
+							id="ttl"
+							aria-describedby="ttl-note"
+							bind:value={ttl}
+							disabled={busy}
+							class="field w-auto px-2 py-1.5 text-sm"
+						>
 							{#each ttlOptions as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
 							{/each}
 						</select>
-						<span>if unread</span>
-					</label>
+						<span id="ttl-note">if unread</span>
+					</div>
 
 					<label class="flex cursor-pointer items-center gap-2 text-sm text-mist">
 						<input type="checkbox" bind:checked={usePassphrase} disabled={busy} class="accent-ember" />
@@ -240,7 +273,7 @@
 				</div>
 
 				{#if usePassphrase}
-					<div in:fade={{ duration: 200 }} class="mt-3">
+					<div in:fade={{ duration: dur(200) }} class="mt-3">
 						<input
 							type="password"
 							bind:value={passphrase}
@@ -256,20 +289,23 @@
 				{/if}
 
 				{#if error}
-					<p in:fade role="alert" class="mt-3 text-sm text-ember">{error}</p>
+					<p in:fade={{ duration: dur(200) }} role="alert" class="mt-3 text-sm text-ember-ink">{error}</p>
 				{/if}
 
 				{#if busy}
-					<div in:fade={{ duration: 150 }} class="mt-5">
+					<div in:fade={{ duration: dur(150) }} class="mt-5">
 						<!-- One live region for the whole sequence, so a screen reader hears
 						     each phase once instead of a stream of percentage changes. -->
 						<p aria-live="polite" class="mb-2 text-xs text-mist">{phaseLabel[phase]}</p>
-						<progress
-							class="progress"
-							aria-label={phaseLabel[phase]}
-							max="1"
-							value={phase === 'uploading' ? uploaded : undefined}
-						></progress>
+						{#if phase === 'uploading'}
+							<progress class="progress" aria-label={phaseLabel[phase]} max="1" value={uploaded}
+							></progress>
+						{:else}
+							<!-- A separate element, not `value={undefined}`: that sets the
+							     property, which coerces to 0 and reads as "0 percent"
+							     under a label that says "verifying". -->
+							<progress class="progress" aria-label={phaseLabel[phase]}></progress>
+						{/if}
 						{#if phase === 'uploading'}
 							<button onclick={cancel} class="link-quiet mt-3 text-xs">Cancel</button>
 						{/if}

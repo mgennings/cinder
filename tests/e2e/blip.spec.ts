@@ -111,11 +111,13 @@ test('file: create → reveal once → second reveal is gone', async ({ page, co
 
 	await expect(reader.getByText(/Deleted, absence verified/i)).toBeVisible();
 
-	// A second reader gets the generic gone state.
+	// A second reader gets the generic gone state, and — the part that used to
+	// be silent — it reaches a screen reader too.
 	const reader2 = await context.newPage();
 	await reader2.goto(link);
 	await reader2.getByRole('button', { name: /reveal and destroy/i }).click();
-	await expect(reader2.getByText(/this transfer is gone/i)).toBeVisible();
+	await expect(reader2.getByRole('heading', { name: /this transfer is gone/i })).toBeVisible();
+	await expect(reader2.locator('[aria-live="polite"]')).toContainText(/no stored copy to return/i);
 });
 
 test('file: the reveal button cannot be double-activated', async ({ page, context }) => {
@@ -216,5 +218,40 @@ test('file: the key never leaves the browser', async ({ page, context }) => {
 
 	for (const line of sent) {
 		expect(line, `key leaked in: ${line}`).not.toContain(key);
+	}
+});
+
+test('file: every outcome is announced and takes focus', async ({ page, context }) => {
+	// Both used to fail silently: the only live region lived inside the gate and
+	// unmounted at the exact moment there was something worth saying, and focus
+	// fell back to <body> right after the most consequential action on the site.
+	const link = await sendFile(page, pattern(2_500));
+
+	const reader = await context.newPage();
+	await reader.goto(link);
+	const download = reader.waitForEvent('download');
+	await reader.getByRole('button', { name: /reveal and destroy/i }).click();
+	await download;
+
+	await expect(reader.locator('[aria-live="polite"]')).toContainText(/delivered/i);
+	await expect(reader.locator('[aria-live="polite"]')).toContainText(/stored copy is deleted/i);
+
+	const focused = await reader.evaluate(() => document.activeElement?.tagName ?? 'NONE');
+	expect(focused, 'focus must not fall back to body').toBe('H1');
+});
+
+test('file: the reveal page does not scroll sideways at any width', async ({ page, context }) => {
+	// The ambient glow is intentionally wider than its container; /f/ and /n/
+	// both forgot to clip it and scrolled sideways at every width.
+	const link = await sendFile(page, pattern(1_200));
+	const reader = await context.newPage();
+	await reader.goto(link);
+
+	for (const width of [320, 375, 440, 768, 1440]) {
+		await reader.setViewportSize({ width, height: 760 });
+		const overflow = await reader.evaluate(
+			() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+		);
+		expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
 	}
 });

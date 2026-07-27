@@ -40,7 +40,7 @@
 	/* --- Ink text (warm off-white → dim) --- */
 	--color-body: #f1ece4; /* primary text: warm paper-white, never #fff */
 	--color-mist: #a69d93; /* secondary text — AA on card and floor */
-	--color-ghost: #7d746b; /* tertiary / placeholders — decorative weight */
+	--color-ghost: #918880; /* tertiary / placeholders — 5.36:1 on card, AA */
 
 	/* --- Ember: the one accent. Constant across themes. --- */
 	--color-ember: #ff6b4a;
@@ -99,13 +99,16 @@
 
 		--color-body: #241a15;
 		--color-mist: #6a6058;
-		--color-ghost: #9a8f85;
+		--color-ghost: #736a61; /* 5.30:1 on card, AA */
 
 		--color-ember: #e8502a;
 		--color-ember-soft: #ff7a56;
 		--color-ember-ink: #c23d1a; /* darker ember for small text on light surfaces (AA) */
 		--color-ember-deep: #b3350f;
-		--color-black: #ffffff; /* on the ember button, light-mode text is paper, not ink */
+		/* Ink, not paper. Paper measured 2.57:1 against the light gradient's top
+		   stop and 3.74:1 against its bottom — a primary action that failed AA
+		   across its whole surface. Ink measures 7.32:1 and 5.03:1. */
+		--color-black: #1a0f0a;
 
 		--glow-strong: rgba(232, 80, 42, 0.1);
 		--glow-soft: rgba(232, 80, 42, 0.05);
@@ -181,6 +184,9 @@ body::before {
 	   inset shadow sells the "cut into the card" depth. Ember on focus. */
 	.field {
 		width: 100%;
+		/* 44px minimum, measured. The TTL select rendered 33px and the
+		   passphrase field 42px before this. */
+		min-height: 2.75rem;
 		border: 1px solid var(--color-line);
 		border-radius: var(--radius-field);
 		background: var(--color-ink);
@@ -196,6 +202,18 @@ body::before {
 	.field:hover:not(:focus) {
 		border-color: var(--color-line-strong);
 	}
+	/* The passphrase checkbox was the only control painting Chrome's default
+	   blue outline — 3.12:1 on the dark card against the ember ring's 6.97:1. */
+	input[type='checkbox'] {
+		width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 0.25rem;
+	}
+	input[type='checkbox']:focus-visible {
+		outline: none;
+		box-shadow: var(--focus-ring);
+	}
+
 	.field:focus,
 	.field:focus-visible {
 		outline: none;
@@ -206,6 +224,9 @@ body::before {
 	/* BTN base — shared geometry + the two-speed motion contract. */
 	.btn {
 		display: inline-flex;
+		/* Secondary buttons measured 42px. Nothing that can be pressed
+		   should be smaller than a fingertip. */
+		min-height: 2.75rem;
 		align-items: center;
 		justify-content: center;
 		gap: 0.5rem;
@@ -420,8 +441,13 @@ body::before {
    almost imperceptibly, so the room feels lit by something alive rather
    than a static gradient. This is IDLE motion: slow enough to doubt.
    ===================================================================== */
+/* The glow is inset -10% on three sides, so it is WIDER than its container by
+   design. Clipping belongs on the rule itself, not on each page's class list:
+   /f/ and /n/ both forgot it and scrolled sideways at every width — 220px of
+   dead scroll at 1440. A future route cannot forget what it never has to add. */
 .vault-glow {
 	position: relative;
+	overflow: hidden;
 }
 .vault-glow::before {
 	content: '';
@@ -513,6 +539,19 @@ body::before {
 	.record-mark {
 		background: CanvasText;
 		forced-color-adjust: none;
+	}
+	/* Measured: the enabled primary button was 95.9% #000000 against a 100%
+	   #000000 card — 1.00:1, against a 3:1 requirement. Its gradient, shadow,
+	   and glow are all dropped here and Preflight leaves it border-0, so the
+	   ONE control that must be findable became invisible while the disabled
+	   state kept its border and still looked like a button. */
+	.btn {
+		border: 1px solid ButtonBorder;
+	}
+	/* The native radio repaints regardless of author opacity, dropping a solid
+	   block over the label it is supposed to be replacing. */
+	.seg-option input {
+		appearance: none;
 	}
 	.seg-option:has(input:checked) {
 		background: Highlight;
