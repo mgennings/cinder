@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "capture:gallery": "node scripts/capture-gallery.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.1076.0",

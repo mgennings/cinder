@@ -30,3 +30,6 @@ test-results/
 playwright-report/
 samconfig.toml
 .notes/
+
+# Regenerable capture output — scripts/capture-gallery.mjs rebuilds it in ~4 min
+artifacts/
