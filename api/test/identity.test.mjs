@@ -1,0 +1,246 @@
+// The denial paths ARE the feature. Every test below is a way a caller could
+// try to be entitled without being entitled, and each one must land on the same
+// answer an anonymous caller gets.
+//
+// Zero dependencies and no AWS: RSA keys are generated here, tokens are signed
+// here, and the store is a Map. Run with `node --test api/test/identity.test.mjs`.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { generateKeyPairSync, createSign } from 'node:crypto';
+import { bearerToken, verifyIdToken, pairwiseSubject, parseMap } from '../src/identity.mjs';
+import { makeEntitlementHandlers } from '../src/entitlement.mjs';
+
+const ISSUER = 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_mattOS';
+const CLIENT = 'cinderclient123';
+const PRODUCT = 'cinder';
+const PEPPER = 'pepper-for-cinder';
+
+// --- a miniature Cognito ----------------------------------------------------
+
+function makePool(kid) {
+	const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+	const jwk = { ...publicKey.export({ format: 'jwk' }), kid, alg: 'RS256', use: 'sig' };
+	return { jwks: { keys: [jwk] }, privateKey, kid };
+}
+
+const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+
+function mint(pool, claims, { alg = 'RS256', sign = true } = {}) {
+	const header = b64url({ alg, kid: pool.kid, typ: 'JWT' });
+	const payload = b64url({
+		iss: ISSUER,
+		aud: CLIENT,
+		token_use: 'id',
+		sub: 'cognito-subject-0001',
+		'cognito:username': 'signinwithapple_000123',
+		iat: Math.floor(Date.now() / 1000),
+		exp: Math.floor(Date.now() / 1000) + 300,
+		...claims
+	});
+	const signature = sign
+		? createSign('RSA-SHA256').update(`${header}.${payload}`).sign(pool.privateKey).toString('base64url')
+		: 'not-a-signature';
+	return `${header}.${payload}.${signature}`;
+}
+
+const pool = makePool('key-1');
+const verify = (token, over = {}) =>
+	verifyIdToken(token, { jwks: pool.jwks, issuer: ISSUER, audiences: [CLIENT], ...over });
+
+// --- the authority boundary -------------------------------------------------
+
+test('a genuine ID token verifies and yields only sub, username, aud', () => {
+	const claims = verify(mint(pool, {}));
+	assert.deepEqual(Object.keys(claims).sort(), ['aud', 'sub', 'username']);
+	assert.equal(claims.sub, 'cognito-subject-0001');
+});
+
+test('anonymous: no header, empty header, wrong scheme', () => {
+	assert.equal(bearerToken({}), null);
+	assert.equal(bearerToken({ authorization: '' }), null);
+	assert.equal(bearerToken({ Authorization: 'Basic abc' }), null);
+	assert.equal(bearerToken({ AUTHORIZATION: 'Bearer abc.def.ghi' }), 'abc.def.ghi');
+	assert.equal(verify(null), null);
+	assert.equal(verify('not-a-jwt'), null);
+});
+
+test('expired: one second past the skew allowance denies', () => {
+	const exp = Math.floor(Date.now() / 1000) - 3600;
+	const token = mint(pool, { exp, iat: exp - 300 });
+	assert.equal(verify(token), null);
+
+	// Same token, evaluated inside its life, verifies — so the denial above is
+	// the expiry and not something else about the token.
+	assert.ok(verify(token, { now: (exp - 10) * 1000 }));
+});
+
+test('forged: a tampered payload invalidates the signature', () => {
+	const token = mint(pool, {});
+	const [h, p, s] = token.split('.');
+	const swapped = b64url({ ...JSON.parse(Buffer.from(p, 'base64url')), sub: 'someone-else' });
+	assert.equal(verify(`${h}.${swapped}.${s}`), null);
+});
+
+test('forged: an unsigned token, and alg=none, both deny', () => {
+	assert.equal(verify(mint(pool, {}, { sign: false })), null);
+	assert.equal(verify(mint(pool, {}, { alg: 'none', sign: false })), null);
+	// alg confusion: a real RSA signature relabeled as HS256 must not be treated
+	// as an HMAC over the public key.
+	const real = mint(pool, {});
+	const [, p, s] = real.split('.');
+	assert.equal(verify(`${b64url({ alg: 'HS256', kid: pool.kid })}.${p}.${s}`), null);
+});
+
+test('foreign pool: a valid token from another pool denies twice over', () => {
+	const other = makePool('key-1'); // same kid on purpose — only the key differs
+	assert.equal(verify(mint(other, {})), null, 'signature must not verify against our JWKS');
+
+	const otherIssuer = makePool('key-2');
+	const wrongIssuer = mint(otherIssuer, { iss: 'https://cognito-idp.us-east-1.amazonaws.com/evil' });
+	assert.equal(
+		verifyIdToken(wrongIssuer, { jwks: otherIssuer.jwks, issuer: ISSUER, audiences: [CLIENT] }),
+		null,
+		'issuer must be checked independently of the signature'
+	);
+});
+
+test('wrong audience and wrong token_use deny', () => {
+	assert.equal(verify(mint(pool, { aud: 'some-other-app-client' })), null);
+	assert.equal(verify(mint(pool, { token_use: 'access' })), null);
+});
+
+test('a token missing sub or cognito:username denies', () => {
+	assert.equal(verify(mint(pool, { sub: undefined })), null);
+	assert.equal(verify(mint(pool, { 'cognito:username': undefined })), null);
+});
+
+// --- pairwise subjects ------------------------------------------------------
+
+test('the same person is a different subject in every product', () => {
+	const a = pairwiseSubject('sub-1', 'cinder', 'pepper-a');
+	const b = pairwiseSubject('sub-1', 'otherproduct', 'pepper-b');
+	assert.notEqual(a, b);
+	assert.equal(a, pairwiseSubject('sub-1', 'cinder', 'pepper-a'), 'must be stable');
+	assert.notEqual(a, pairwiseSubject('sub-2', 'cinder', 'pepper-a'));
+	// Nothing recoverable: the raw subject must not appear in the stored value.
+	assert.equal(Buffer.from(a, 'base64').toString('utf8').includes('sub-1'), false);
+});
+
+test('parseMap fails closed on garbage', () => {
+	assert.deepEqual(parseMap('{"a":"b"}'), { a: 'b' });
+	assert.deepEqual(parseMap('nonsense'), {});
+	assert.deepEqual(parseMap('["a"]'), {});
+	assert.deepEqual(parseMap(undefined), {});
+});
+
+// --- the routes -------------------------------------------------------------
+
+function makeApi({ rows = new Map(), peppers = { [PRODUCT]: PEPPER } } = {}) {
+	const deleted = [];
+	const doc = {
+		async send(cmd) {
+			const { TableName, Key, Item } = cmd.input;
+			assert.equal(TableName, 'mattos-entitlements');
+			if (Item) return rows.set(Item.pk, Item), {};
+			if (cmd.constructor.name === 'DeleteCommand') return rows.delete(Key.pk), {};
+			const item = rows.get(Key.pk);
+			return { Item: item ? { entitled: item.entitled } : undefined };
+		}
+	};
+	const api = makeEntitlementHandlers(doc, {
+		getJwks: async () => pool.jwks,
+		deleteUser: async (username) => deleted.push(username),
+		issuer: ISSUER,
+		clientProducts: { [CLIENT]: PRODUCT },
+		productPeppers: peppers
+	});
+	return { api, rows, deleted };
+}
+
+process.env.ENTITLEMENT_TABLE = 'mattos-entitlements';
+
+const authed = (token) => ({ headers: { authorization: `Bearer ${token}` } });
+
+test('entitlement: denies anonymous, expired, forged, and foreign-pool callers', async () => {
+	const { api, rows } = makeApi();
+	// A row exists for this person, so every denial below is the token failing,
+	// not an empty table.
+	rows.set(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`, {
+		entitled: true
+	});
+
+	const exp = Math.floor(Date.now() / 1000) - 3600;
+	const denials = {
+		anonymous: { headers: {} },
+		expired: authed(mint(pool, { exp, iat: exp - 300 })),
+		forged: authed(mint(pool, {}, { sign: false })),
+		foreignPool: authed(mint(makePool('key-1'), {})),
+		wrongAudience: authed(mint(pool, { aud: 'another-client' }))
+	};
+	for (const [name, event] of Object.entries(denials)) {
+		const res = await api.checkEntitlement(event);
+		assert.equal(res.statusCode, 200, name);
+		assert.deepEqual(JSON.parse(res.body), { entitled: false }, name);
+	}
+
+	const ok = await api.checkEntitlement(authed(mint(pool, {})));
+	assert.deepEqual(JSON.parse(ok.body), { entitled: true });
+});
+
+test('entitlement: a valid token with no purchase is not entitled', async () => {
+	const { api } = makeApi();
+	const res = await api.checkEntitlement(authed(mint(pool, {})));
+	assert.deepEqual(JSON.parse(res.body), { entitled: false });
+});
+
+test('a missing pepper fails closed rather than sharing a key', async () => {
+	const { api } = makeApi({ peppers: {} });
+	const res = await api.checkEntitlement(authed(mint(pool, {})));
+	assert.deepEqual(JSON.parse(res.body), { entitled: false });
+});
+
+test('the response body carries nothing but the answer', async () => {
+	const { api } = makeApi();
+	const body = (await api.checkEntitlement(authed(mint(pool, {})))).body;
+	for (const leak of ['cognito-subject-0001', 'signinwithapple', 'apple', '@']) {
+		assert.equal(body.toLowerCase().includes(leak.toLowerCase()), false, leak);
+	}
+});
+
+test('deletion removes the row and the Cognito user, and is idempotent', async () => {
+	const { api, rows, deleted } = makeApi();
+	const pairwise = pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER);
+	rows.set(`${PRODUCT}#${pairwise}`, { entitled: true });
+
+	const res = await api.deleteAccount(authed(mint(pool, {})));
+	assert.deepEqual(JSON.parse(res.body), { deleted: true });
+	assert.equal(rows.size, 0, 'the row is deleted, not flagged');
+	assert.deepEqual(deleted, ['signinwithapple_000123']);
+
+	// Nothing left to find, and a second call still succeeds without a read.
+	assert.equal((await api.checkEntitlement(authed(mint(pool, {})))).body, '{"entitled":false}');
+	await api.deleteAccount(authed(mint(pool, {})));
+	assert.equal(deleted.length, 2);
+});
+
+test('deletion sweeps every product this function holds a pepper for', async () => {
+	const peppers = { cinder: PEPPER, otherproduct: 'pepper-b' };
+	const { api, rows } = makeApi({ peppers });
+	for (const [product, pepper] of Object.entries(peppers)) {
+		rows.set(`${product}#${pairwiseSubject('cognito-subject-0001', product, pepper)}`, {
+			entitled: true
+		});
+	}
+	await api.deleteAccount(authed(mint(pool, {})));
+	assert.equal(rows.size, 0);
+});
+
+test('an unauthenticated delete deletes nothing and says so', async () => {
+	const { api, rows, deleted } = makeApi();
+	rows.set('cinder#someone-else', { entitled: true });
+	const res = await api.deleteAccount({ headers: {} });
+	assert.deepEqual(JSON.parse(res.body), { deleted: false });
+	assert.equal(rows.size, 1);
+	assert.equal(deleted.length, 0);
+});

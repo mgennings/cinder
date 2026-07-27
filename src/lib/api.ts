@@ -93,6 +93,48 @@ export async function createFileTransfer(
 	return res.json();
 }
 
+// The capability gate said no. This is the only failure in the sender journey
+// that is about the account rather than the bytes, and it must never render as
+// a technical error — nothing is broken, the transfer is simply larger than
+// what this caller may send.
+export class TransferNotEntitledError extends Error {
+	constructor(readonly parts: number) {
+		super('A transfer this size needs Cinder Pro.');
+		this.name = 'TransferNotEntitledError';
+	}
+}
+
+export type TransferPartGrant = { index: number; upload: UploadGrant };
+export type MultipartGrant = {
+	locator: string;
+	uploadCapability: string;
+	parts: TransferPartGrant[];
+};
+
+// Reserves N parts in one request. Every part is an independent grant on the
+// server with its own object key and its own atomic claim — this call is a
+// convenience for the sender, not a new kind of transfer.
+export async function createMultipartTransfer(
+	parts: { ciphertextBytes: number; ciphertextSha256: string }[],
+	ttlSeconds: number,
+	capabilityGrant: string | null
+): Promise<MultipartGrant> {
+	// The grant rides in the BODY and there is no Authorization header, because
+	// this API allows only `content-type` at CORS. That is deliberate: an account
+	// must never be linkable to a transfer, so what the sender presents says what
+	// they may do, not who they are.
+	const res = await fetch(`${API_BASE}/files`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ parts, ttlSeconds, ...(capabilityGrant ? { capabilityGrant } : {}) })
+	});
+	// 402 is the gate, 403 is the plan's own ceiling. Both mean the same thing
+	// to the person: this file is bigger than what you may send right now.
+	if (res.status === 402 || res.status === 403) throw new TransferNotEntitledError(parts.length);
+	if (!res.ok) throw new Error(`create failed: ${res.status}`);
+	return res.json();
+}
+
 // XHR rather than fetch: it is still the only way to observe upload progress,
 // and a 4 MiB upload on cellular is long enough that an indeterminate spinner
 // would read as a hang. `signal` lets the sender cancel before finalize, which

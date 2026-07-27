@@ -148,7 +148,34 @@ The ceiling is derived, not chosen. The buffered response is capped at 6 MB — 
 base64 → 5,592,900 bytes, leaving ~698 KB (11%) under the hard limit
 ```
 
-So the advertised ceiling is **4 MiB**, enforced in the browser before a byte is read (`src/lib/crypto/file-crypto.ts`) and independently re-checked by the server (`api/src/handlers.mjs`). Raising it means changing the transport, and changing the transport means re-proving the guarantee above. Do not raise it in one place alone.
+So the advertised ceiling is **4 MiB per object**, enforced in the browser before a byte is read (`src/lib/crypto/file-crypto.ts`) and independently re-checked by the server (`api/src/handlers.mjs`). Raising it means changing the transport, and changing the transport means re-proving the guarantee above. Do not raise it in one place alone. `api/test/chunked.test.mjs` asserts the constant's exact expression and fails if anyone edits it, and separately asserts that no streaming symbol has appeared in the handler.
+
+### Larger files: more envelopes, never a bigger one
+
+The ceiling is a property of **one** buffered response, so the way past it is more responses. Above 4 MiB a file is cut into parts of at most `PART_BYTES`, each sealed as its own independent AES-256-GCM envelope, stored under its own random object key, finalized on its own, and claimed by its own atomic conditional delete.
+
+This is not a second protocol running alongside the first. `POST /files` accepts a `parts` array and writes N ordinary grants; `finalizeFile` and `claimFile` were not modified at all. The guarantee at 256 MiB is the same rows in the same table hit by the same conditional writes as the guarantee at 3 MiB — which is the only sense of "identical" worth claiming.
+
+**One locator, N parts.** The link still carries a single locator. Part *i*'s locator is derived from it as `base64url(sha256("<locator>:part:<i>"))`, computed independently by the browser (`src/lib/link.ts`) and the server (`api/src/id.mjs`). Holding the link yields every part, which is correct — it is one link to one recipient. Holding one part's locator yields nothing else, because inverting SHA-256 is the work. Carrying 64 capabilities in the fragment instead would produce a ~2.8 KB URL, and a chat client that truncates a Cinder link destroys a file.
+
+The part count rides in the fragment (`#<key>.<n>`), so the reveal gate can state the cost before anything is claimed without a request on link arrival — the same constraint that put the transfer kind in the path. It is a hint, not an authority: part zero's authenticated header carries the real count and the reader refuses on a mismatch.
+
+**Position is authenticated.** Each part decrypts on its own, so a hostile server could otherwise reorder parts, drop the tail, or replay part 3 in part 5's place and every individual GCM tag would still verify. The part index and the total are fed in as GCM additional authenticated data, so an envelope is valid only at the exact position it was sealed for, in a transfer of exactly that length.
+
+**The filename is encrypted once**, into part zero's header, rather than repeated per part — repeating it would hand an observer N copies of the same plaintext under one key at a known offset, and would make the name's length visible in every object's size.
+
+### Partial failure, and why there is no resume
+
+Parts are claimed strictly in order, one at a time. If part 7 of 12 fails, parts 1 through 7 are already irreversibly destroyed and the file cannot be assembled. Cinder does not continue, does not offer a retry, and does not offer a resume — a resume would require a second delivery attempt for an object it has already deleted, which is the one thing the product exists to make impossible.
+
+The parts that were never claimed remain claimable until they expire, and they are abandoned to the same S3 lifecycle sweep that already collects a cancelled upload's orphan. That is the truthful state rather than a tidy one: Cinder cannot un-destroy parts 1 through 7, so there is no honest way to make the survivors into a file.
+
+Two consequences the interface is required to carry, and does:
+
+- The reveal gate states the part count and the total-loss cost **before** the button, in the same register as the single-file warning.
+- A **busy** part is retried with backoff, up to four attempts, and this is not an exception to the rule. `TransferBusyError` is raised only when API Gateway or Lambda concurrency shed the request before the function ran, so the atomic claim provably did not happen. Retrying a request that did not happen is not retrying a claim. Without it, one shed request in a 64-part transfer would destroy a file over something that was never a failure.
+
+`api/test/chunked.test.mjs` proves the per-part guarantee by execution rather than argument: a twelve-part transfer emits twelve identical `claim, open, delete, absence, first-byte` sequences; twenty simultaneous claims on one part yield exactly one winner while its siblings stay untouched; twenty-four concurrent claims across eight parts yield exactly eight bodies; and a broken part 7 emits six response-first-byte events, none for the seventh, with parts 0 through 6 permanently consumed.
 
 ## Bot defense
 

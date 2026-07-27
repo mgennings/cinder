@@ -12,7 +12,15 @@ import {
 	claimFileGrant
 } from './store.mjs';
 import { createHash } from 'node:crypto';
-import { newId, newCapability, hashCapability, newObjectKey, capabilityMatches } from './id.mjs';
+import {
+	newId,
+	newCapability,
+	hashCapability,
+	newObjectKey,
+	capabilityMatches,
+	deriveChunkLocator
+} from './id.mjs';
+import { CAPABILITY, denyAll, checkCapability } from './capabilities.mjs';
 
 const MAX_CT = 100_000; // reject oversized ciphertext (chars)
 const MAX_TTL = 604_800; // 7 days
@@ -29,6 +37,30 @@ const MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024 + 4096;
 // upload on a bad connection and short enough that a leaked URL is stale before
 // anyone can use it.
 const UPLOAD_WINDOW_SECONDS = 300;
+
+// A multipart transfer cannot upload 64 parts inside one part's window, so the
+// window scales with the work. That is safe for a specific reason rather than a
+// hopeful one: every presigned PUT is signed against an exact key, an exact
+// length, AND an exact SHA-256 (see the `unhoistableHeaders` note in
+// lambda.mjs). A leaked URL therefore authorizes writing precisely the bytes it
+// was already going to receive, to a key nobody else can guess. Time buys an
+// attacker nothing that content-pinning has not already taken away.
+const UPLOAD_WINDOW_CEILING_SECONDS = 3600;
+const uploadWindowFor = (partCount) =>
+	Math.min(UPLOAD_WINDOW_SECONDS * partCount, UPLOAD_WINDOW_CEILING_SECONDS);
+
+// The transport's own ceiling on parts, independent of whatever an entitlement
+// provider is willing to grant. The effective limit is the smaller of the two,
+// so a bug or a generous plan in the payments lane cannot raise this.
+//
+// 64 is memory-bound, not transport-bound, and it is the one number here that
+// is a judgment rather than a derivation. A recipient reassembles every part in
+// one browser tab before anything is written to disk, so the ceiling is really
+// "how much can a phone hold without the tab being killed mid-delivery" — and a
+// tab killed mid-delivery is a permanently destroyed file, not an inconvenience.
+// 64 × 4 MiB = 256 MiB, which also happens to clear the 200 MB that response
+// streaming would have bought at the cost of the structural guarantee.
+const MAX_PARTS = 64;
 
 // Every response this API produces is one-shot and secret-adjacent, so nothing
 // it returns should ever be written to a cache — including a burned note, whose
@@ -52,7 +84,19 @@ const GONE = () => json(410, { error: 'This transfer is no longer available.' })
 
 const isBase64Sha256 = (s) => typeof s === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(s);
 
-export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
+// One part's declared shape, validated exactly as a single file's is. Returns
+// null for anything malformed so the caller can refuse the whole request — a
+// transfer with one bad part is a bad transfer, not a shorter one.
+function readPart(p) {
+	if (!p || typeof p !== 'object') return null;
+	const { ciphertextBytes, ciphertextSha256 } = p;
+	if (!Number.isInteger(ciphertextBytes) || ciphertextBytes <= 0) return null;
+	if (ciphertextBytes > MAX_CIPHERTEXT_BYTES) return null;
+	if (!isBase64Sha256(ciphertextSha256)) return null;
+	return { ciphertextBytes, ciphertextSha256 };
+}
+
+export function makeHandlers(doc, s3, { onEvent = () => {}, capabilities = denyAll } = {}) {
 	async function createNote(event) {
 		let data;
 		try {
@@ -86,11 +130,18 @@ export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
 		return json(200, out);
 	}
 
-	// POST /files — reserve one transfer and hand back a single-use upload.
+	// POST /files — reserve one transfer and hand back its single-use uploads.
 	//
 	// The locator and the upload capability are independent secrets. The locator
 	// is what the recipient's link carries; the upload capability never leaves
 	// the sender's browser. Neither is stored in the clear.
+	//
+	// A transfer is one part or many. A many-part transfer is NOT a second
+	// protocol — it is N of the identical grant below, each with its own object
+	// key, its own finalize, and its own atomic claim. The per-object promise is
+	// not re-derived at a larger size; it is the same rows in the same table hit
+	// by the same conditional writes, which is the only form of "identical" worth
+	// claiming. What multipart adds is size. It subtracts nothing.
 	async function createFile(event) {
 		let data;
 		try {
@@ -99,44 +150,107 @@ export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
 			return json(400, { error: 'bad json' });
 		}
 
-		const { ciphertextBytes, ciphertextSha256, ttlSeconds } = data;
-		if (!Number.isInteger(ciphertextBytes) || ciphertextBytes <= 0) {
-			return json(400, { error: 'missing ciphertextBytes' });
+		const { ciphertextBytes, ciphertextSha256, parts, ttlSeconds, capabilityGrant } = data;
+
+		// Two request shapes, one internal representation. The single-file shape
+		// is kept verbatim rather than folded into `parts`, because every link
+		// already in the wild was created with it and a shipped protocol is not a
+		// thing to tidy.
+		// Which shape was used decides how locators are derived, NOT how many
+		// parts arrived. A one-element `parts` array is still the multipart
+		// protocol, so its single part still lives at index 0's derived locator —
+		// otherwise the client and server would disagree about where it is.
+		const multipart = parts !== undefined;
+
+		let declared;
+		if (!multipart) {
+			const only = readPart({ ciphertextBytes, ciphertextSha256 });
+			if (!only) {
+				if (!Number.isInteger(ciphertextBytes) || ciphertextBytes <= 0) {
+					return json(400, { error: 'missing ciphertextBytes' });
+				}
+				if (ciphertextBytes > MAX_CIPHERTEXT_BYTES) return json(400, { error: 'file too large' });
+				return json(400, { error: 'missing ciphertextSha256' });
+			}
+			declared = [only];
+		} else {
+			if (!Array.isArray(parts) || parts.length === 0) return json(400, { error: 'bad parts' });
+			if (parts.length > MAX_PARTS) return json(400, { error: 'too many parts' });
+			declared = parts.map(readPart);
+			if (declared.some((p) => p === null)) return json(400, { error: 'bad parts' });
 		}
-		if (ciphertextBytes > MAX_CIPHERTEXT_BYTES) return json(400, { error: 'file too large' });
-		if (!isBase64Sha256(ciphertextSha256)) return json(400, { error: 'missing ciphertextSha256' });
+
+		// The gate, and the reason it sits here rather than at the top: a
+		// single-part transfer is the free capability and must cost no entitlement
+		// round trip at all. Only asking for more asks anyone for permission.
+		if (declared.length > 1) {
+			// The grant comes out of the BODY, never a header. Cinder's transfer API
+			// allows only `content-type` at CORS precisely so an account token
+			// cannot ride along with a transfer and make the two linkable.
+			const { granted, limit } = await checkCapability(
+				capabilities,
+				capabilityGrant,
+				CAPABILITY.MULTIPART_TRANSFER,
+				'maxParts'
+			);
+			// 402 rather than 403: nothing about the caller is wrong, the
+			// capability simply is not theirs yet. It carries no locator and no
+			// grant, so it reveals nothing beyond what the request already said.
+			if (!granted) return json(402, { error: 'A transfer of more than one part requires Cinder Pro.' });
+			// The transport's ceiling wins whenever it is lower. A generous plan,
+			// or a bug in the provider, cannot raise a limit this file owns.
+			if (declared.length > Math.min(limit, MAX_PARTS)) {
+				return json(403, { error: 'This transfer has more parts than your plan allows.' });
+			}
+		}
 
 		const locator = newCapability();
 		const uploadCapability = newCapability();
 		const ttl = Math.min(Math.max(Number(ttlSeconds) || 0, 1), MAX_TTL);
-		// Keyed into a lifetime band so a short transfer's bytes are swept the
-		// next day rather than sitting for the flat maximum.
-		const objectKey = newObjectKey(ttl);
-
 		const createdAt = Math.floor(Date.now() / 1000);
+		const expiresIn = uploadWindowFor(declared.length);
 
-		// The upload authorization is signed against this exact key, length, and
-		// checksum, so S3 itself refuses a substituted or resized body. Finalize
-		// then re-verifies against the stored object, because a constraint on what
-		// S3 will accept is not evidence of what S3 actually holds.
-		const upload = await s3.presignPut({
-			key: objectKey,
-			bytes: ciphertextBytes,
-			sha256: ciphertextSha256,
-			expiresIn: UPLOAD_WINDOW_SECONDS
-		});
+		// Every part is an ordinary grant. The only thing tying them together is
+		// that the recipient's browser can derive each part's locator from the one
+		// in their link — the server stores nothing that says "these belong to the
+		// same file" beyond having written them in the same second.
+		const grants = await Promise.all(
+			declared.map(async (part, index) => {
+				// Keyed into a lifetime band so a short transfer's bytes are swept
+				// the next day rather than sitting for the flat maximum.
+				const objectKey = newObjectKey(ttl);
 
-		await putFileGrant(doc, {
-			pk: hashCapability(locator),
-			objectKey,
-			uploadCapabilityHash: hashCapability(uploadCapability),
-			ciphertextBytes,
-			ciphertextSha256,
-			createdAt,
-			expiresAt: createdAt + ttl
-		});
+				// The upload authorization is signed against this exact key, length,
+				// and checksum, so S3 itself refuses a substituted or resized body.
+				// Finalize then re-verifies against the stored object, because a
+				// constraint on what S3 will accept is not evidence of what S3
+				// actually holds.
+				const upload = await s3.presignPut({
+					key: objectKey,
+					bytes: part.ciphertextBytes,
+					sha256: part.ciphertextSha256,
+					expiresIn
+				});
 
-		return json(201, { locator, uploadCapability, upload });
+				await putFileGrant(doc, {
+					pk: hashCapability(multipart ? deriveChunkLocator(locator, index) : locator),
+					objectKey,
+					uploadCapabilityHash: hashCapability(uploadCapability),
+					ciphertextBytes: part.ciphertextBytes,
+					ciphertextSha256: part.ciphertextSha256,
+					createdAt,
+					expiresAt: createdAt + ttl
+				});
+
+				return { index, upload };
+			})
+		);
+
+		// The single-part response shape is unchanged, to the byte.
+		if (!multipart) {
+			return json(201, { locator, uploadCapability, upload: grants[0].upload });
+		}
+		return json(201, { locator, uploadCapability, parts: grants });
 	}
 
 	// POST /files/finalize — the server looks at S3 itself and decides.

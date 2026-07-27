@@ -19,6 +19,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { makeHandlers } from './handlers.mjs';
 import { absentProven, notRetrievable } from './s3-errors.mjs';
+import { gate } from './entitlement-provider.mjs';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3client = new S3Client({});
@@ -99,4 +100,6 @@ const s3 = {
 	}
 };
 
-export const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, s3);
+export const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, s3, {
+	capabilities: gate
+});

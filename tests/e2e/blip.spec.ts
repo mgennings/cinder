@@ -157,24 +157,33 @@ test('file: a preview bot GET never claims the transfer', async ({ page, context
 	await download;
 });
 
-test('file: over the ceiling is refused in the browser, before any upload', async ({ page }) => {
+test('file: one byte over 4 MiB becomes two pieces rather than a refusal', async ({ page }) => {
+	// This test used to assert a refusal at 4 MiB + 1. That ceiling is now
+	// per-OBJECT rather than per-file: past it, a file is split into parts that
+	// each sit under it, so the promise is unchanged and only the size is. The
+	// boundary itself is what matters, so the test moved to the boundary rather
+	// than being deleted. The refusal still exists, at the transfer ceiling, and
+	// is asserted on metadata alone in src/lib/crypto/chunked-crypto.test.ts.
 	await page.goto('/');
 	await page.getByRole('radio', { name: /^file$/i }).check();
 
-	let uploads = 0;
+	let requests = 0;
 	await page.route('**/files', (route) => {
-		uploads++;
+		requests++;
 		return route.continue();
 	});
 
 	await page.setInputFiles('#file-input', {
-		name: 'too-big.bin',
+		name: 'just-over.bin',
 		mimeType: 'application/octet-stream',
 		buffer: Buffer.alloc(4 * 1024 * 1024 + 1)
 	});
 
-	await expect(page.getByRole('alert')).toContainText(/limit is 4 MiB/i);
-	expect(uploads, 'nothing may reach the server').toBe(0);
+	await expect(page.getByText(/this goes in 2 pieces/i)).toBeVisible();
+	await expect(page.getByRole('alert')).toHaveCount(0);
+	// Choosing a file still reaches nothing. Everything above happened from the
+	// file's metadata, before a byte was read.
+	expect(requests, 'choosing a file may not reach the server').toBe(0);
 });
 
 test('file: a passphrase file needs the passphrase after the claim', async ({ page, context }) => {

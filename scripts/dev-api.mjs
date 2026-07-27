@@ -65,7 +65,26 @@ const devS3 = {
 	}
 };
 
-const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, devS3);
+// A capability gate for local development only. Production wires
+// api/src/entitlement-provider.mjs, which denies until the identity lane mints
+// real grants — so without this, no multipart transfer could be exercised
+// locally at all and the chunked path would only ever be tested in unit tests.
+//
+// It grants on a fixed literal rather than on anything it verifies. That is
+// fine HERE and nowhere else: this file is never deployed, and DEV_CAPABILITY_GRANT
+// has to be presented explicitly, so an unentitled local caller still gets the
+// 402 the e2e suite asserts. Do not import this into api/src/.
+const DEV_GRANT = 'dev-capability-grant';
+const devGate = {
+	async check({ grant, capability }) {
+		if (grant !== DEV_GRANT) return { granted: false };
+		return { granted: capability === 'transfer.multipart', limits: { maxParts: 64 } };
+	}
+};
+
+const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, devS3, {
+	capabilities: devGate
+});
 
 async function ensureTable() {
 	try {

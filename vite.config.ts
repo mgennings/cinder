@@ -25,14 +25,28 @@ export default defineConfig(({ mode }) => {
 	// would silently block every request in local dev and in the Playwright
 	// suite, where the API is http://localhost:4000 — a CSP that is only correct
 	// in production is a CSP nobody exercises before shipping.
-	const apiBase = loadEnv(mode, process.cwd(), 'VITE_').VITE_API_BASE;
-	const apiOrigin = apiBase ? new URL(apiBase).origin : null;
+	const env = loadEnv(mode, process.cwd(), 'VITE_');
+	const apiOrigin = env.VITE_API_BASE ? new URL(env.VITE_API_BASE).origin : null;
+
+	// The identity API and the Cognito hosted UI, derived the same way and for
+	// the same reason. Both are absent from a build with no accounts configured,
+	// and absent from the policy too — a CSP should never name an origin the
+	// build cannot call. The hosted UI is also a redirect TARGET, but `form-action`
+	// stays 'none': the browser leaves via location.assign, not a form post.
+	const identityOrigins = [env.VITE_IDENTITY_API_BASE, env.VITE_IDENTITY_HOSTED_UI]
+		.filter(Boolean)
+		.map((u) => new URL(u).origin);
 
 	// SvelteKit types CSP sources as a template-literal union of scheme, host,
 	// and port shapes. An origin computed at runtime is just a string and does
 	// not narrow to it, so it gets one assertion here, at the single boundary,
 	// rather than loosening the directive types everywhere.
-	const connectSrc = ['self', ...(apiOrigin ? [apiOrigin] : []), MEDIA_ORIGIN] as CspSources;
+	const connectSrc = [
+		'self',
+		...(apiOrigin ? [apiOrigin] : []),
+		...identityOrigins,
+		MEDIA_ORIGIN
+	] as CspSources;
 
 	return {
 		plugins: [

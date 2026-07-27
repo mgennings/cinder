@@ -3,14 +3,29 @@
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { claimFile, TransferGoneError, DeliveryFailedError, TransferBusyError } from '$lib/api';
-	import { decryptFile, type DecryptedFile } from '$lib/crypto/file-crypto';
-	import { parseFragmentKey } from '$lib/link';
+	import {
+		decryptFile,
+		decryptPart,
+		partNeedsPassphrase,
+		type DecryptedFile
+	} from '$lib/crypto/file-crypto';
+	import { parseFragmentKey, parseFragmentParts, derivePartLocator } from '$lib/link';
 
 	type View = 'gate' | 'delivered' | 'gone' | 'lost' | 'busy' | 'error';
 
 	const locator = $derived(page.params.locator ?? '');
 	// The fragment (key) is read from the browser only — it never reached the server.
 	let fragmentKey = $state('');
+	// How many pieces this transfer is, according to the link. A hint until part
+	// zero's authenticated header confirms it — but it has to be known BEFORE the
+	// button is pressed, because the cost of pressing it depends on it.
+	let partCount = $state(1);
+	const chunked = $derived(partCount > 1);
+
+	// How many pieces Cinder has already destroyed on our behalf. The moment this
+	// is above zero the transfer cannot be abandoned safely, and every message on
+	// the page has to stop talking about trying again.
+	let consumed = $state(0);
 	let view: View = $state('gate');
 	let busy = $state(false);
 	let status = $state('');
@@ -43,6 +58,7 @@
 
 	$effect(() => {
 		fragmentKey = parseFragmentKey(page.url.hash);
+		partCount = parseFragmentParts(page.url.hash);
 	});
 
 	$effect(() => {
@@ -77,6 +93,111 @@
 		URL.revokeObjectURL(url);
 	}
 
+	// A throttled or shed request never reached the Lambda, so the atomic claim
+	// never ran and that part is untouched. On a single file the person can just
+	// press the button again; across 64 parts, one shed request mid-transfer would
+	// destroy the whole file over something that was never a failure at all. So a
+	// busy part is retried here, with backoff, a bounded number of times.
+	//
+	// This is not a retry of a claim. A claim that HAPPENED is never retried and
+	// never can be — that is what the guarantee costs. This retries a request that
+	// provably did not happen, which is the one thing the guarantee leaves room
+	// for, and TransferBusyError is exactly the error that says so.
+	const BUSY_ATTEMPTS = 4;
+	const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+	async function claimPart(partLocator: string): Promise<Uint8Array> {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				return await claimFile(partLocator);
+			} catch (e) {
+				if (!(e instanceof TransferBusyError) || attempt >= BUSY_ATTEMPTS - 1) throw e;
+				await sleep(400 * 2 ** attempt);
+			}
+		}
+	}
+
+	// The chunked delivery. Parts are claimed strictly in order and strictly one
+	// at a time, and the ordering is the honest one rather than the fast one:
+	//
+	//   - Part zero first, alone. If it needs a passphrase, we find out having
+	//     destroyed exactly one part instead of all of them, and a wrong
+	//     passphrase costs the smallest loss the design can offer.
+	//   - Nothing is claimed after a failure. There is no partial file to save —
+	//     the parts already delivered are useless without the ones that follow —
+	//     so continuing would destroy more of something already unrecoverable.
+	//
+	// There is no resume, and there cannot be. Resuming would require a second
+	// delivery attempt for a part Cinder has already deleted.
+	async function revealChunked(): Promise<DecryptedFile> {
+		const pieces: Uint8Array[] = [];
+		let name = 'file';
+		let type = '';
+
+		for (let index = 0; index < partCount; index++) {
+			// Part zero may already be in hand: the passphrase prompt claimed it,
+			// then stopped. Claiming it a second time would answer 410, because the
+			// first claim was the only one there was ever going to be.
+			let sealed: Uint8Array;
+			if (index === 0 && held) {
+				sealed = held;
+			} else {
+				status = `Claiming piece ${index + 1} of ${partCount}…`;
+				const partLocator = await derivePartLocator(locator, index);
+				sealed = await claimPart(partLocator);
+				consumed = index + 1;
+			}
+
+			// The passphrase question is answered by part zero's own bytes, and it
+			// is answered before any other part is touched.
+			if (index === 0 && partNeedsPassphrase(sealed) && !passphrase) {
+				held = sealed;
+				needsPassphrase = true;
+				status = '';
+				busy = false;
+				announcement = `Cinder has already destroyed the first of ${partCount} pieces. This file needs its passphrase before the rest can be claimed. Do not reload this page.`;
+				await Promise.resolve();
+				passphraseEl?.focus();
+				throw new PassphrasePause();
+			}
+
+			status = `Decrypting piece ${index + 1} of ${partCount}…`;
+			const out = await decryptPart(sealed, fragmentKey, index, partCount, passphrase || undefined);
+			if (index === 0) {
+				held = null;
+				// The link said how many pieces there are; part zero's authenticated
+				// header says how many there really are. A mismatch means the link was
+				// edited or truncated, and continuing would deliver a silently
+				// incomplete file. Refuse instead.
+				if (out.meta && out.meta.parts !== partCount) {
+					throw new Error('This link does not match the file it points at.');
+				}
+				name = out.meta?.name ?? name;
+				type = out.meta?.type ?? type;
+			}
+			pieces.push(out.bytes);
+		}
+
+		// Assembled only at the end, because there is no such thing as a usable
+		// prefix of an encrypted file.
+		const total = pieces.reduce((n, p) => n + p.length, 0);
+		const bytes = new Uint8Array(total);
+		let at = 0;
+		for (const p of pieces) {
+			bytes.set(p, at);
+			at += p.length;
+		}
+		return { bytes, name, type };
+	}
+
+	// Not an error: the flow stopping to ask for a passphrase, which the catch
+	// below has to let through untouched rather than render as a failure.
+	class PassphrasePause extends Error {}
+
+	// Part zero's ciphertext, held across the passphrase prompt. Same rule as
+	// `claimed`: there is no second copy anywhere.
+	let held: Uint8Array | null = $state(null);
+
 	async function reveal() {
 		if (busy) return;
 		if (!fragmentKey) {
@@ -88,6 +209,15 @@
 		errorMsg = '';
 
 		try {
+			if (chunked) {
+				const out = await revealChunked();
+				saved = out;
+				save(out);
+				view = 'delivered';
+				announcement = `Delivered. ${out.name}, ${humanSize(out.bytes.length)}, reassembled from ${partCount} pieces and saved to your device. Every stored piece is deleted.`;
+				return;
+			}
+
 			// The point of no return. After this resolves, Cinder's stored copy is
 			// already deleted and its absence already verified — holding these
 			// bytes is what proves it.
@@ -122,7 +252,24 @@
 			view = 'delivered';
 			announcement = `Delivered. ${out.name}, ${humanSize(out.bytes.length)}, saved to your device. Cinder's stored copy is deleted.`;
 		} catch (e) {
-			if (e instanceof TransferGoneError) {
+			if (e instanceof PassphrasePause) {
+				// Not a failure. The flow is waiting on the person, and `finally`
+				// must not clear the state that put the prompt on screen.
+				return;
+			} else if (needsPassphrase && held) {
+				// A wrong passphrase, checked BEFORE ordering more pieces destroyed.
+				// Exactly one piece is spent and it is still in this tab, so the
+				// person genuinely can try again — as long as they do not reload.
+				errorMsg = `That passphrase didn't work. Cinder has already destroyed 1 of ${partCount} pieces, so try again carefully without reloading this page.`;
+				announcement = errorMsg;
+			} else if (chunked && consumed > 0) {
+				// The decisive case, and the one this whole design had to answer
+				// honestly. Some pieces are already destroyed and the rest cannot
+				// stand in for them. There is nothing to retry, nothing to resume,
+				// and no partial file worth handing over.
+				view = 'lost';
+				announcement = `The delivery stopped after ${consumed} of ${partCount} pieces. Those pieces are permanently destroyed, the file cannot be assembled, and this cannot be retried.`;
+			} else if (e instanceof TransferGoneError) {
 				view = 'gone';
 				announcement = 'This transfer is gone. Cinder has no stored copy to return.';
 			} else if (e instanceof TransferBusyError) {
@@ -179,9 +326,15 @@
 						     false — "can begin" describes something that has begun — so it
 						     is replaced rather than left standing next to a passphrase box. -->
 						<p in:fade={{ duration: dur(200) }} class="mt-3 text-sm leading-relaxed text-mist">
-							Cinder's stored copy is already deleted. The encrypted file is held only in this tab,
-							and it needs its passphrase to open. If you reload or close this page before it
-							saves, it is permanently unavailable.
+							{#if chunked}
+								Cinder has already destroyed the first of {partCount} pieces. That piece is held only
+								in this tab, and the rest will not be claimed until the passphrase opens it. If you
+								reload or close this page, the file is permanently unavailable.
+							{:else}
+								Cinder's stored copy is already deleted. The encrypted file is held only in this tab,
+								and it needs its passphrase to open. If you reload or close this page before it
+								saves, it is permanently unavailable.
+							{/if}
 						</p>
 
 						<div in:fade={{ duration: dur(200) }} class="mt-5">
@@ -203,12 +356,23 @@
 					{:else}
 						<!-- The approved warning. Every clause here is enforced by the
 						     backend; none of it is softened to make the button easier to
-						     press. `id` so the button can point at it. -->
+						     press. The chunked version says the extra cost out loud BEFORE
+						     the button, because a file delivered in pieces can fail partway
+						     and nobody should learn that halfway through. -->
 						<p id="reveal-warning" class="mt-3 text-sm leading-relaxed text-mist">
-							Exactly one server delivery can begin. Cinder deletes its encrypted stored copy before
-							releasing bytes. If that delivery fails, the file is permanently unavailable. Copies
-							saved by the sender, recipient, browser, operating system, or another service remain
-							outside Cinder's control.
+							{#if chunked}
+								This file arrives in {partCount} pieces. Cinder deletes each stored piece before it
+								releases that piece's bytes, one at a time. If any piece fails, every piece already
+								delivered is permanently destroyed and the file cannot be assembled — there is no
+								retry and no resume. Keep this tab open until it saves. Copies saved by the sender,
+								recipient, browser, operating system, or another service remain outside Cinder's
+								control.
+							{:else}
+								Exactly one server delivery can begin. Cinder deletes its encrypted stored copy before
+								releasing bytes. If that delivery fails, the file is permanently unavailable. Copies
+								saved by the sender, recipient, browser, operating system, or another service remain
+								outside Cinder's control.
+							{/if}
 						</p>
 					{/if}
 
@@ -224,6 +388,8 @@
 							{status || 'Working…'}
 						{:else if needsPassphrase}
 							Unlock and save
+						{:else if chunked}
+							Reveal and destroy all {partCount} stored pieces
 						{:else}
 							Reveal and destroy Cinder's stored copy
 						{/if}
@@ -253,12 +419,18 @@
 							<span class="record-label">Size</span>
 							<span class="record-value">{humanSize(saved.bytes.length)}</span>
 						</div>
+						{#if chunked}
+							<div class="record-row">
+								<span class="record-label">Pieces</span>
+								<span class="record-value"><span class="record-mark"></span>{partCount} of {partCount} delivered</span>
+							</div>
+						{/if}
 						<div class="record-row">
 							<span class="record-label">Delivery</span>
 							<span class="record-value"><span class="record-mark"></span>Consumed</span>
 						</div>
 						<div class="record-row">
-							<span class="record-label">Stored copy</span>
+							<span class="record-label">Stored {chunked ? 'pieces' : 'copy'}</span>
 							<span class="record-value"><span class="record-mark"></span>Deleted, absence verified</span>
 						</div>
 						<div class="record-row">
@@ -308,10 +480,18 @@
 					<h1 bind:this={headingEl} tabindex="-1" class="text-lg font-semibold outline-none">
 						The delivery began but could not finish
 					</h1>
-					<p class="mt-2 text-sm text-mist">
-						Cinder's stored copy was already deleted when the transfer started, so there is nothing
-						left to send. This cannot be retried. Ask the sender for a new link.
-					</p>
+					{#if chunked}
+						<p class="mt-2 text-sm text-mist">
+							Cinder handed over {consumed} of {partCount} pieces and destroyed each one as it went.
+							Those pieces are gone, and a file is not usable in pieces. This cannot be retried or
+							resumed — that is the cost of deleting before delivering. Ask the sender for a new link.
+						</p>
+					{:else}
+						<p class="mt-2 text-sm text-mist">
+							Cinder's stored copy was already deleted when the transfer started, so there is nothing
+							left to send. This cannot be retried. Ask the sender for a new link.
+						</p>
+					{/if}
 					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Go to Cinder</a>
 				</div>
 			{:else}

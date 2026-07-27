@@ -25,7 +25,10 @@ export default defineConfig({
 	testDir: 'tests/e2e',
 	timeout: 30_000,
 	webServer: {
-		command: `VITE_API_BASE=http://${HOST}:4000 pnpm dev --port ${PORT} --host ${HOST}`,
+		// VITE_DEV_CAPABILITY_GRANT matches DEV_GRANT in scripts/dev-api.mjs. Without
+		// it the capability gate denies and the multipart specs could only ever
+		// assert a 402, never the chunked delivery itself.
+		command: `VITE_API_BASE=http://${HOST}:4000 VITE_DEV_CAPABILITY_GRANT=dev-capability-grant pnpm dev --port ${PORT} --host ${HOST}`,
 		url: `http://${HOST}:${PORT}`,
 		reuseExistingServer: false,
 		timeout: 120_000

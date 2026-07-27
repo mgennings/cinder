@@ -23,6 +23,72 @@ Parameters:
     Type: String
     Description: ACM cert ARN covering all four names (must be in us-east-1 for CloudFront)
 
+  # --- mattOS identity ---------------------------------------------------
+  # Every value below is created by hand in the Apple and Google consoles.
+  # docs/identity.md names each field and where it comes from. None has a
+  # default: a half-configured identity provider must fail the deploy rather
+  # than ship a sign-in button that leads nowhere.
+  IdentityDomainPrefix:
+    Type: String
+    Default: mattos-identity
+    Description: Cognito hosted-UI domain prefix (must be globally unique in the region)
+  AppleServicesId:
+    Type: String
+    Description: Apple Services ID, e.g. org.uxuiai.cinder.signin
+  AppleTeamId:
+    Type: String
+    Description: Apple Developer Team ID
+  AppleKeyId:
+    Type: String
+    Description: Key ID of the Sign in with Apple .p8 key
+  ApplePrivateKey:
+    Type: String
+    NoEcho: true
+    Description: Contents of the Sign in with Apple .p8 private key
+  GoogleClientId:
+    Type: String
+    Description: Google OAuth 2.0 web client ID
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Google OAuth 2.0 web client secret
+  # The HMAC key that turns a Cognito subject into Cinder's pairwise subject.
+  # ROTATING IT ORPHANS EVERY EXISTING ENTITLEMENT — the old rows are keyed by
+  # a value nothing can compute again. It is not a rotatable credential; it is
+  # part of the identity of the data. See .notes/GOTCHAS.md.
+  CinderPepper:
+    Type: String
+    NoEcho: true
+    Description: Per-product HMAC pepper for Cinder pairwise subjects (never rotate)
+
+  # --- payments ------------------------------------------------------------
+  # No defaults, on purpose. A stack that deploys with a blank Stripe secret
+  # would stand up a checkout button that silently fails, and a blank webhook
+  # secret would stand up a webhook that verifies nothing — verifyStripeSignature
+  # refuses an empty secret, so it would deny every event rather than accept
+  # every event, but neither is a thing to discover in production.
+  #
+  # TEST MODE UNTIL MATT SAYS OTHERWISE. sk_test_… and the whsec_… from
+  # `stripe listen` or a sandbox endpoint. See docs/pro-payments.md.
+  #
+  # Cinder has its OWN Stripe account, not a share of another product's. Stripe
+  # branding, the statement descriptor (CINDER.INK), receipts, and dispute
+  # history are all ACCOUNT-level, so a shared account would put the wrong name
+  # on a buyer's card statement. The handler reads these as per-product maps —
+  # see api/src/purchase.mjs — so a third domain is a third account and a third
+  # row, never a rewrite.
+  CinderStripeSecretKey:
+    Type: String
+    NoEcho: true
+    Description: Cinder's own Stripe account secret key (sk_test_… until Matt says otherwise)
+  CinderStripeWebhookSecret:
+    Type: String
+    NoEcho: true
+    Description: Signing secret of Cinder's webhook endpoint on that account (whsec_…)
+  CinderProPriceId:
+    Type: String
+    Description: Stripe Price id for the one-time Cinder Pro unlock (price_…)
+
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -455,6 +521,372 @@ Resources:
               StringEquals:
                 'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}'
 
+  # =====================================================================
+  # mattOS IDENTITY — a portable identity layer whose first consumer is
+  # Cinder Pro. Everything from here down is product-agnostic except the
+  # single app client and the single pepper entry, which are the Cinder
+  # instance of it.
+  #
+  # ONE POOL, ONE APP CLIENT PER PRODUCT. The pool is shared because the
+  # expensive, human-gated parts — the Apple Services ID, the Apple signing
+  # key, the Google OAuth client, and the one redirect URI all three of them
+  # are pinned to — are configured once and then serve every domain. A pool
+  # per product would mean repeating that console work per domain and asking
+  # a person to sign in again on each one.
+  #
+  # A shared pool means one Cognito subject per person across every product,
+  # which is exactly the correlation risk it sounds like. It is answered in
+  # code, not by policy: no product ever stores the subject. Each stores
+  # HMAC(its own pepper, "product:subject") — see api/src/identity.mjs. Two
+  # products' entitlement rows for the same human cannot be joined without
+  # both peppers. What is NOT solved: anyone holding the AWS account holds
+  # both peppers and the pool. This design defends against a database leak
+  # and against the products drifting into a shared profile. It does not
+  # defend against the account owner, and no design in this account can.
+  # =====================================================================
+
+  MattosUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: mattos-identity
+      # What is ABSENT here is the design. No Schema block, so not one custom
+      # attribute exists. No AutoVerifiedAttributes and no EmailConfiguration,
+      # so the pool never sends mail and has no address to send it to. No
+      # LambdaConfig, so no trigger sees a sign-in. No UserPoolAddOns: threat
+      # protection profiles people by device, IP, and behavior, which is the
+      # single most invasive thing a Cognito pool can be asked to do.
+      #
+      # UserPoolTier must never be PLUS — PLUS is threat protection. LITE is
+      # asserted here rather than assumed: confirm at first deploy that the
+      # classic hosted UI is available on LITE in this region, and if it is
+      # not, ESSENTIALS is the ceiling. Never PLUS.
+      UserPoolTier: LITE
+      # No native sign-up at all. Every account in this pool arrives through
+      # Apple or Google; there is no password to store, reset, or leak, and
+      # nobody can create a local account with an email address.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      # There is no recovery path, because there is nothing to recover with:
+      # no email, no phone. Naming admin_only says so explicitly instead of
+      # letting Cognito default to verified_email and imply an address exists.
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: admin_only, Priority: 1 }
+      DeletionProtection: ACTIVE
+
+  MattosUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref IdentityDomainPrefix
+      UserPoolId: !Ref MattosUserPool
+
+  # Sign in with Apple is the first-class path, and it is first-class in the
+  # only way that means anything: `authorize_scopes` is empty, so Cinder asks
+  # Apple for no name and no email — not even the private relay address. The
+  # relay exists to hide a real address behind a forwarding one; asking for
+  # neither is strictly better than asking for the relay. Apple returns a
+  # stable subject and nothing else, which is the entire input this system
+  # needs.
+  AppleProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      UserPoolId: !Ref MattosUserPool
+      ProviderName: SignInWithApple
+      ProviderType: SignInWithApple
+      ProviderDetails:
+        client_id: !Ref AppleServicesId
+        team_id: !Ref AppleTeamId
+        key_id: !Ref AppleKeyId
+        private_key: !Ref ApplePrivateKey
+        authorize_scopes: ''
+      # The ONLY mapping. `username` is required by Cognito and is mapped to
+      # the provider's opaque subject. Mapping `email` here is what would put
+      # an address in the directory, so it is absent on purpose.
+      AttributeMapping:
+        username: sub
+
+  # Google's minimum is `openid`, which returns a subject and nothing else.
+  # `profile` and `email` are deliberately not requested.
+  GoogleProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      UserPoolId: !Ref MattosUserPool
+      ProviderName: Google
+      ProviderType: Google
+      ProviderDetails:
+        client_id: !Ref GoogleClientId
+        client_secret: !Ref GoogleClientSecret
+        authorize_scopes: openid
+      AttributeMapping:
+        username: sub
+
+  # One app client per product. This is Cinder's. A second product adds a
+  # second client with its own callback URLs and its own pepper, and changes
+  # nothing else in this block.
+  CinderAppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: cinder
+      UserPoolId: !Ref MattosUserPool
+      # A public browser client: no secret to embed, PKCE instead. Authorization
+      # code only — the implicit flow would put tokens in a URL fragment, which
+      # is the one place this product has already promised nothing sensitive
+      # goes but a browser still logs.
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      # `openid` alone. Not `email`, not `profile`, not `aws.cognito.signin.user.admin`
+      # — that last one would let the browser's own access token read and write
+      # user attributes, which is a capability nothing here needs.
+      AllowedOAuthScopes: [openid]
+      SupportedIdentityProviders: [SignInWithApple, Google]
+      # An empty read/write set is a second, independent guarantee: even if an
+      # attribute somehow got populated, this client could not read it.
+      ReadAttributes: []
+      WriteAttributes: []
+      # No SRP, no password, no admin auth flow. The hosted UI's code exchange
+      # is the only way to get a token from this client.
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      # 5 minutes is Cognito's floor and the right number here. An ID token is
+      # stateless: signing out cannot recall one that was already issued, so
+      # its lifetime IS the revocation delay. The entitlement check is a single
+      # request at page load, so nothing needs a long-lived token.
+      AccessTokenValidity: 5
+      IdTokenValidity: 5
+      # The refresh token is the thing sign-out actually revokes. Seven days
+      # bounds a stolen one without asking someone to re-authenticate every day
+      # to read a note they already paid for.
+      RefreshTokenValidity: 7
+      CallbackURLs:
+        - !Sub 'https://${PrimaryDomain}/account'
+        - !Sub 'https://${WwwDomain}/account'
+        - !Sub 'https://${SiteDomain}/account'
+        - http://127.0.0.1:5178/account
+      LogoutURLs:
+        - !Sub 'https://${PrimaryDomain}/account'
+        - !Sub 'https://${WwwDomain}/account'
+        - !Sub 'https://${SiteDomain}/account'
+        - http://127.0.0.1:5178/account
+
+  # One row per (product, person): a pairwise subject and a boolean. See the
+  # header of api/src/entitlement-store.mjs for the complete item shape.
+  # Separate from blip-notes so the note functions have no policy that can
+  # reach it, and so a person's purchase and a person's note never share a
+  # table to be joined in.
+  EntitlementTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mattos-entitlements
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+      # TTL is enabled, and it does NOT expire entitlements. DynamoDB only reaps
+      # items that CARRY the attribute, and an entitlement row has no expiresAt
+      # — a purchase does not expire on its own, and the only thing that removes
+      # one is the person asking. What TTL is here for is the other row kind in
+      # this table: the pending-purchase translation written by the checkout
+      # route (api/src/purchase-store.mjs). That row is the one artifact that can
+      # map Stripe's stored reference back to a person, the webhook deletes it
+      # the moment a grant lands, and this is what erases the abandoned ones —
+      # an abandoned checkout must not leave a permanent record of an intent to
+      # buy.
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  # A SEPARATE HTTP API from the note and file endpoints, and the separation is
+  # the point. This is the only API in the account whose CORS admits an
+  # Authorization header, so a browser cannot attach a token to a note request
+  # even by mistake. Different API, different access log, different stage.
+  IdentityApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - !Sub 'https://${PrimaryDomain}'
+          - !Sub 'https://${WwwDomain}'
+          - !Sub 'https://${SiteDomain}'
+        AllowMethods: [POST, OPTIONS]
+        AllowHeaders: [content-type, authorization]
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  CheckEntitlementFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/identity-lambda.checkEntitlement
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref MattosUserPool
+          ENTITLEMENT_TABLE: !Ref EntitlementTable
+          CLIENT_PRODUCTS: !Sub '{"${CinderAppClient}": "cinder"}'
+          PRODUCT_PEPPERS: !Sub '{"cinder": "${CinderPepper}"}'
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt EntitlementTable.Arn
+      Events:
+        Check:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IdentityApi
+            Path: /entitlement
+            Method: POST
+
+  DeleteAccountFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/identity-lambda.deleteAccount
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref MattosUserPool
+          ENTITLEMENT_TABLE: !Ref EntitlementTable
+          CLIENT_PRODUCTS: !Sub '{"${CinderAppClient}": "cinder"}'
+          # EVERY product's pepper, not just the caller's. A row is keyed by an
+          # HMAC of the Cognito subject, so once the pool record is deleted its
+          # key can never be computed again. A product missing from this map
+          # leaves a row that is unreachable rather than erased.
+          PRODUCT_PEPPERS: !Sub '{"cinder": "${CinderPepper}"}'
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:DeleteItem]
+              Resource: !GetAtt EntitlementTable.Arn
+            # AdminDeleteUser and nothing else. This role cannot list users,
+            # read a user, or read an attribute — it can only erase the caller
+            # it has already proven is the caller.
+            - Effect: Allow
+              Action: [cognito-idp:AdminDeleteUser]
+              Resource: !GetAtt MattosUserPool.Arn
+      Events:
+        Delete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IdentityApi
+            Path: /account/delete
+            Method: POST
+
+  # --- purchase ------------------------------------------------------------
+  #
+  # Two functions, on the identity API because a checkout needs a verified token
+  # and the note API refuses the Authorization header at CORS.
+  #
+  # Both hold Stripe secrets, so both are deliberately narrow: checkout can write
+  # a pending row and read an entitlement, and cannot grant one. The webhook is
+  # the ONLY role in the account with dynamodb:PutItem on the entitlement table.
+  # There is exactly one way to become entitled and this is it.
+
+  StartCheckoutFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/identity-lambda.startCheckout
+      # A Stripe API call over the network, from a cold container.
+      Timeout: 10
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref MattosUserPool
+          ENTITLEMENT_TABLE: !Ref EntitlementTable
+          CLIENT_PRODUCTS: !Sub '{"${CinderAppClient}": "cinder"}'
+          PRODUCT_PEPPERS: !Sub '{"cinder": "${CinderPepper}"}'
+          STRIPE_SECRET_KEYS: !Sub '{"cinder": "${CinderStripeSecretKey}"}'
+          PRODUCT_PRICES: !Sub '{"cinder": "${CinderProPriceId}"}'
+          PRODUCT_RETURN_URLS: !Sub '{"cinder": {"success": "https://${PrimaryDomain}/pro/done", "cancel": "https://${PrimaryDomain}/pro"}}'
+      Policies:
+        - Statement:
+            # PutItem is scoped to the table, not to a key prefix — DynamoDB has
+            # no such condition for a simple primary key. What actually stops
+            # this function from granting an entitlement is that it never calls
+            # grantEntitlement; see the audit note in entitlement-store.mjs.
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt EntitlementTable.Arn
+      Events:
+        Start:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IdentityApi
+            Path: /purchase/checkout
+            Method: POST
+
+  # Stripe calls this, so it is the one route here that is NOT token-gated and
+  # cannot be. Its authorization is the webhook signature, and everything it is
+  # willing to do is bounded by a pending row this account minted itself.
+  PurchaseWebhookFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/identity-lambda.purchaseWebhook
+      Environment:
+        Variables:
+          ENTITLEMENT_TABLE: !Ref EntitlementTable
+          STRIPE_WEBHOOK_SECRETS: !Sub '{"cinder": "${CinderStripeWebhookSecret}"}'
+          # Present because the handler module is shared with the identity
+          # routes and reads them at import. The webhook itself verifies no
+          # token and derives no subject: it reads the pairwise value out of the
+          # pending row and never computes one.
+          USER_POOL_ID: !Ref MattosUserPool
+          CLIENT_PRODUCTS: !Sub '{"${CinderAppClient}": "cinder"}'
+          PRODUCT_PEPPERS: !Sub '{"cinder": "${CinderPepper}"}'
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem]
+              Resource: !GetAtt EntitlementTable.Arn
+      Events:
+        Hook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IdentityApi
+            Path: /purchase/webhook
+            Method: POST
+
+  # Explicit log groups with a short retention. Neither function logs a subject
+  # or a token — but Lambda writes a START/END/REPORT line per invocation
+  # regardless, and those lines carry a timestamp. Three days is long enough to
+  # debug a deploy and short enough that the timing record of who checked an
+  # entitlement when does not accumulate.
+  CheckEntitlementLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${CheckEntitlementFn}'
+      RetentionInDays: 3
+
+  DeleteAccountLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${DeleteAccountFn}'
+      RetentionInDays: 3
+
+  StartCheckoutLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${StartCheckoutFn}'
+      RetentionInDays: 3
+
+  # Fourteen days rather than three, and it is the one deliberate exception.
+  # A payment that did not become an entitlement is a support case with a person
+  # on the other end of it, and three days is shorter than someone takes to
+  # notice and write in. The lines are Lambda's own START/END/REPORT: no body, no
+  # signature, no reference, no subject — the handler logs nothing itself.
+  PurchaseWebhookLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${PurchaseWebhookFn}'
+      RetentionInDays: 14
+
 Outputs:
   ApiUrl:
     Description: Base URL of the blip API
@@ -468,3 +900,12 @@ Outputs:
   SiteUrl:
     Description: Public site URL
     Value: !Sub 'https://${SiteDistribution.DomainName}'
+  IdentityApiUrl:
+    Description: Base URL of the mattOS identity API (VITE_IDENTITY_API_BASE)
+    Value: !Sub 'https://${IdentityApi}.execute-api.${AWS::Region}.amazonaws.com'
+  IdentityHostedUi:
+    Description: Cognito hosted-UI origin (VITE_IDENTITY_HOSTED_UI)
+    Value: !Sub 'https://${IdentityDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+  CinderClientId:
+    Description: App client ID for Cinder (VITE_IDENTITY_CLIENT_ID)
+    Value: !Ref CinderAppClient

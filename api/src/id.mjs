@@ -36,6 +36,24 @@ export function newObjectKey(ttlSeconds) {
 	return `${band}/${randomBytes(32).toString('hex')}`;
 }
 
+// A multipart transfer is N ordinary transfers that happen to have been created
+// together. Each part gets its own grant, its own object key, and its own atomic
+// claim — the per-object guarantee is not re-implemented for parts, it is the
+// same code path, which is the only way to be sure it is identical.
+//
+// The parts' locators are DERIVED from the transfer locator rather than issued
+// separately, and that is the design's whole trick: one short link still opens
+// every part, so the fragment does not have to carry N capabilities. The
+// recipient's browser computes part i's locator locally; the server only ever
+// stores sha256 of it, exactly as it does for a single file.
+//
+// Direction matters. Holding the transfer locator yields every part, which is
+// correct — it is one link to one recipient. Holding one part's locator yields
+// nothing else, because inverting SHA-256 is the work. A part is not a foothold.
+export function deriveChunkLocator(locator, index) {
+	return createHash('sha256').update(`${locator}:part:${index}`, 'utf8').digest('base64url');
+}
+
 // The authoritative capability check is still the DynamoDB condition
 // expression, which is atomic with the write it guards. This comparison exists
 // for a different reason: finalize has to reject a wrong capability BEFORE it

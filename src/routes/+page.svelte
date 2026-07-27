@@ -4,17 +4,24 @@
 	import { encryptNote } from '$lib/crypto/note-crypto';
 	import {
 		encryptFile,
+		encryptFileParts,
+		partCountFor,
 		MAX_FILE_BYTES,
+		MAX_TRANSFER_BYTES,
 		FileTooLargeError,
-		FilenameTooLongError
+		FilenameTooLongError,
+		TransferTooLargeError
 	} from '$lib/crypto/file-crypto';
 	import {
 		createNote,
 		createFileTransfer,
+		createMultipartTransfer,
 		uploadCiphertext,
-		finalizeFileTransfer
+		finalizeFileTransfer,
+		TransferNotEntitledError
 	} from '$lib/api';
-	import { buildLink, buildFileLink } from '$lib/link';
+	import { buildLink, buildFileLink, buildTransferLink, derivePartLocator } from '$lib/link';
+	import { capabilityGrant, CAPABILITY_MULTIPART_TRANSFER } from '$lib/entitlement';
 	import CopyLink from '$lib/ui/CopyLink.svelte';
 	import Merkaba from '$lib/ui/Merkaba.svelte';
 
@@ -32,6 +39,10 @@
 	let phase: Phase = $state('idle');
 	let uploaded = $state(0); // 0..1, real bytes on the wire
 	let error = $state('');
+	// Whether the current error is the one the pay point can resolve. A separate
+	// flag rather than matching on the message text, because copy changes and a
+	// string comparison would silently stop offering the link.
+	let needsPro = $state(false);
 	let link = $state('');
 
 	let aborter: AbortController | null = null;
@@ -73,13 +84,24 @@
 	}
 
 	const maxLabel = `${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MiB`;
+	const maxProLabel = `${Math.round(MAX_TRANSFER_BYTES / (1024 * 1024))} MiB`;
+
+	// Over the free ceiling, the file is sent in pieces. The count is shown before
+	// anything happens, because it is also what the recipient will be asked to
+	// accept — a piece that fails destroys the whole transfer, and the sender
+	// should know that when choosing the file, not when reading a support email.
+	const parts = $derived.by(() => {
+		const chosen: File | null = file;
+		return chosen ? partCountFor(chosen.size) : 1;
+	});
 
 	function pickFile(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
 		const chosen = input.files?.[0] ?? null;
 		error = '';
-		if (chosen && chosen.size > MAX_FILE_BYTES) {
-			error = `That file is ${humanSize(chosen.size)}. The limit is ${maxLabel}.`;
+		needsPro = false;
+		if (chosen && chosen.size > MAX_TRANSFER_BYTES) {
+			error = `That file is ${humanSize(chosen.size)}. The limit is ${maxProLabel}.`;
 			file = null;
 			input.value = '';
 			return;
@@ -106,6 +128,7 @@
 			return;
 		}
 		error = '';
+		needsPro = false;
 		const pass = usePassphrase && passphrase ? passphrase : undefined;
 
 		try {
@@ -114,6 +137,8 @@
 				const { payload, fragmentKey } = await encryptNote(text, pass);
 				const id = await createNote(payload, Number(ttl));
 				link = buildLink(location.origin, id, fragmentKey);
+			} else if (file && parts > 1) {
+				link = await createChunked(file, pass);
 			} else if (file) {
 				phase = 'encrypting';
 				const envelope = await encryptFile(file, pass);
@@ -138,7 +163,11 @@
 			}
 		} catch (e) {
 			if (e instanceof DOMException && e.name === 'AbortError') return; // cancel() already reset
-			if (e instanceof FileTooLargeError) error = `That file is over the ${maxLabel} limit.`;
+			if (e instanceof TransferNotEntitledError) {
+				error = `Sending more than ${maxLabel} needs Cinder Pro. Everything else about the transfer is identical — Pro adds size, it does not change the promise.`;
+				needsPro = true;
+			} else if (e instanceof TransferTooLargeError) error = `That file is over the ${maxProLabel} limit.`;
+			else if (e instanceof FileTooLargeError) error = `That file is over the ${maxLabel} limit.`;
 			else if (e instanceof FilenameTooLongError) error = 'That filename is too long.';
 			else error = e instanceof Error ? e.message : 'Something went wrong.';
 		} finally {
@@ -146,6 +175,62 @@
 			if (!link) uploaded = 0;
 			phase = 'idle';
 		}
+	}
+
+	// A file over the free ceiling. Every step below is the single-file step run N
+	// times against N independent grants — there is no bulk upload, no bulk
+	// finalize, and no bulk claim. That is the point: the guarantee at 200 MB is
+	// the same code as the guarantee at 3 MB, not a larger version of it.
+	async function createChunked(f: File, pass?: string): Promise<string> {
+		phase = 'encrypting';
+		const envelope = await encryptFileParts(f, pass);
+
+		const grant = await createMultipartTransfer(
+			envelope.parts.map((p) => ({
+				ciphertextBytes: p.ciphertextBytes,
+				ciphertextSha256: p.ciphertextSha256
+			})),
+			Number(ttl),
+			await capabilityGrant(CAPABILITY_MULTIPART_TRANSFER)
+		);
+
+		phase = 'uploading';
+		uploaded = 0;
+		aborter = new AbortController();
+
+		// Progress is weighted by real bytes rather than by part number, so a
+		// 40 MiB transfer does not sit at "1 of 10" for a tenth of the upload and
+		// then jump.
+		const totalBytes = envelope.parts.reduce((n, p) => n + p.ciphertextBytes, 0);
+		let sent = 0;
+		for (const { index, upload } of grant.parts) {
+			const part = envelope.parts[index];
+			await uploadCiphertext(upload, part.ciphertext, {
+				onProgress: (fraction) => (uploaded = (sent + fraction * part.ciphertextBytes) / totalBytes),
+				signal: aborter.signal
+			});
+			sent += part.ciphertextBytes;
+			uploaded = sent / totalBytes;
+		}
+
+		// One finalize per part, each of which makes the server look at that
+		// object in S3 and decide for itself. A part that does not verify leaves
+		// the whole transfer unclaimable, which is the correct failure: an
+		// incomplete file must never become deliverable.
+		phase = 'finalizing';
+		for (const { index } of grant.parts) {
+			await finalizeFileTransfer(
+				await derivePartLocator(grant.locator, index),
+				grant.uploadCapability
+			);
+		}
+
+		return buildTransferLink(
+			location.origin,
+			grant.locator,
+			envelope.fragmentKey,
+			envelope.parts.length
+		);
 	}
 
 	function reset() {
@@ -224,7 +309,7 @@
 				{:else}
 					<div class="mt-4">
 						<label for="file-input" class="mb-2 block text-sm text-mist">
-							Choose one file, up to {maxLabel}
+							Choose one file, up to {maxLabel} — or up to {maxProLabel} with Pro
 						</label>
 						<input
 							id="file-input"
@@ -239,6 +324,17 @@
 							<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs text-ghost">
 								{humanSize(file.size)} · <span class="break-all">{file.name}</span>
 							</p>
+							{#if parts > 1}
+								<!-- Said here, at the moment the file is chosen, rather than at the
+								     moment it fails. The recipient will be shown the same cost
+								     before they press anything. -->
+								<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist">
+									Over {maxLabel}, so this goes in {parts} pieces. Each piece is deleted before it is
+									handed over, exactly as one file is. If any piece fails on the way to your
+									recipient, the whole transfer is permanently gone — there is no retry. Needs Cinder
+									Pro.
+								</p>
+							{/if}
 						{/if}
 					</div>
 				{/if}
@@ -291,7 +387,15 @@
 				{/if}
 
 				{#if error}
-					<p in:fade={{ duration: dur(200) }} role="alert" class="mt-3 text-sm text-ember-ink">{error}</p>
+					<p in:fade={{ duration: dur(200) }} role="alert" class="mt-3 text-sm text-ember-ink">
+						{error}
+						<!-- Being told a thing needs Pro, with no way to get Pro, is a dead
+						     end. The link goes to the pay point, where the price and what
+						     Stripe sees are stated before any button exists to press. -->
+						{#if needsPro}
+							<a class="underline underline-offset-2" href="/pro">See what Pro costs</a>.
+						{/if}
+					</p>
 				{/if}
 
 				{#if busy}

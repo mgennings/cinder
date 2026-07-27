@@ -2,6 +2,30 @@
 
 All notable changes to Cinder are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+Files larger than 4 MiB, with the guarantee untouched.
+
+### Added
+
+- **Transfers up to 256 MiB, in pieces.** A large file is split into parts of at most 4 MiB, each sealed as its own AES-256-GCM envelope, stored under its own random object key, and claimed by its own atomic delete-and-verify. This is not a second protocol: `POST /files` writes N ordinary grants and the finalize and claim handlers were not modified at all. The per-object promise at 256 MiB is the same rows in the same table hit by the same conditional writes as the promise at 3 MiB.
+- **A stated cost before the recipient commits.** The reveal gate names the number of pieces and says plainly that if any piece fails, every piece already delivered is permanently destroyed, the file cannot be assembled, and there is no retry and no resume. The sender is told the same thing when they choose the file.
+- **One short link for any number of pieces.** Part *i* is addressed at `sha256("<locator>:part:<i>")`, derived independently by the browser and the server, so the link carries one locator instead of 64 capabilities. The part count rides in the fragment, which is how the gate can state the cost with no request on link arrival.
+- **Position-authenticated envelopes.** Each part's index and the transfer's total are fed into AES-GCM as additional authenticated data, so a part cannot be reordered, replayed at another position, or have the tail dropped — each of those fails the tag rather than producing a plausible partial file.
+- **A capability gate on the create path.** A caller without a grant for `transfer.multipart` gets `402` and cannot create a multi-part transfer. The gate is never consulted on finalize or claim: a recipient never needs an account to receive what a sender already paid to send.
+
+### Changed
+
+- **The filename is encrypted once per transfer** rather than once per part, so a multi-piece transfer does not repeat the same plaintext under one key at a known offset in every object, and does not leak the name's length into every object's size.
+- **The presign window scales with part count**, to a one-hour ceiling. Safe because every presigned `PUT` is signed against an exact key, length, and SHA-256, so a leaked URL authorizes writing only the bytes it was already going to receive.
+- **`/security` and the threat model** now cover the piece-wise delivery, the total-loss cost of a partial failure, and what paying does and does not change about what Cinder can see.
+
+### Notes
+
+- **Response streaming is still rejected, and now there is a test that says so.** Chunking is what made a larger file possible without touching the 4 MiB per-object ceiling that the buffered transport entitles. `api/test/chunked.test.mjs` asserts the constant's exact expression and fails if any streaming symbol appears in the handler, so a future attempt to raise the ceiling by trading the structural guarantee for a behavioral one breaks the build first.
+- **256 MiB is memory-bound, not transport-bound** — the one number here that is a judgment rather than a derivation. A recipient holds every part in one tab while reassembling, and a tab killed mid-delivery is a permanently destroyed file rather than an inconvenience.
+- **Not yet reachable.** The entitlement gate ships denying, because a gate that fails open is not a gate. Cinder Pro is unavailable until the identity lane mints real capability grants; the seam it must implement is documented in `api/src/entitlement-provider.mjs`.
+
 ## [0.2.0] — 2026-07-27
 
 Encrypted file transfer, with one promise Cinder can actually keep.

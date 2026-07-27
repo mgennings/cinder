@@ -98,6 +98,37 @@ POST /files
 
 The `locator` and `uploadCapability` are independent 256-bit secrets; the server stores only their SHA-256 hashes. `upload.url` is a presigned `PUT` valid for five minutes, signed against one random object key, that exact byte length, and that exact checksum — S3 itself refuses anything else.
 
+### Reserve a multipart transfer
+
+The same endpoint, with a `parts` array instead of a single size and checksum. This is how a file larger than 4 MiB is sent: as N ordinary transfers created in one request. `POST /files/finalize` and `POST /files/claim` are unchanged and are called once per part.
+
+**Request body:**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `parts` | array | Yes | 1–64 objects, each `{ ciphertextBytes, ciphertextSha256 }`, in order. Every part is validated against the same 4,198,400-byte per-object ceiling. |
+| `ttlSeconds` | number | Yes | Clamped server-side to 1–604800 (7 days). |
+| `capabilityGrant` | string | For >1 part | An opaque bearer grant for the `transfer.multipart` capability. It travels in the **body**, never in a header — this API allows only `content-type` at CORS so an account can never be linked to a transfer. |
+
+**Responses:**
+
+| Status | Body | Meaning |
+| --- | --- | --- |
+| `201 Created` | `{ "locator", "uploadCapability", "parts": [{ "index", "upload" }] }` | N transfers reserved. Build the link as `/f/{locator}#{key}.{n}`. |
+| `400 Bad Request` | `{ "error": "..." }` | Empty array, more than 64 parts, or any part malformed or oversized. One bad part refuses the whole request. |
+| `402 Payment Required` | `{ "error": "..." }` | No valid grant for `transfer.multipart`. A single-part request never reaches this check. |
+| `403 Forbidden` | `{ "error": "..." }` | Granted, but for fewer parts than requested. |
+
+Each part is an independent grant with its own random object key, its own finalize, and its own atomic claim. They are addressed by **derived** locators rather than issued ones, so the link stays short:
+
+```
+partLocator(i) = base64url(sha256("<locator>:part:<i>"))
+```
+
+Holding the transfer locator yields every part. Holding one part's locator yields nothing else. The presign window scales with part count, up to one hour; that is safe because every presigned `PUT` is signed against an exact key, length, **and** SHA-256, so a leaked URL authorizes writing only the bytes it was already going to receive.
+
+**Partial failure has no recovery, deliberately.** Parts are claimed in order and each is deleted before its bytes are released, so a failure at part *i* leaves parts 1..*i* permanently destroyed and the file unassemblable. There is no resume endpoint and there will not be one — a resume is a second delivery attempt for an object that no longer exists.
+
 ### Finalize
 
 ```
