@@ -42,7 +42,8 @@ Each component has one job. The table is the fastest way to see the whole system
 | createFile Lambda | Reserve a transfer, issue a constrained one-use upload | `api/src/handlers.mjs` |
 | finalizeFile Lambda | Inspect the stored object itself, then mark it ready | `api/src/handlers.mjs` |
 | claimFile Lambda | The one delivery attempt: claim, delete, verify, return | `api/src/handlers.mjs` |
-| S3 port | Four narrow verbs, so each role's IAM policy stays legible | `api/src/lambda.mjs` |
+| S3 port | Five narrow verbs, so each role's IAM policy stays legible | `api/src/lambda.mjs` |
+| S3 error reading | The two opposite readings of "is this object there?" | `api/src/s3-errors.mjs` |
 | Store | The DynamoDB operations, isolated for testing | `api/src/store.mjs` |
 | Infrastructure | The whole AWS stack as one template | `template.yaml` |
 
@@ -102,7 +103,7 @@ Files use their own route (`/f/{locator}#{key}`) because the reader page has to 
 4. The browser uploads ciphertext straight to the private bucket. It never passes through a Lambda.
 5. `POST /files/finalize` is where the server stops trusting the client. It asks S3 what it actually holds and compares size and checksum against what it authorized, then flips `uploading → ready` in a single conditional write. A client that uploads nothing and calls finalize gets the same refusal as a client that uploads the wrong thing.
 
-The finalize function is the one step that touches a stored object it has no business reading, so it uses `GetObjectAttributes` — size and checksum, no body — and its IAM role has no `s3:GetObject` at all. It cannot read what it approves.
+Finalize asks for `GetObjectAttributes` — size and checksum rather than the body. Worth being precise about what that does and does not buy: AWS requires `s3:GetObject` alongside `s3:GetObjectAttributes`, so the finalize role *can* read a stored object, and no S3 permission set can express "metadata but never the body." What the split does achieve is that finalize holds no `s3:DeleteObject` and no `s3:ListBucket`: it cannot destroy anything, and it cannot discover a key it was not handed.
 
 ### The one delivery attempt
 

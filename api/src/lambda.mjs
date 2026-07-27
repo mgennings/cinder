@@ -1,11 +1,10 @@
 // Production Lambda entrypoints. Wires real AWS clients (region + creds come
 // from the Lambda execution environment) into the injectable handlers.
 //
-// The S3 port below is deliberately four narrow verbs rather than an SDK client
+// The S3 port below is deliberately five narrow verbs rather than an SDK client
 // handed straight to the handlers. It keeps the handlers testable against an
 // in-memory bucket, and it makes each function's IAM policy legible: whoever
-// reads this file can see that finalize only ever asks for attributes, never a
-// body.
+// reads this file can see exactly which calls each Lambda actually makes.
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
@@ -19,20 +18,11 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { makeHandlers } from './handlers.mjs';
+import { absentProven, notRetrievable } from './s3-errors.mjs';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3client = new S3Client({});
 const BUCKET = () => process.env.MEDIA_BUCKET;
-
-// S3 answers "no such object" by throwing. Everywhere Cinder asks whether an
-// object exists, absence is a legitimate answer and must not be an exception —
-// but a permissions failure or an outage must NOT be quietly read as absence.
-// Only the two genuine not-found shapes become null.
-function absentOrThrow(e) {
-	const status = e?.$metadata?.httpStatusCode;
-	if (e?.name === 'NotFound' || e?.name === 'NoSuchKey' || status === 404) return null;
-	throw e;
-}
 
 const s3 = {
 	// The upload is signed against this exact key, length, and checksum, so S3
@@ -50,7 +40,14 @@ const s3 = {
 			}),
 			{
 				expiresIn,
-				signableHeaders: new Set(['content-length', 'x-amz-checksum-sha256'])
+				// `unhoistableHeaders`, NOT `signableHeaders`. The latter silently
+				// does nothing here: the presigner hoists x-amz-* into query
+				// parameters by default, and the resulting URL signs only
+				// content-length and host, so S3 rejects the upload with
+				// "headers present in the request which were not signed". Marking
+				// it unhoistable is what puts it in X-Amz-SignedHeaders and makes
+				// the checksum a real constraint instead of a decorative one.
+				unhoistableHeaders: new Set(['x-amz-checksum-sha256'])
 			}
 		);
 		return {
@@ -74,7 +71,7 @@ const s3 = {
 				checksumSha256: res.Checksum?.ChecksumSHA256
 			};
 		} catch (e) {
-			return absentOrThrow(e);
+			return notRetrievable(e);
 		}
 	},
 
@@ -95,7 +92,7 @@ const s3 = {
 			await s3client.send(new HeadObjectCommand({ Bucket: BUCKET(), Key: key }));
 			return {};
 		} catch (e) {
-			return absentOrThrow(e);
+			return absentProven(e);
 		}
 	}
 };

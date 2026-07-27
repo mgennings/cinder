@@ -20,7 +20,9 @@ A file transfer makes a narrower promise than a note, and the difference is wort
 
 **The filename and MIME type are encrypted.** They live inside the same AES-256-GCM envelope as the bytes, not beside it. A stored object reveals its approximate size and nothing else. "severance-agreement.pdf" is frequently the whole secret, and a design that authenticated the filename while leaving it readable would be protecting the wrong half.
 
-**The stored ciphertext is unreachable except through that one path.** The bucket is private, non-versioned, and blocks all public access; no role can list it; there is no presigned `GET`, no redirect, no Range request, and no public path. The function that decides a transfer is ready holds `s3:GetObjectAttributes` and deliberately not `s3:GetObject`, so it cannot read the object it is approving.
+**The stored ciphertext is unreachable except through that one path.** The bucket is private, non-versioned, and blocks all public access; there is no presigned `GET`, no redirect, no Range request, and no public path. Each of the three functions holds only what it needs: create can write but not read, finalize can read but not delete or list, and only the claim function can delete. Only the claim function can list, and it holds that permission for one reason — without `s3:ListBucket`, S3 answers a request for a missing object with `403` instead of `404`, and the post-delete absence check would be unable to tell "the object is gone" from "I am not allowed to look."
+
+An earlier draft of this document claimed the finalize function could not read the object it approves. That was wrong: AWS requires `s3:GetObject` alongside `s3:GetObjectAttributes`, so no S3 permission set can express "metadata but never the body." The claim is corrected here rather than quietly dropped. In practice it changes little — the stored object is ciphertext, and the key has never been on any server — but a privacy tool does not get to leave a flattering inaccuracy standing.
 
 **Deliberately not versioned.** Object versioning would quietly retain a copy of the thing Cinder just promised to destroy.
 

@@ -150,9 +150,11 @@ export function makeHandlers(doc, s3, { onEvent = () => {} } = {}) {
 		// only thing that grants readiness, and it re-checks every fact.
 		if (!grant) return GONE();
 
-		// `attributes` asks S3 for size and checksum without the body, so this
-		// function's role never needs s3:GetObject. Finalize is the one step that
-		// touches a stored object it has no business being able to read.
+		// `attributes` asks S3 for size and checksum rather than the body. Note
+		// that this does NOT make the finalize role unable to read ciphertext —
+		// AWS requires s3:GetObject alongside s3:GetObjectAttributes, so the
+		// permission comes along whether we want it or not. The narrowing that
+		// is real: finalize holds no delete and no list.
 		const stored = await s3.attributes({ key: grant.objectKey });
 		if (!stored) return GONE();
 		if (stored.contentLength !== grant.ciphertextBytes) return GONE();

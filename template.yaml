@@ -200,11 +200,16 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
               Resource: !GetAtt NotesTable.Arn
-            # GetObjectAttributes returns size and checksum and nothing else.
-            # This role deliberately has no s3:GetObject: the function that
-            # decides a transfer is ready cannot read what it is approving.
+            # GetObjectAttributes returns size and checksum without the body,
+            # but AWS requires s3:GetObject alongside it ("you need the
+            # s3:GetObject and s3:GetObjectAttributes permissions" —
+            # API_GetObjectAttributes). So this role CAN read a stored object.
+            # An earlier draft claimed it could not; that was wrong, and S3's
+            # permission model offers no way to make it true. What still holds:
+            # no s3:DeleteObject, and no s3:ListBucket, so finalize cannot
+            # destroy anything or discover a key it was not handed.
             - Effect: Allow
-              Action: [s3:GetObjectAttributes]
+              Action: [s3:GetObject, s3:GetObjectAttributes]
               Resource: !Sub '${MediaBucket.Arn}/*'
       Events:
         Finalize:
@@ -234,6 +239,19 @@ Resources:
             - Effect: Allow
               Action: [s3:GetObject, s3:DeleteObject]
               Resource: !Sub '${MediaBucket.Arn}/*'
+            # This one grant is a deliberate, documented exception to the
+            # otherwise strict no-ListBucket rule, and it exists for exactly one
+            # reason: without s3:ListBucket, S3 answers a request for a missing
+            # object with 403 instead of 404. The post-delete absence check
+            # would then be unable to tell "the object is gone" from "I am not
+            # allowed to look" — and "not allowed to look" is not a deletion
+            # proof. Withholding it would either break every claim or force the
+            # check to accept an ambiguous answer, which is worse than not
+            # having the check. Only the claim function gets it; create and
+            # finalize still cannot list.
+            - Effect: Allow
+              Action: [s3:ListBucket]
+              Resource: !GetAtt MediaBucket.Arn
       Events:
         Claim:
           Type: HttpApi
