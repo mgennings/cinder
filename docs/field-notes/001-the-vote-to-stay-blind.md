@@ -7,106 +7,124 @@
 
 ---
 
-## The gate
+## In plain words
 
-A privacy tool was asked to defend itself, and the only defenses on offer required it to start looking at who its users were. Twelve independent reviews, each measuring a different surface, arrived at the same answer without conferring: **refuse the protection.**
+Cinder does one thing. You give it a file, it locks the file in your own browser before anything leaves your computer, and it hands you a link. The first person to open that link gets the file, and Cinder erases its copy in the same breath. Cinder never holds the key, so it could not read your file even if someone made it try.
 
-This note records what was measured, what it cost, and why the answer generalizes past this one product.
+Someone asked a fair question: what happens if a stranger floods it with traffic? That costs money, and it can knock the service offline.
 
----
+The normal way to stop that is to have the service watch where every request is coming from and turn away anyone asking too often. It is what nearly every website does. It is cheap and it works.
 
-## What was at stake
+But watching where requests come from means keeping a note of who is asking. For a tool whose entire purpose is not knowing who you are, that is not a small thing. It is the thing.
 
-Cinder transfers one encrypted file, once. The browser encrypts the bytes, the filename, and the file type; the key lives only in the URL fragment and never touches a server. The promise is narrow on purpose: **exactly one server delivery attempt.** Not one recipient, not one download. Before any response byte exists, Cinder deletes its stored copy and confirms with the storage layer that the object is gone — so holding the bytes is itself the proof that the deletion already happened.
+So we measured instead of assuming, and found two facts that settled it.
 
-Two promises sit underneath every product here. Nothing a user does is collected or tied to them, ever. And every surface works for the person using assistive technology, at the size and pace their body needs. They are one commitment: the user's dignity.
+The first: the defense would not have worked here anyway. Someone determined could take Cinder offline from a single laptop, and spreading the same traffic across twenty connections slips under any limit gentle enough not to hurt real people.
 
-The question that forced the gate: **a flood of traffic costs money and takes the product down. What do we do about it?**
+The second: that kind of limit hurts real people first. It works by address, and enormous numbers of people share one — everyone on a phone network, everyone at a school or a library, everyone using a VPN. Many of them use a VPN precisely because they need privacy. A privacy tool that shuts out the people who most need privacy has protected no one.
 
----
+So Cinder chose to stay blind. Under a flood it slows down and turns people away, and it does that by simply running out of room rather than by recognizing anybody. Nothing is lost when this happens: a request that gets turned away never reaches the part that erases your file, so your link still works once the flood passes. The honest cost is that Cinder can be pushed offline. We decided we would rather be knocked down than start keeping track of people.
 
-## The options, and the hidden price
-
-The standard answer is a web application firewall with a rate limit — count requests per address, refuse the ones over the line. It is the default recommendation everywhere, and it is nearly free.
-
-Reading it closely produced four facts that are not in the marketing:
-
-**The counter is a registry.** A rate-based rule keyed on client address exposes an API that returns the list of addresses currently being limited — up to ten thousand of them.
-
-**"Turn logging off" does not turn the recording off.** Request sampling is a separate, *required* setting that defaults to on. It retains client address, full request path, and headers on a rolling three-hour window, independent of whether logging is configured. Cinder's note-burn route carries the note's primary key in the path. Every sample would have been a `(who, what, when)` tuple — the exact record the product exists to not have.
-
-**Metrics are a population profile.** Firewall metrics carry country, derived from address, and device, derived from user agent, at fifteen-month retention. Nothing resembling that exists today.
-
-**And it would not have covered the expensive path anyway.** Uploads go from the browser directly to storage through a pre-signed authorization. The edge is bypassed structurally on the one route that moves megabytes.
+**One more thing, and it is the uncomfortable part.** While checking all this, we found that Cinder had been lying. When it was too busy to start, it told people their file had been permanently destroyed — while the file sat there, perfectly fine. Worse, the protection added that same morning made the false message happen more often. We had built something that generated a lie about the one promise the product exists to keep. That is fixed, and it is written down here rather than quietly patched, because a tool that asks you to trust it does not get to hide its own mistakes.
 
 ---
 
-## The measurement that decided it
+## Why this document is also the test
 
-Two seats ran load against production independently.
+The PDF you are reading was sent through Cinder before it was published. Not a stand-in, not a test file: this exact document, through the live product, the same way a stranger would.
 
-Forty simultaneous delivery requests returned **exactly ten served and thirty shed**. Warm service time was about 165 milliseconds. That arithmetic is unforgiving: ten slots divided by 0.165 seconds means roughly **sixty requests per second from a single machine holds every slot and denies delivery to everyone**, at under two hundred bytes per request. Effectively free. No botnet.
+That practice has a name — **dogfooding**, using your own product for real work instead of only testing it. It matters because of something that happened here, and the lesson is worth more than the decision above.
 
-So the cost cap that had been shipped that morning to *protect* the product was also a lever to take it down.
+Cinder's tests compared files before and after and confirmed they matched perfectly. Every one passed. But the files those tests used were made up — long runs of predictable filler, named to look like documents. A file like that can survive a round trip flawlessly and prove almost nothing, because it was never a real document to begin with. It has no structure to break.
 
-The instinct is to reach for the rate limit. The second measurement killed that: sixty requests per second split across twenty addresses defeats any humane threshold against a ten-slot pool. **The firewall would have bought the surveillance and not the protection.**
+The gap showed up the moment a real one was tried. A file arrived that would not open, and it looked like Cinder had corrupted it. It had not: the file had been empty filler all along, and Cinder returned it exactly as received, faithfully preserving something that was already broken. The tests were right and useless at the same time.
 
-That is the whole decision. The choice was never "protected or unprotected." It was **"vulnerable and blind" versus "vulnerable and watching."**
-
----
-
-## The redeeming property, and why it is provable
-
-One measurement changed the character of the answer.
-
-During the flood: `Throttles 286, Invocations 27, Errors 0`. A shed request **never enters the function**. It reads no record, writes no log line, and — critically — never reaches the atomic claim that destroys a transfer. The flood denies delivery. It cannot consume anyone's file.
-
-This is the part worth carrying elsewhere. A concurrency cap sheds by *"no worker is free."* A rate limit sheds by *"I recognize you."* Both refuse requests. Only one of them can be proven to have learned nothing, because the mechanism has no place to put the knowledge.
-
-"We turned the logging off" is a claim about someone else's internals that no user can check and the operator cannot fully verify either. "The request never ran" is a structural fact with a counter attached. **For a product whose entire value is a promise, prefer the guarantee whose shape makes the failure impossible over the one that depends on a setting staying flipped.**
+**Matching before and after is not the same as working.** A test that only asks "did the bytes survive" can pass forever while the product fails the person holding the file. The only reliable check is to send the real thing and then open it — which is why this document went through Cinder, and why the technical record below lists real files of each kind rather than generated stand-ins.
 
 ---
 
-## What we found on the way in
+## The technical record
 
-The review did not only evaluate the options. It audited what was already shipped, and the worst finding was ours.
+Everything below is measured against the live production system, not a local copy or a simulation.
 
-Every refusal that was not a clean "already gone" rendered to the user as: *"The delivery began but could not finish. Cinder's stored copy was already deleted. This cannot be retried."*
+### The promise being defended
 
-But a shed request never reaches the code. The file was sitting untouched in storage. **The product was telling people their file had been permanently destroyed when it demonstrably had not been** — and the cost cap shipped that morning made that message *more* frequent, not less. A protection had manufactured a lie.
+Exactly one server delivery attempt per link, up to 4 MiB. Not one recipient and not a guaranteed download, because a server cannot observe either. Bytes, filename, and MIME type are encrypted in the browser with AES-256-GCM into one authenticated envelope; the key lives only in the URL fragment and is never transmitted. Before any response byte exists, the stored object is deleted and its absence verified — so receiving the bytes entails the deletion already happened. The transport is a fully buffered proxy integration with no streaming path, which makes that ordering structural rather than sequenced.
 
-The fix is now the only recoverable state in the product: a refusal says *nothing was used up, this link still works, try again.* Ambiguous failures resolve toward "busy" deliberately, because if the transfer really was spent, the retry returns "gone" and tells the truth by itself. **The kinder wrong answer is also the self-correcting one.**
+### The option that was rejected, and its real cost
 
-Three other claims did not survive the same audit: that a function could not read what it approved (the cloud provider requires the broader permission — no configuration can express the narrower one); that Subresource Integrity mitigated the served-code risk (not deployed, and useless on a first-party origin, since whoever can change the script can change the hash beside it); and that the gateway's rate limit resisted anything (measured: six hundred requests admitted in 0.59 seconds against a configured burst of forty).
+A managed firewall with a rate-based rule. Four properties, none of them prominent in the documentation:
 
-Each was confidently written and wrong. Each is now corrected in public, in the same words that got it wrong.
+| Mechanism | What it retains |
+| --- | --- |
+| Request sampling | Client IP, full request path, and headers on a rolling 3-hour window. It is a **required** field defaulting to on, and is **not** governed by the logging configuration. The note-burn route carries the note's primary key in the path, so each sample is a `(who, what, when)` tuple. |
+| Rate-based managed keys | Up to 10,000 client addresses currently being limited, retrievable through a public API whenever aggregation is by IP. |
+| Firewall metrics | `Country` (GeoIP-derived) and `Device` (user-agent-derived) dimensions at 15-month retention. |
+| Coverage gap | Uploads go browser-to-storage through a pre-signed authorization, structurally bypassing the edge on the only route that moves megabytes. |
+
+### The measurements that decided it
+
+Two reviewers ran load against production independently.
+
+```
+40 concurrent claims        → exactly 10 × 200, 30 × 503
+warm service time           ≈ 165 ms
+10 slots ÷ 0.165 s          ≈ 61 req/s sustains total denial, from one machine
+request cost                < 200 bytes
+```
+
+And during the flood:
+
+```
+Throttles 286 · Invocations 27 · Errors 0
+ConcurrentExecutions Maximum = 10.0 exactly
+```
+
+A shed request never enters the function. It reads no record, writes no log line, and never reaches the conditional delete — so a flood denies delivery but cannot consume a transfer. That is a provable negative. Per-IP counters inside a managed firewall are not: their emptiness is a claim about a third party's internals that neither a user nor the operator can verify.
+
+Second measurement, which removed the last argument for the firewall: ~60 req/s distributed across ~20 addresses defeats any threshold humane enough to avoid blocking shared egress. **The control would have purchased the surveillance without the protection.**
+
+### Four claims that did not survive audit
+
+| Claim | Reality |
+| --- | --- |
+| The finalize role cannot read a stored object | `GetObjectAttributes` requires `s3:GetObject`. No permission set expresses "metadata but never the body". |
+| Subresource Integrity mitigates the served-code risk | Not deployed, and useless on a first-party origin — whoever can alter the bundle can alter the integrity attribute beside it. |
+| Stage throttling resists locator grinding | Measured: 600 requests admitted in 0.59 s against a configured burst of 40. Entropy defeats guessing; the throttle does not. |
+| Reserved concurrency bounds the bill at ~$14/day | That figure is Lambda compute only. It bounds neither gateway requests, nor database writes, nor storage from abandoned uploads. |
+
+### The defect the audit found in our own work
+
+The client mapped every non-`410` refusal to a permanent-destruction state. A `429` or `503` is produced before the function is invoked, so the atomic claim never ran and the object was untouched. The interface asserted a destruction the code had not performed, and reserved concurrency — added hours earlier as a protection — increased its frequency.
+
+Now: gateway-level refusals (`429`, `502`, `503`, `504`) render a recoverable *busy* state; a `500` still renders as spent, because the handler ran and may have thrown after the claim; and an ambiguous network failure resolves toward *busy* deliberately, since if the transfer really was consumed the retry returns `410` and corrects itself. The kinder wrong answer is the self-correcting one.
+
+### What shipped instead
+
+Per-function reserved concurrency of 10 (a boundary that sheds by exhaustion, never by identity); a CloudWatch alarm on shed deliveries so the outage is not silent; a monthly cost guard; object keys banded by lifetime so a one-hour transfer's ciphertext is swept the next day rather than the eighth; and log retention pinned in infrastructure code rather than left at the default of forever.
+
+### Media validated end to end
+
+Real files of each kind, through the live product, opened after arrival — not synthetic fixtures.
+
+| Type | Fixture |
+| --- | --- |
+| PDF | This document |
+| Image | PNG, 1200 × 630, 16-bit RGBA |
+| Video | MP4, H.264, ISO Base Media |
+
+### The transferable principle
+
+**A refusal is not a destruction.** Any system with an irreversible operation must distinguish "we declined to start" from "we started and failed." Collapsing them is how software ends up lying about the one thing it promised.
+
+**Prefer the guarantee whose shape makes the failure impossible.** Structural properties beat configured ones. A buffered response cannot leak early because there is no stream to write to. A concurrency cap cannot profile because it has nowhere to put a profile.
+
+**A control's data appetite is part of its price**, and it is rarely on the label. Read what the mechanism retains, not what its logging toggle claims.
+
+**Audit the protection you just shipped.** The most damaging finding here was not among the options being weighed. It was in the mitigation added hours earlier.
+
+**Byte-identical is not the same as usable.** Verify with real artifacts, and open them afterward.
 
 ---
 
-## What it cost
-
-This is not a free choice and should not be presented as one.
-
-A determined flood can hold every slot and make real people see *"Cinder is busy"* instead of their file. Roughly sixty requests per second does it. Cinder has no account, no appeal, and no support channel — so there is nobody to complain to.
-
-Cinder accepts being knocked offline in exchange for never building a record of who its users are. That is the trade, stated where users can read it. The alternative was a rate limit that falls hardest on shared addresses — carrier networks, universities, libraries, Tor, and the VPNs that at-risk people use precisely because they need them. **A privacy tool that locks out the people who need privacy most has not protected anyone.**
-
-What shipped instead collects nothing: a cap that sheds without looking, an alarm that counts refusals so the outage is not silent, a cost guard, storage keys banded by lifetime so a one-hour transfer's bytes are swept the next day instead of the eighth, and log retention pinned in code rather than left at "forever."
-
----
-
-## The transferable principle
-
-Four things, in the order they were learned:
-
-**A refusal is not a destruction.** Any system with an irreversible operation must distinguish *"we declined to start"* from *"we started and it failed."* Collapsing them is how software ends up lying about the one thing it promised. Check every error path that renders a permanent consequence and ask what actually reached the code.
-
-**Prefer the guarantee whose shape makes the failure impossible.** Structural properties beat configured ones. A buffered response cannot leak early because there is no stream to write to. A concurrency cap cannot profile because it has nowhere to store a profile.
-
-**A security control's data appetite is part of its price.** It is rarely on the label. Read what the mechanism *retains*, not what its logging toggle claims, and ask whether the thing it protects is worth the thing it now knows.
-
-**Audit the protection you just shipped.** The most damaging finding here was not in the options under consideration. It was in the mitigation added hours earlier, which had quietly turned the product into something that told people their files were gone when they were not.
-
----
-
-*Cinder is open source. The measurements, the corrections, and the code that makes these claims true are all public — including the three claims that were wrong before they were right.*
+*Cinder is open source. The measurements, the corrections, and the code that makes these claims true are all public — including the four claims that were wrong before they were right.*

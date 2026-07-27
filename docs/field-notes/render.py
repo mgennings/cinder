@@ -53,6 +53,17 @@ hr{border:0;border-top:1px solid var(--line);margin:8mm 0}
 .meta:first-of-type{border-top:1px solid var(--line)}
 .coda{color:var(--ghost);font-size:9pt;font-style:italic;border-left:2px solid var(--ember);
  padding-left:4mm;margin-top:7mm}
+.plain{background:var(--soft);border:1px solid var(--line);border-left:2px solid var(--ember);
+ border-radius:2mm;padding:5mm 6mm;margin:0 0 4mm}
+table{width:100%;border-collapse:collapse;margin:0 0 4mm;font-size:9pt;page-break-inside:avoid}
+th{text-align:left;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:7.5pt;
+ letter-spacing:.1em;text-transform:uppercase;color:var(--ghost);font-weight:400;
+ border-bottom:1px solid var(--line);padding:1.8mm 3mm 1.8mm 0;vertical-align:bottom}
+td{border-bottom:1px solid var(--line);padding:2.2mm 3mm 2.2mm 0;vertical-align:top;color:var(--mist)}
+td:first-child{color:var(--body)}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:2mm;padding:4mm 5mm;
+ font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:8.2pt;line-height:1.5;
+ color:var(--ember-ink);white-space:pre-wrap;margin:0 0 4mm;page-break-inside:avoid}
 .foot{margin-top:10mm;padding-top:4mm;border-top:1px solid var(--line);
  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:7pt;letter-spacing:.14em;
  text-transform:uppercase;color:var(--ghost);display:flex;justify-content:space-between}
@@ -78,6 +89,7 @@ def inline(text: str) -> str:
 def to_html(markdown: str) -> tuple[str, str, str]:
     """Return (body_html, title, date). Paragraphs are joined across lines."""
     body, paragraph, title, date = [], [], "Field Note", ""
+    fence, table = [], []
 
     def flush() -> None:
         if paragraph:
@@ -86,15 +98,25 @@ def to_html(markdown: str) -> tuple[str, str, str]:
 
     for raw in markdown.split("\n"):
         line = raw.strip()
-        if not line:
+        in_fence = bool(fence and fence[-1])
+        is_row = line.startswith("|") and line.endswith("|")
+
+        # A table ends at the first line that is not a row. This has to happen
+        # before every other branch, because headings and rules `continue` and
+        # would otherwise leave the table open and swallow what follows.
+        if table and not is_row and not in_fence:
+            body.append("</table>")
+            table.clear()
+
+        if not line and not in_fence:
             flush()
             continue
-        if line == "---":
+        if line == "---" and not in_fence:
             flush()
             body.append("<hr>")
             continue
 
-        heading = re.match(r"^(#{1,3})\s+(.*)", line)
+        heading = None if in_fence else re.match(r"^(#{1,3})\s+(.*)", line)
         if heading:
             flush()
             level = len(heading.group(1))
@@ -104,7 +126,7 @@ def to_html(markdown: str) -> tuple[str, str, str]:
             continue
 
         # `**Key:** value` renders as a metadata row rather than a paragraph.
-        if any(line.startswith(f"**{k}:**") for k in META_KEYS):
+        if not in_fence and any(line.startswith(f"**{k}:**") for k in META_KEYS):
             flush()
             key, value = line.split(":**", 1)
             key = key.strip("*").strip()
@@ -118,14 +140,42 @@ def to_html(markdown: str) -> tuple[str, str, str]:
             continue
 
         # A wholly-italic line at the end is the coda.
-        if line.startswith("*") and line.endswith("*") and not line.startswith("**"):
+        if not in_fence and line.startswith("*") and line.endswith("*") and not line.startswith("**"):
             flush()
             body.append(f'<p class="coda">{inline(line.strip("*"))}</p>')
+            continue
+
+        # Fenced code — measurements are quoted verbatim, never reflowed.
+        if line.startswith("```"):
+            flush()
+            fence.append(not fence[-1] if fence else True)
+            body.append("<pre>" if fence[-1] else "</pre>")
+            continue
+        if in_fence:
+            body.append(html.escape(raw.rstrip()))
+            continue
+
+        # Pipe tables.
+        if is_row:
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{2,}:?", c) for c in cells):
+                continue  # the --- separator row
+            flush()
+            tag = "th" if not table else "td"
+            if not table:
+                body.append('<table><tr>')
+                table.append(True)
+            else:
+                body.append("<tr>")
+            body.append("".join(f"<{tag}>{inline(c)}</{tag}>" for c in cells))
+            body.append("</tr>")
             continue
 
         paragraph.append(inline(line))
 
     flush()
+    if table:
+        body.append("</table>")
     return "\n".join(body), title, date
 
 

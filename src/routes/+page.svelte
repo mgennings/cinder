@@ -320,8 +320,9 @@
 			</section>
 		{/if}
 
-		<footer class="mt-8 text-center text-xs">
+		<footer class="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-center text-xs">
 			<a href="/security" class="link-quiet">How private is this, really?</a>
+			<a href="/field-notes" class="link-quiet">Field notes</a>
 		</footer>
 	</div>
 </main>

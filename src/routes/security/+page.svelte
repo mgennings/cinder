@@ -123,5 +123,8 @@
 		your note — it can't remove your responsibility to share the link carefully.
 	</p>
 
-	<a href="/" class="btn btn-ghost mt-8 px-5 py-2.5 text-sm">Write a note</a>
+	<div class="mt-8 flex flex-wrap gap-3">
+		<a href="/" class="btn btn-ghost px-5 py-2.5 text-sm">Send something</a>
+		<a href="/field-notes" class="btn btn-ghost px-5 py-2.5 text-sm">Read a decision gate</a>
+	</div>
 </main>
