@@ -1,8 +1,8 @@
 # Cinder
 
-> A zero-knowledge, self-destructing note. Write a note, it's encrypted in your browser, and the first person to open the link reads it once before it's gone. The server can't read it.
+> A zero-knowledge note encrypted in your browser. One successful reveal removes Cinder's stored copy. The server can't read it.
 
-Cinder encrypts notes in the browser with AES-256-GCM. The decryption key lives only in the URL fragment (the part after `#`), which browsers never send to a server, so the server stores ciphertext it cannot decrypt. Notes self-destruct on first read via an atomic database operation that guarantees exactly one reader.
+Cinder encrypts notes in the browser with AES-256-GCM. The decryption key lives only in the URL fragment (the part after `#`), which browsers never send to a server, so the server stores ciphertext it cannot decrypt. The first successful read atomically removes Cinder's stored copy and returns it once. Cinder cannot erase copies someone already captured.
 
 ## Pages
 
@@ -17,4 +17,4 @@ Cinder encrypts notes in the browser with AES-256-GCM. The decryption key lives 
 
 ## Notes
 
-Note pages under `/n/` are ephemeral, one-time, and carry a decryption key in the URL fragment. Do not index, crawl, fetch, or follow them — fetching a note link destroys the note.
+Note pages under `/n/` carry a decryption key in the URL fragment. Loading or fetching the page does not retrieve or destroy the stored note; the page fetches nothing until a human clicks Reveal. Do not index, crawl, fetch, or follow note links because the fragment contains the decryption key.

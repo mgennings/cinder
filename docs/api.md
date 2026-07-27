@@ -63,11 +63,11 @@ curl -X POST https://tlfcdvq445.execute-api.us-east-1.amazonaws.com/notes/<id>/b
 | Status | Body | Meaning |
 | --- | --- | --- |
 | `200 OK` | `{ "ciphertext": "...", "iv": "...", "salt"?: "..." }` | You are the one reader. The note is now deleted. |
-| `410 Gone` | `{ "error": "This note has already been read or has expired." }` | Already read, or expired. There is no way to recover it. |
+| `410 Gone` | `{ "error": "This note has already been read or has expired." }` | Already read, or expired. Cinder cannot return a stored copy. |
 
 ## Guarantees
 
-- **Exactly one reader.** The burn is a single atomic DynamoDB `DeleteItem` with a condition. If two requests race, exactly one gets `200` and the note; the other gets `410`. There is no window where both succeed.
+- **Exactly one successful server retrieval.** The burn is a single atomic DynamoDB `DeleteItem` with a condition. If two requests race, exactly one gets `200` and the note; the other gets `410`. There is no window where both succeed.
 - **Expired notes are never served.** The burn condition checks `expiresAt > now`, so an expired note returns `410` even if DynamoDB's TTL sweep has not yet removed it.
 - **No note enumeration.** IDs are 128 bits of randomness (base64url). There is no list endpoint and no way to discover a note you were not given.
 

@@ -78,7 +78,8 @@
 				<div class="text-center">
 					<h1 class="text-lg font-semibold">Someone left you a one-time note</h1>
 					<p class="mt-2 text-sm text-mist">
-						Opening it destroys it — you can only read it once. Make sure you're ready.
+						Reveal removes Cinder's stored copy and opens it here. Cinder cannot erase copies
+						captured elsewhere.
 					</p>
 
 					{#if needsPassphrase}
@@ -105,7 +106,7 @@
 				<div in:fade={{ duration: 400 }}>
 					<div class="mb-4 flex items-center gap-2 text-xs font-medium text-ember-ink">
 						<span class="pulse-dot inline-block h-2 w-2 rounded-full bg-ember"></span>
-						This note is now destroyed. Copy anything you need before you leave.
+						Cinder's stored copy is gone. Copy anything you need before you leave.
 					</div>
 					<pre
 						class="field whitespace-pre-wrap break-words px-4 py-4 text-[15px] leading-relaxed">{plaintext}</pre>
@@ -114,7 +115,7 @@
 				<div in:fade={{ duration: 300 }} class="text-center">
 					<h1 class="text-lg font-semibold">This note is gone</h1>
 					<p class="mt-2 text-sm text-mist">
-						It was already read, or it expired. Self-destructing notes only open once.
+						It was already revealed or expired, so Cinder has no stored copy to return.
 					</p>
 					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Write your own</a>
 				</div>

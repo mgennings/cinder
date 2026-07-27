@@ -52,10 +52,10 @@
 </script>
 
 <svelte:head>
-	<title>Cinder — a note that's read once, then gone</title>
+	<title>Cinder — an encrypted note retrieved once</title>
 	<meta
 		name="description"
-		content="Write a note, Cinder encrypts it in your browser, and hands you one link. The first person to open it reads it once, then it's gone. The server can't read it."
+		content="Write a note, Cinder encrypts it in your browser, and hands you one link. One successful reveal removes Cinder's stored copy. Copies outside Cinder remain outside its control."
 	/>
 </svelte:head>
 
@@ -70,14 +70,14 @@
 				Cinder<span class="text-ember">.</span>
 			</h1>
 			<p class="mt-2 text-sm text-mist">
-				A note that's read once, then gone. Encrypted in your browser — we never see it.
+				One retrieval from Cinder. Encrypted in your browser — we never see it.
 			</p>
 		</header>
 
 		{#if link}
 			<section in:fly={{ y: 12, duration: 350 }} class="card p-6">
 				<h2 class="mb-1 text-sm font-semibold text-ember-ink">Your one-time link is ready</h2>
-				<p class="mb-4 text-xs text-ghost">It self-destructs the moment it's read.</p>
+				<p class="mb-4 text-xs text-ghost">Opening is safe. Reveal removes Cinder's stored copy.</p>
 				<CopyLink {link} />
 				<button onclick={reset} class="link-quiet mt-5 text-xs">Write another note</button>
 			</section>

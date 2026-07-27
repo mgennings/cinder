@@ -2,7 +2,7 @@
 
 # Cinder
 
-**A note that's read once, then gone. Encrypted in your browser — the server can't read it.**
+**An encrypted note retrieved once from Cinder. The server can't read it.**
 
 [![Live](https://img.shields.io/badge/live-cinder.ink-ff6b4a)](https://cinder.ink)
 [![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)](#testing)
@@ -13,7 +13,7 @@
 
 ---
 
-Cinder is a zero-knowledge, self-destructing note service. You write a note, Cinder encrypts it in your browser, and hands you a single link. The first person to open that link reads the note once — then it's gone, permanently, from everywhere. The server that stores the note can never read it. That last property is the entire point: this is a genuine privacy tool, not a demo that merely feels private.
+Cinder is a zero-knowledge, self-destructing note service. You write a note, Cinder encrypts it in your browser, and hands you a single link. The first successful reader atomically removes Cinder's stored copy and receives the encrypted note. Cinder cannot erase copies someone already captured. The server that stores the note can never read it. That last property is the entire point: this is a genuine privacy tool, not a demo that merely feels private.
 
 The bar was "the best one out there." Concretely that means clearing the bar the respected tools clear — client-side encryption with the key held only in the URL fragment — and doing it on real AWS infrastructure with an atomic, race-proof burn, wrapped in a UI that's a pleasure to use.
 
@@ -26,7 +26,7 @@ Most "private note" services encrypt on the server, which means the server holds
 | Where encryption happens | On the server | In your browser |
 | Who holds the decryption key | The server | Only the link (URL fragment) |
 | Can the operator read your note? | Yes, technically | No — it's mathematically impossible |
-| What "self-destruct" means | The server deletes it | Atomic delete-and-return: exactly one reader, ever |
+| What "self-destruct" means | The server deletes it | Atomic delete-and-return: one successful server retrieval |
 | Survives link-preview bots | Often no | Yes — human-gated reveal |
 | Honest about its limits | Rarely | [Yes, explicitly](docs/security.md) |
 
@@ -49,7 +49,7 @@ The trick is the URL fragment — everything after the `#`. Browsers keep it str
 │ human clicks "Reveal" ───────┼──► API Gateway ──► Lambda ──► DynamoDB          │
 │ ◄── ciphertext (now burned) ─┼────                │   atomic conditional      │
 │ decrypt with key from #      │                    │   DeleteItem + ALL_OLD    │
-│ read once — then it's gone   │                    │                           │
+│ read once — gone from Cinder │                    │                           │
 └──────────────────────────────┘                    └───────────────────────────┘
 ```
 

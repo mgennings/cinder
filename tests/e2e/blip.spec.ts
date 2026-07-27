@@ -16,7 +16,7 @@ test('create → reveal once → second reveal is gone', async ({ page, context 
 	await reader.goto(link);
 	await reader.getByRole('button', { name: /reveal note/i }).click();
 	await expect(reader.getByText('the eagle lands at dawn')).toBeVisible();
-	await expect(reader.getByText(/now destroyed/i)).toBeVisible();
+	await expect(reader.getByText(/Cinder's stored copy is gone/i)).toBeVisible();
 
 	// Second reader gets the gone state.
 	const reader2 = await context.newPage();

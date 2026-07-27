@@ -97,7 +97,7 @@ The fragment (`#…`) is the only part of a URL that browsers never transmit to 
 
 ### Why DynamoDB, specifically
 
-The core requirement — "exactly one reader, ever" — is a concurrency problem. Two people (or a person and a retrying network) could hit the burn endpoint at the same moment. DynamoDB's conditional `DeleteItem` with `ReturnValues: ALL_OLD` solves this in a single, strongly-consistent, atomic operation: the delete either happens (and returns the item) or fails the condition. Exactly one caller can win. No locks, no transactions, no read-then-delete race window. A SQL database or an object store would have required extra machinery to get the same guarantee.
+The core requirement — exactly one successful server retrieval — is a concurrency problem. Two people (or a person and a retrying network) could hit the burn endpoint at the same moment. DynamoDB's conditional `DeleteItem` with `ReturnValues: ALL_OLD` solves this in a single, strongly-consistent, atomic operation: the delete either happens (and returns the item) or fails the condition. Exactly one caller can win. No locks, no transactions, no read-then-delete race window. A SQL database or an object store would have required extra machinery to get the same guarantee.
 
 ### Why TTL is a backstop, not the burn
 
