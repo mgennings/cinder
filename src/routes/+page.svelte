@@ -218,7 +218,7 @@
 							aria-label="Your secret note"
 							placeholder="Type your secret. It never leaves this device unencrypted."
 							rows="6"
-							class="field resize-none px-4 py-3 text-[15px] leading-relaxed"
+							class="field resize-none px-4 py-3 text-base leading-relaxed"
 						></textarea>
 					</div>
 				{:else}

@@ -92,8 +92,10 @@
 			// already deleted and its absence already verified — holding these
 			// bytes is what proves it.
 			if (!claimed) {
+				// Not mirrored into `announcement`: the button holds focus and its own
+				// accessible name becomes this string, so echoing it would say it twice.
+				// The live region owns outcomes, which the button cannot say once it goes.
 				status = 'Claiming the one delivery…';
-				announcement = status;
 				claimed = await claimFile(locator);
 			}
 
@@ -114,7 +116,6 @@
 			}
 
 			status = 'Decrypting on this device…';
-			announcement = status;
 			const out = await decryptFile(claimed, fragmentKey, passphrase || undefined);
 			saved = out;
 			save(out);

@@ -109,7 +109,7 @@
 						Cinder's stored copy is gone. Copy anything you need before you leave.
 					</div>
 					<pre
-						class="field whitespace-pre-wrap break-words px-4 py-4 text-[15px] leading-relaxed">{plaintext}</pre>
+						class="field whitespace-pre-wrap break-words px-4 py-4 text-base leading-relaxed">{plaintext}</pre>
 				</div>
 			{:else if view === 'gone'}
 				<div in:fade={{ duration: 300 }} class="text-center">
