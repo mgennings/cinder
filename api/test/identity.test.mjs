@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, createSign } from 'node:crypto';
 import { bearerToken, verifyIdToken, pairwiseSubject, parseMap } from '../src/identity.mjs';
 import { makeEntitlementHandlers } from '../src/entitlement.mjs';
+import { verifyCapabilityGrant } from '../src/capability-grant.mjs';
 
 const ISSUER = 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_mattOS';
 const CLIENT = 'cinderclient123';
@@ -136,7 +137,15 @@ test('parseMap fails closed on garbage', () => {
 
 // --- the routes -------------------------------------------------------------
 
-function makeApi({ rows = new Map(), peppers = { [PRODUCT]: PEPPER } } = {}) {
+const CAPABILITY_SECRET = 'mint-secret-for-tests';
+const LIMITS = { [PRODUCT]: { 'transfer.multipart': { maxParts: 64 } } };
+
+function makeApi({
+	rows = new Map(),
+	peppers = { [PRODUCT]: PEPPER },
+	capabilitySecret = CAPABILITY_SECRET,
+	capabilityLimits = LIMITS
+} = {}) {
 	const deleted = [];
 	const doc = {
 		async send(cmd) {
@@ -153,7 +162,9 @@ function makeApi({ rows = new Map(), peppers = { [PRODUCT]: PEPPER } } = {}) {
 		deleteUser: async (username) => deleted.push(username),
 		issuer: ISSUER,
 		clientProducts: { [CLIENT]: PRODUCT },
-		productPeppers: peppers
+		productPeppers: peppers,
+		capabilitySecret,
+		capabilityLimits
 	});
 	return { api, rows, deleted };
 }
@@ -243,4 +254,116 @@ test('an unauthenticated delete deletes nothing and says so', async () => {
 	assert.deepEqual(JSON.parse(res.body), { deleted: false });
 	assert.equal(rows.size, 1);
 	assert.equal(deleted.length, 0);
+});
+
+// --- the mint ---------------------------------------------------------------
+//
+// The last place identity exists in the chain. Everything after this holds a
+// signed string that says what may be done and nothing about who is doing it.
+
+const entitle = (rows) =>
+	rows.set(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`, {
+		entitled: true
+	});
+
+const mintCap = (api, token, capability = 'transfer.multipart') =>
+	api.mintCapability({ ...authed(token), body: JSON.stringify({ capability }) });
+
+test('capability: an entitled caller gets a grant the real gate accepts', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows);
+
+	const body = JSON.parse((await mintCap(api, mint(pool, {}))).body);
+	assert.equal(body.expiresIn, 900);
+
+	const verified = verifyCapabilityGrant(body.grant, {
+		secret: CAPABILITY_SECRET,
+		capability: 'transfer.multipart'
+	});
+	assert.deepEqual(verified.limits, { maxParts: 64 });
+});
+
+test('capability: the grant carries no subject and no balance', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows);
+	const { grant } = JSON.parse((await mintCap(api, mint(pool, {}))).body);
+	const payload = JSON.parse(Buffer.from(grant.split('.')[0], 'base64url').toString());
+	assert.deepEqual(Object.keys(payload).sort(), ['cap', 'exp', 'limits', 'nonce']);
+	// The nonce is random, not derived: two grants for the SAME person must not
+	// be recognizable as such, which is the join the pairwise subject exists to
+	// break and which a derived nonce would hand back.
+	const second = JSON.parse((await mintCap(api, mint(pool, {}))).body);
+	const other = JSON.parse(Buffer.from(second.grant.split('.')[0], 'base64url').toString());
+	assert.notEqual(payload.nonce, other.nonce);
+});
+
+test('capability: a valid token with no purchase mints nothing', async () => {
+	// Someone who never paid. This is the assertion that catches a mint which
+	// grants on a verified token alone — an account is not a purchase.
+	const { api } = makeApi();
+	assert.deepEqual(JSON.parse((await mintCap(api, mint(pool, {}))).body), {
+		grant: null,
+		expiresIn: null
+	});
+});
+
+test('capability: anonymous, forged, foreign-pool, and wrong-audience mint nothing', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows);
+	const exp = Math.floor(Date.now() / 1000) - 3600;
+	const denials = [
+		api.mintCapability({ headers: {}, body: '{"capability":"transfer.multipart"}' }),
+		mintCap(api, mint(pool, { exp, iat: exp - 300 })),
+		mintCap(api, mint(pool, {}, { sign: false })),
+		mintCap(api, mint(makePool('key-1'), {})),
+		mintCap(api, mint(pool, { aud: 'another-client' }))
+	];
+	for (const res of denials) assert.equal(JSON.parse((await res).body).grant, null);
+});
+
+test('capability: an unknown capability name mints nothing', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows);
+	for (const name of ['transfer.everything', '', 'TRANSFER.MULTIPART', 42]) {
+		assert.equal(JSON.parse((await mintCap(api, mint(pool, {}), name)).body).grant, null);
+	}
+	// A malformed body is a refusal, not a 500.
+	const bad = await api.mintCapability({ ...authed(mint(pool, {})), body: 'not json' });
+	assert.equal(JSON.parse(bad.body).grant, null);
+});
+
+test('capability: an unconfigured product or missing secret fails closed', async () => {
+	const noSecret = makeApi({ capabilitySecret: '' });
+	entitle(noSecret.rows);
+	assert.equal(JSON.parse((await mintCap(noSecret.api, mint(pool, {}))).body).grant, null);
+
+	const noLimits = makeApi({ capabilityLimits: {} });
+	entitle(noLimits.rows);
+	assert.equal(JSON.parse((await mintCap(noLimits.api, mint(pool, {}))).body).grant, null);
+});
+
+test('capability: deleting the entitlement stops the mint, and does not recall a live grant', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows);
+	const { grant } = JSON.parse((await mintCap(api, mint(pool, {}))).body);
+
+	await api.deleteAccount(authed(mint(pool, {})));
+	assert.equal(rows.size, 0);
+
+	// The mint is closed immediately.
+	assert.equal(JSON.parse((await mintCap(api, mint(pool, {}))).body).grant, null);
+
+	// The grant already handed out still works until it expires, and that is
+	// STATED rather than hidden: a bearer capability cannot be recalled, exactly
+	// as a stateless ID token cannot (docs/identity.md, "What sign-out actually
+	// does"). Fifteen minutes is the whole exposure, it buys the holder more
+	// transfers and nothing else, and closing it would mean the transfer API
+	// consulting the entitlement table on every send — which is precisely the
+	// link this design exists to prevent.
+	assert.ok(
+		verifyCapabilityGrant(grant, {
+			secret: CAPABILITY_SECRET,
+			capability: 'transfer.multipart'
+		})
+	);
 });

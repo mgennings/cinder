@@ -54,6 +54,32 @@ prevent that, and claiming otherwise would be the kind of lie this product exist
 not to tell. What it does prevent is a leaked database becoming a cross-product
 profile, and it prevents the products drifting into a shared one by accident.
 
+## The mint — `POST /capability`
+
+The last place identity exists in the chain. It takes a Bearer ID token and
+`{ capability }`, verifies the token, reads the entitlement row, and returns a
+short-lived signed grant:
+
+```
+{ "grant": "<base64url payload>.<base64url hmac>", "expiresIn": 900 }
+```
+
+Every refusal — no token, a forged token, an unconfigured product, an unknown
+capability name, no purchase — answers `200` with `{ "grant": null, "expiresIn":
+null }`. One answer, so the route is never an oracle for which of them happened.
+
+The grant carries `cap`, `limits`, `exp`, and `nonce`, **and no subject**. That
+is enforced rather than intended: `api/src/capability-grant.mjs` refuses to
+verify a payload with any other key, so a change that adds one breaks the chain
+loudly instead of quietly making every transfer linkable to an account. The
+nonce is 256 random bits, never derived from the subject — a derived nonce would
+make two grants for the same person recognizable as such, which is the exact
+join the pairwise subject exists to break.
+
+The verifying half lives on the **other** API and is offline: it holds the same
+HMAC key and nothing else. The transfer API never calls this one. See
+[Cinder Pro](pro-payments.md), "From a purchase to a capability".
+
 ## Sign out, expiry, revocation, deletion
 
 - **Sign out** revokes the refresh token at Cognito's `/oauth2/revoke` and clears
@@ -66,6 +92,13 @@ profile, and it prevents the products drifting into a shared one by accident.
   Apple's settings breaks the sign-in itself, and the person simply cannot sign
   in again — the entitlement row remains until deleted, unreachable but also
   unreadable.
+- **A capability grant cannot be recalled either**, and for the same reason a
+  stateless ID token cannot. Deleting an account or signing out closes the mint
+  immediately, but a grant already issued keeps working for up to fifteen
+  minutes. It buys the holder more large transfers and nothing else — it names
+  no one, reads nothing, and expires on its own. Closing that window would mean
+  the transfer API consulting the entitlement table on every send, which is the
+  link this whole design exists to prevent.
 - **Deletion** (`POST /account/delete`) removes the entitlement rows first, then
   calls `AdminDeleteUser`. Cognito has no soft delete: the pool record and the
   federated link go with it. Rows first is deliberate — the row key is an HMAC of

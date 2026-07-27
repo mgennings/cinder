@@ -16,6 +16,7 @@ import {
 } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeHandlers } from '../api/src/handlers.mjs';
+import { gate } from '../api/src/entitlement-provider.mjs';
 
 const PORT = Number(process.env.DEV_API_PORT || 4000);
 
@@ -25,6 +26,13 @@ const PORT = Number(process.env.DEV_API_PORT || 4000);
 // families, which produces a bare "Failed to fetch" with no CORS message and
 // no clue. Everything local is pinned to 127.0.0.1 for exactly this reason.
 const HOST = process.env.DEV_API_HOST || '127.0.0.1';
+
+// The gate's secret, defaulted to the SAME literal scripts/dev-identity.mjs
+// defaults to. It has to match or the mint signs grants this process refuses —
+// which looks exactly like a broken product rather than a mismatched key. The
+// default is what stops that from being a thing anyone discovers.
+process.env.CAPABILITY_SECRET = process.env.CAPABILITY_SECRET || 'dev-capability-secret';
+
 const ORIGIN = `http://${HOST}:${PORT}`;
 process.env.TABLE_NAME = process.env.TABLE_NAME || 'blip-notes';
 
@@ -65,20 +73,24 @@ const devS3 = {
 	}
 };
 
-// A capability gate for local development only. Production wires
-// api/src/entitlement-provider.mjs, which denies until the identity lane mints
-// real grants — so without this, no multipart transfer could be exercised
-// locally at all and the chunked path would only ever be tested in unit tests.
+// The capability gate, and it is the REAL one — api/src/entitlement-provider.mjs,
+// the same module lambda.mjs wires in production, verifying a real HMAC against
+// CAPABILITY_SECRET. scripts/dev-identity.mjs mints grants with the same secret,
+// so the full journey local run proves the actual gate rather than a stand-in.
 //
-// It grants on a fixed literal rather than on anything it verifies. That is
-// fine HERE and nowhere else: this file is never deployed, and DEV_CAPABILITY_GRANT
-// has to be presented explicitly, so an unentitled local caller still gets the
-// 402 the e2e suite asserts. Do not import this into api/src/.
+// The literal below is the ONE thing that is not real, and it is deliberately
+// narrow: it exists so tests/e2e can exercise the chunked transport with no
+// identity server running at all. It is checked only after the real gate has
+// already denied, it is never deployed, and it has to be presented explicitly,
+// so an unentitled local caller still gets the 402 the e2e suite asserts.
+// Do not import this into api/src/.
 const DEV_GRANT = 'dev-capability-grant';
 const devGate = {
-	async check({ grant, capability }) {
-		if (grant !== DEV_GRANT) return { granted: false };
-		return { granted: capability === 'transfer.multipart', limits: { maxParts: 64 } };
+	async check(req) {
+		const real = await gate.check(req);
+		if (real.granted) return real;
+		if (req.grant !== DEV_GRANT) return { granted: false };
+		return { granted: req.capability === 'transfer.multipart', limits: { maxParts: 64 } };
 	}
 };
 

@@ -2,8 +2,8 @@
 //
 // Everything else in api/src/ asks a `CapabilityGate` whether the bearer of a
 // grant may use a named capability. This file decides who answers that question
-// in production. It ships denying, which is the correct behavior until something
-// real is wired in: a gate that fails open is not a gate.
+// in production. It denies until a secret is configured, which is the correct
+// behavior: a gate that fails open is not a gate.
 //
 // The contract, which is deliberately smaller than it could be:
 //
@@ -55,6 +55,33 @@
 // Nothing here is Cinder-specific by design. A second mattOS product wires its
 // own capability names and its own gate; none of the checking code changes.
 
-import { denyAll } from './capabilities.mjs';
+import { verifyCapabilityGrant } from './capability-grant.mjs';
 
-export const gate = denyAll;
+// The shared secret between the identity API (which mints) and this API (which
+// verifies). Read per call rather than at import time so a local dev server or a
+// test can set it after the module graph is built, and so an unset secret is a
+// live denial rather than a value frozen at cold start.
+const secret = () => process.env.CAPABILITY_SECRET || '';
+
+/**
+ * The production gate. Two inputs, one answer, no identity anywhere in it.
+ *
+ * `verifyCapabilityGrant` does all four checks — signature over the segment as
+ * sent, expiry, exact capability match, positive-integer limits — and returns
+ * null for every failure so a forged grant, an expired one, one for another
+ * capability, and one signed with a stale secret are indistinguishable from
+ * here and from the caller's side.
+ *
+ * Note what this function does NOT do: it does not read a database, does not
+ * call the identity API, and does not learn who is asking. A grant is proof of
+ * entitlement that was checked at mint time, minutes ago, on a different HTTP
+ * API with a different access log. That separation is the unlinkability
+ * property, and it is the reason the check here is offline.
+ */
+export const gate = {
+	async check({ grant, capability }) {
+		const verified = verifyCapabilityGrant(grant, { secret: secret(), capability });
+		if (!verified) return { granted: false, limits: {} };
+		return { granted: true, limits: verified.limits };
+	}
+};

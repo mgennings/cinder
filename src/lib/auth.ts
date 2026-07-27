@@ -114,7 +114,11 @@ export async function completeSignIn(code: string): Promise<boolean> {
 // ID tokens live five minutes, so any session older than that needs a refresh
 // before the entitlement check. Refreshing is also how sign-out on another
 // device takes effect here: a revoked refresh token fails, and this clears.
-async function freshIdToken(): Promise<string | null> {
+// Exported for src/lib/entitlement.ts, which needs the same token to mint a
+// capability grant. Exported rather than duplicated: there is one place in this
+// browser that decides whether a session is still live, and a second copy of
+// that decision is a second thing to get wrong.
+export async function freshIdToken(): Promise<string | null> {
 	const tokens = readTokens();
 	if (!tokens) return null;
 

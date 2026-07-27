@@ -55,19 +55,51 @@ VITE_API_BASE=http://localhost:4000 pnpm dev --port 5173
 
 Open `http://localhost:5173`, write a note, copy the link, open it in a new tab, and reveal it. Open it again — it is gone.
 
+## Accounts, payment, and Cinder Pro, locally
+
+Sending a large file needs a capability grant, and a grant needs an account and a purchase. `scripts/dev-identity.mjs` stands the whole of that up on port 4100 without an AWS account and without a Stripe key.
+
+```bash
+node scripts/dev-identity.mjs
+```
+
+It mounts the **real** identity and purchase handlers and replaces exactly two things, both of them services we do not own:
+
+| Replaced | With | What stays real |
+| --- | --- | --- |
+| Cognito | A locally generated RSA key that publishes a real JWKS and signs real RS256 ID tokens | `verifyIdToken` is unmodified — signature, issuer, audience, `token_use`, and expiry are all genuinely checked |
+| Stripe | A local URL instead of a hosted checkout page | The `checkout.session.completed` event is real-shaped and signed with a real HMAC under a real `whsec_` secret; the shipped webhook verifies it |
+
+Nothing of Cinder's own logic is stubbed. The capability grant the mint issues is verified by `api/src/entitlement-provider.mjs` — the same gate `lambda.mjs` wires in production.
+
+The two dev servers share `CAPABILITY_SECRET`, and both default to the same literal, so running them plainly just works. If you set it on one, set it on both: a mismatch means the mint signs grants the transfer API refuses, which looks exactly like a broken product.
+
+Point the front end at both:
+
+```bash
+VITE_API_BASE=http://127.0.0.1:4000 \
+VITE_IDENTITY_API_BASE=http://127.0.0.1:4100 \
+VITE_IDENTITY_HOSTED_UI=http://127.0.0.1:4100 \
+VITE_IDENTITY_CLIENT_ID=dev-cinder-client \
+pnpm dev --port 5179 --host 127.0.0.1
+```
+
+Every `/oauth2/authorize` allocates a brand-new account, so each sign-in starts from someone who has never paid.
+
 ## Running the tests
 
-Cinder has 113 tests across three layers.
+Cinder has 221 tests across four layers.
 
 | Command | Layer | Needs DynamoDB Local? |
 | --- | --- | --- |
 | `pnpm vitest run` | Unit (crypto, codec, links) | No |
-| `cd api && node --test test/*.mjs` | API (store + handlers) | Yes |
-| `pnpm exec playwright test` | End-to-end (real browser) | Yes (plus the dev API) |
+| `node --test 'api/test/*.test.mjs'` | API (store, handlers, identity, purchase, capability) | Yes |
+| `pnpm exec playwright test --project=e2e` | End-to-end (real browser) | Yes (plus the dev API) |
+| `pnpm exec playwright test --project=journey` | The full chain: sign in, pay, mint, send 9 MiB, receive, burn | Yes (plus the dev API **and** the dev identity API) |
 
-> **Note:** The unit tests use Node's global Web Crypto, so they run without any services. The API and e2e tests need DynamoDB Local running on port 8000 first.
+> **Note:** The unit tests use Node's global Web Crypto, so they run without any services. Everything else needs DynamoDB Local running on port 8000 first.
 
-For the e2e tests, the Playwright config starts the front end for you; you only need DynamoDB Local and the dev API already running.
+Playwright starts the front ends for you — two of them, on 5178 and 5179, because they are configured differently and the difference is the point. The `e2e` server carries a dev capability grant so the transport can be exercised with no identity server at all; the `journey` server carries none, so every capability it gets is minted and verified for real. A dev grant on the journey server would let the whole chain succeed while unpaid, which is precisely the failure that suite exists to catch.
 
 ## Project layout
 
@@ -89,7 +121,9 @@ For the e2e tests, the Playwright config starts the front end for you; you only 
 | API tests fail to connect | DynamoDB Local not running | Run `./scripts/dynamodb-local.sh` first |
 | Note creation fails in the browser | `VITE_API_BASE` not set, or dev API down | Restart the front end with `VITE_API_BASE=http://localhost:4000` |
 | "java: command not found" | No JDK | Install a JDK 17+ from [Adoptium](https://adoptium.net) |
-| Port 8000 or 4000 in use | A previous run is still alive | Kill the old process, or change the port |
+| Port 8000, 4000, or 4100 in use | A previous run is still alive | Kill the old process, or change the port |
+| A paid send still gets 402 | `CAPABILITY_SECRET` differs between the two dev servers | Unset it on both and let them use their shared default |
+| Sign-in does nothing | The front end has no `VITE_IDENTITY_*` values | Restart it with the four variables above |
 
 ## Related documents
 

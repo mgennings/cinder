@@ -7,6 +7,9 @@
 //   ENTITLEMENT_TABLE  — DynamoDB table name
 //   CLIENT_PRODUCTS    — JSON {"<appClientId>": "<product>"}
 //   PRODUCT_PEPPERS    — JSON {"<product>": "<secret>"}   (NoEcho parameter)
+//   CAPABILITY_SECRET  — the HMAC key grants are signed with (MintCapabilityFn
+//                        only; the transfer API's CreateFileFn holds the same
+//                        value and verifies with it)
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
@@ -47,10 +50,21 @@ const handlers = makeEntitlementHandlers(doc, {
 		cognito.send(new AdminDeleteUserCommand({ UserPoolId: POOL, Username: username })),
 	issuer: ISSUER,
 	clientProducts: process.env.CLIENT_PRODUCTS,
-	productPeppers: process.env.PRODUCT_PEPPERS
+	productPeppers: process.env.PRODUCT_PEPPERS,
+	capabilitySecret: process.env.CAPABILITY_SECRET,
+	// What an entitled account may do, per product, and the ONLY place the
+	// numbers live. `maxParts: 64` matches the transport's own ceiling in
+	// handlers.mjs; the transport takes the smaller of the two, so raising this
+	// alone cannot raise the real limit.
+	//
+	// This map is the credits seam. Under prepaid credits the shape stays
+	// identical — what changes is that the row read above becomes a counter and
+	// the mint spends one. Nothing here grows a balance field: see the note in
+	// capability-grant.mjs about a rare balance being a fingerprint.
+	capabilityLimits: { cinder: { 'transfer.multipart': { maxParts: 64 } } }
 });
 
-export const { checkEntitlement, deleteAccount } = handlers;
+export const { checkEntitlement, mintCapability, deleteAccount } = handlers;
 
 // --- purchase ---------------------------------------------------------------
 //

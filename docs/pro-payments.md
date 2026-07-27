@@ -37,6 +37,119 @@ That has one consequence worth stating, because it is not obvious: several accou
 
 If it did, Stripe's records would hold `{pairwise subject ↔ card ↔ email}` indefinitely, and Cinder's table holds `{pairwise subject ↔ entitled}`. Two databases that individually say nothing become, on a breach or a subpoena of either, one database that names the buyer. The nonce breaks the join: Stripe stores a random 256-bit string, and the only thing that could ever translate it is a row that expires in an hour and is deleted the instant the grant lands.
 
+## From a purchase to a capability
+
+A row in the entitlement table does nothing on its own. The transfer API cannot read it — different API, different access log, no Authorization header admitted at CORS — and that is the whole point. What crosses the gap is a **capability grant**: a short-lived signed string that says what may be done and nothing about who is doing it.
+
+```
+browser                identity API                    transfer API
+   │                        │                                │
+   ├─ POST /capability (Bearer ID token, {capability}) ──────►│
+   │                        ├─ verify token                  │
+   │                        ├─ read entitlement row          │
+   │                        ├─ sign a grant                  │
+   │◄─ { grant, expiresIn } ┤                                │
+   │                                                          │
+   ├─ POST /files { parts, capabilityGrant } ────────────────►│
+   │                                        verify HMAC, expiry,
+   │                                        capability, limits
+   │◄─ 201, or 402 ───────────────────────────────────────────┤
+```
+
+**The format** (`api/src/capability-grant.mjs`):
+
+```
+base64url(JSON{ cap, limits, exp, nonce }) . base64url(HMAC-SHA256(secret, that))
+```
+
+**Verification, in order** (`api/src/entitlement-provider.mjs`):
+
+1. Two segments, bounded length, both present. A three-segment string is a JWT and is refused rather than tolerated.
+2. HMAC-SHA256 over the payload segment **as sent**, compared in constant time. Never over a re-serialization of the parsed object, which is how a signature check gets made to pass on bytes nobody received.
+3. The payload is exactly the four keys `cap`, `limits`, `exp`, `nonce`. Any other key — `sub`, `email`, a balance — fails the whole grant.
+4. `cap` equals the capability being asked for.
+5. `exp` is in the future, with no skew allowance.
+6. Every value in `limits` is a positive integer.
+
+Every failure is the same silent `null`, which the transport turns into the same `402` an anonymous caller gets.
+
+**What the transfer API learns:** that someone entitled to `transfer.multipart` sent this, and their part ceiling. **What it cannot learn:** who. It does not call the identity API, does not read the entitlement table, and is not handed the request event.
+
+**Two honest consequences, stated rather than hidden:**
+
+- **A grant cannot be recalled.** Deleting an account closes the mint immediately, but a grant already issued keeps working until it expires. Fifteen minutes is the whole exposure and it buys the holder more transfers and nothing else. Closing it would mean the transfer API consulting the entitlement table on every send, which is exactly the link this design exists to prevent. This is the same trade a stateless ID token makes — see [identity](identity.md), "What sign-out actually does".
+- **A grant is not single-use.** A create retried after a dropped connection must not fail for the person who paid. That is free under a one-time unlock; under credits it is the thing that has to be designed rather than assumed, which is the next section.
+
+## Credits, and the retry that must not double-charge
+
+The plan is moving from a one-time $0.94 unlock to prepaid credits — roughly **$4.94 for 10 large sends**, because the fixed 30¢ is 92% of the fee damage at $0.94 and this takes the fee share from 34.8% to about 9%.
+
+None of the chain above changes shape. The grant format, the gate, the transfer API, and the client are all unaware of which pricing model is in force. What changes is what the entitlement row holds and what the mint does with it. **This is designed but not built** — the boolean is still what ships.
+
+### When a credit is consumed: at the mint
+
+Three candidates, and only one of them is honest.
+
+| Point | Why not |
+| --- | --- |
+| At **claim** | The recipient triggers it, not the sender. A file nobody opens would be free, and a sender's balance would move days later for reasons they cannot see. |
+| At **finalize** | Splits the charge across N parts of one transfer and charges for uploads that were abandoned halfway. |
+| At **create** | The transfer API has no subject and must never acquire one. It could only spend against the grant's nonce, which means a second table and a second write on the unlinkable path. |
+| At **mint** ✅ | The only point that is authenticated, already reads the entitlement row, is already idempotent per grant, and happens **before any bytes are stored**. |
+
+So: **one grant is one prepaid send.** Minting spends a credit; the grant is the receipt.
+
+### Why a retry is free, and what the idempotency key is
+
+The idempotency key is the **grant's nonce** — 256 bits minted once and carried in the payload.
+
+The client caches a grant for its lifetime (`src/lib/entitlement.ts`), so a create that is retried after a dropped connection presents the *identical* string, with the identical nonce. The gate verifies it again and grants again — it is deliberately not single-use — and the mint is never reached, so no second credit moves. A retry is free because the retry never touches the thing that charges.
+
+This is asserted now, before the counter exists, by two executed tests:
+
+- `api/test/capability-grant.test.mjs` — "the same grant verifies repeatedly: it is NOT single-use".
+- `tests/journey/full-journey.spec.ts` — "a second send in the same session reuses one grant and mints nothing new": two multipart creates in one page load present a byte-identical grant and the identity API mints exactly once.
+
+The second one is the load-bearing assertion. If a future change makes `capabilityGrant()` fetch per send, that test fails, and under credits it would have been a silent double charge.
+
+The grant TTL is therefore also the **retry window**: fifteen minutes. Longer and one credit buys unbounded sends; shorter and a slow upload on a bad connection could strand a paid send.
+
+### A destroyed transfer spends the credit
+
+A partial delivery destroys the pieces already handed over and the file can never be assembled. The sender paid, the recipient got nothing.
+
+**The credit is spent, and it is not returned.** The alternative would mean the identity API learning that a specific transfer failed — which is precisely the link between an account and a transfer that everything here exists to prevent. Cinder cannot refund what it structurally cannot observe.
+
+That is a real cost and the interface has to say so **before** the sender commits, in the same breath as the piece count, not in a footnote afterward. The pay point and the send screen must never imply a refund the code does not perform. The wording to ship with the counter:
+
+> a credit is spent when cinder hands you the link, not when the file arrives. if the delivery breaks partway, the pieces are destroyed and the credit is gone — cinder has no way to see which transfer failed, which is the same reason it can never see who you sent it to.
+
+### A zero balance is a state, not a fault
+
+Running out is the expected end of a purchase and must never read as a broken product. Three rules:
+
+1. **Say it before the work, not after.** The send screen already states the piece count on file selection; the balance belongs in the same sentence. Encrypting 200 MB and *then* refusing is the failure mode to avoid.
+2. **Nothing about the free path changes.** Under 4 MiB keeps working, forever, with no account. A zero balance is "top up to send large files again", never a lock on the product.
+3. **The refusal copy is the same shape as today's** — the `402` already says Pro adds size and does not change the promise. Zero credits says the same thing with a different number.
+
+### The balance never enters the grant
+
+A remaining-credit count is a small integer that changes on every send, and a rare value is a usable fingerprint across transfers that are otherwise unlinkable. "The sender with 3 left" is a smaller anonymity set than "a sender".
+
+So the grant carries `cap`, `limits`, `exp`, `nonce` and nothing else, and `api/src/capability-grant.mjs` **refuses to verify a payload with any other key** — including `credits`. That is asserted in `api/test/capability-grant.test.mjs`. The balance lives on the identity API, where it is already linkable to the account it belongs to and where the person can actually see it.
+
+### What the conversion touches
+
+| File | Change | Size |
+| --- | --- | --- |
+| `api/src/entitlement-store.mjs` | `isEntitled` gains a sibling `readCredits`; a conditional `UpdateItem` that decrements only when the balance is positive | ~30 lines |
+| `api/src/entitlement.mjs` | `mintCapability` spends a credit before signing; `checkEntitlement` answers with a count as well as a boolean | ~15 lines |
+| `api/src/purchase.mjs` | `checkout` stops refusing an already-entitled buyer (topping up is the point); the webhook increments rather than sets | ~10 lines |
+| `src/lib/auth.ts` + `/account` + `/pro` | Show and top up a balance | copy-led |
+| `src/routes/+page.svelte` | State the cost with the piece count | copy-led |
+
+Nothing in `capabilities.mjs`, `capability-grant.mjs`, `entitlement-provider.mjs`, `handlers.mjs`, or `src/lib/api.ts` changes. **Half a day, and none of it is on the unlinkable path** — which is what the seam was shaped for.
+
 ## Every clause of the pay-point copy, and the line that makes it true
 
 The copy lives in `src/routes/pro/+page.svelte`. If a change makes one of these false, the code is the thing to fix.

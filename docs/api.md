@@ -108,7 +108,7 @@ The same endpoint, with a `parts` array instead of a single size and checksum. T
 | --- | --- | --- | --- |
 | `parts` | array | Yes | 1–64 objects, each `{ ciphertextBytes, ciphertextSha256 }`, in order. Every part is validated against the same 4,198,400-byte per-object ceiling. |
 | `ttlSeconds` | number | Yes | Clamped server-side to 1–604800 (7 days). |
-| `capabilityGrant` | string | For >1 part | An opaque bearer grant for the `transfer.multipart` capability. It travels in the **body**, never in a header — this API allows only `content-type` at CORS so an account can never be linked to a transfer. |
+| `capabilityGrant` | string | For >1 part | An opaque bearer grant for the `transfer.multipart` capability, obtained from `POST /capability` on the **identity** API (see [identity](identity.md)). It travels in the **body**, never in a header — this API allows only `content-type` at CORS so an account can never be linked to a transfer. It carries no subject: the payload is exactly `cap`, `limits`, `exp`, `nonce`, and the verifier refuses any other key. |
 
 **Responses:**
 

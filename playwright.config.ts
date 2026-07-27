@@ -19,21 +19,39 @@ import { defineConfig } from '@playwright/test';
 //     tests. Attaching to whatever was already running is how a config change
 //     or a stale process gets silently tested instead of the current code.
 const PORT = 5178;
+const JOURNEY_PORT = 5179;
 const HOST = '127.0.0.1';
 
+// TWO front ends, because they are configured differently and the difference is
+// the point.
+//
+//   5178  tests/e2e     carries VITE_DEV_CAPABILITY_GRANT and no identity API.
+//                       It tests the transport with the gate satisfied by a
+//                       literal, which is what lets those specs run with nothing
+//                       but the dev API and DynamoDB Local.
+//   5179  tests/journey carries NO dev grant and a real identity API. Every
+//                       capability it gets is minted by scripts/dev-identity.mjs
+//                       and verified by the shipped gate. A dev grant here would
+//                       let the journey succeed while unpaid, which is precisely
+//                       the failure that suite exists to catch.
+const server = (port: number, env: string) => ({
+	command: `${env} pnpm dev --port ${port} --host ${HOST}`,
+	url: `http://${HOST}:${port}`,
+	reuseExistingServer: false,
+	timeout: 120_000
+});
+
 export default defineConfig({
-	testDir: 'tests/e2e',
 	timeout: 30_000,
-	webServer: {
-		// VITE_DEV_CAPABILITY_GRANT matches DEV_GRANT in scripts/dev-api.mjs. Without
-		// it the capability gate denies and the multipart specs could only ever
-		// assert a 402, never the chunked delivery itself.
-		command: `VITE_API_BASE=http://${HOST}:4000 VITE_DEV_CAPABILITY_GRANT=dev-capability-grant pnpm dev --port ${PORT} --host ${HOST}`,
-		url: `http://${HOST}:${PORT}`,
-		reuseExistingServer: false,
-		timeout: 120_000
-	},
-	use: {
-		baseURL: `http://${HOST}:${PORT}`
-	}
+	webServer: [
+		server(PORT, `VITE_API_BASE=http://${HOST}:4000 VITE_DEV_CAPABILITY_GRANT=dev-capability-grant`),
+		server(
+			JOURNEY_PORT,
+			`VITE_API_BASE=http://${HOST}:4000 VITE_IDENTITY_API_BASE=http://${HOST}:4100 VITE_IDENTITY_HOSTED_UI=http://${HOST}:4100 VITE_IDENTITY_CLIENT_ID=dev-cinder-client`
+		)
+	],
+	projects: [
+		{ name: 'e2e', testDir: 'tests/e2e', use: { baseURL: `http://${HOST}:${PORT}` } },
+		{ name: 'journey', testDir: 'tests/journey', use: { baseURL: `http://${HOST}:${JOURNEY_PORT}` } }
+	]
 });

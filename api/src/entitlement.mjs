@@ -3,6 +3,7 @@
 // longer exists."
 //
 //   POST /entitlement    → { entitled: boolean }
+//   POST /capability     → { grant: string|null, expiresIn: number|null }
 //   POST /account/delete → { deleted: boolean }
 //
 // Deliberately a SEPARATE HTTP API from the note and file endpoints (see
@@ -16,8 +17,10 @@
 // it — never from the request body. A caller cannot ask about a product it did
 // not sign in to.
 
+import { randomBytes } from 'node:crypto';
 import { bearerToken, verifyIdToken, pairwiseSubject, parseMap } from './identity.mjs';
 import { isEntitled, forgetEntitlement } from './entitlement-store.mjs';
+import { mintCapabilityGrant } from './capability-grant.mjs';
 
 // Both routes answer 200 with a negative body for every refusal: no token, a
 // forged token, an expired token, a token from another pool, a token for an
@@ -35,9 +38,16 @@ const json = (statusCode, obj) => ({
 	body: JSON.stringify(obj)
 });
 
+// How long a minted grant lives. Short because it is a bearer capability that
+// travels on an unauthenticated request: whoever holds the string may use it
+// until it expires. Long enough that encrypting and uploading a 250 MB transfer
+// on a slow connection finishes inside one grant, because the gate is asked at
+// create and a grant expiring mid-upload would strand a paid send.
+const GRANT_TTL_SECONDS = 900;
+
 export function makeEntitlementHandlers(
 	doc,
-	{ getJwks, deleteUser, issuer, clientProducts, productPeppers }
+	{ getJwks, deleteUser, issuer, clientProducts, productPeppers, capabilitySecret, capabilityLimits }
 ) {
 	const clients = typeof clientProducts === 'string' ? parseMap(clientProducts) : clientProducts;
 	const peppers = typeof productPeppers === 'string' ? parseMap(productPeppers) : productPeppers;
@@ -78,6 +88,64 @@ export function makeEntitlementHandlers(
 		return json(200, { entitled: await isEntitled(doc, who.product, who.pairwise) });
 	}
 
+	// POST /capability — the only place a grant is ever created.
+	//
+	// This is the hinge of the whole design: the LAST moment identity exists in
+	// the chain. Above this line there is a verified ID token, a pairwise subject,
+	// and a database row. Below it there is a signed string that says "someone
+	// entitled to transfer.multipart, with these limits, until this second" and
+	// carries nothing else. capability-grant.mjs enforces that structurally — it
+	// refuses to read a payload with any key beyond cap, limits, exp, and nonce —
+	// so a later change that tries to smuggle a subject through produces a grant
+	// the transfer API rejects rather than a linkable transfer.
+	//
+	// One negative answer for every refusal: no token, a forged token, a product
+	// with no configured limits, no purchase. Telling them apart would be an
+	// oracle and buys the caller nothing they can act on.
+	//
+	// THE CREDITS SEAM. `limits` is resolved by a single lookup, so turning the
+	// one-time unlock into prepaid credits changes what `entitlementFor` returns
+	// and what this function reads out of it, and touches nothing downstream: the
+	// grant format, the gate, the transfer API, and the client are all unaware of
+	// which pricing model is in force. What must NOT move into the grant is the
+	// remaining balance — see the note in capability-grant.mjs.
+	async function mintCapability(event) {
+		const nothing = json(200, { grant: null, expiresIn: null });
+
+		let requested;
+		try {
+			requested = JSON.parse(event.body || '{}').capability;
+		} catch {
+			return nothing;
+		}
+		if (typeof requested !== 'string' || !requested) return nothing;
+
+		const who = await identify(event);
+		if (!who) return nothing;
+
+		// Fail closed on a config gap, exactly as `identify` does for a missing
+		// pepper: an unconfigured product or an unknown capability name denies
+		// rather than falling back to a default set of limits.
+		const limits = capabilityLimits?.[who.product]?.[requested];
+		if (!limits || !capabilitySecret) return nothing;
+
+		if (!(await isEntitled(doc, who.product, who.pairwise))) return nothing;
+
+		return json(200, {
+			grant: mintCapabilityGrant({
+				secret: capabilitySecret,
+				capability: requested,
+				limits,
+				ttlSeconds: GRANT_TTL_SECONDS,
+				// 256 bits, generated here, never derived from the subject. A derived
+				// nonce would make two grants for the same person recognizable as
+				// such, which is the exact join the pairwise subject exists to break.
+				nonce: randomBytes(32).toString('base64url')
+			}),
+			expiresIn: GRANT_TTL_SECONDS
+		});
+	}
+
 	// Delete everything, at the origin.
 	//
 	// Order matters and it is the unforgiving direction: entitlement rows FIRST,
@@ -112,5 +180,5 @@ export function makeEntitlementHandlers(
 	// is one place in this codebase that decides who a caller is, and a second
 	// copy of that decision is a second thing to get wrong. It stays a closure
 	// over the same config, so a product missing a pepper denies in both lanes.
-	return { checkEntitlement, deleteAccount, identify };
+	return { checkEntitlement, mintCapability, deleteAccount, identify };
 }

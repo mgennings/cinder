@@ -89,6 +89,20 @@ Parameters:
     Type: String
     Description: Stripe Price id for the one-time Cinder Pro unlock (price_…)
 
+  # The HMAC key the identity API signs capability grants with and the transfer
+  # API verifies them with. It is the ONLY thing the two APIs share, and sharing
+  # it is what lets them stay otherwise unaware of each other: the transfer API
+  # never calls the identity API, never reads the entitlement table, and never
+  # learns who is sending.
+  #
+  # ROTATABLE, unlike CinderPepper. A grant lives fifteen minutes, so rotating
+  # this invalidates at most fifteen minutes of in-flight grants and the client
+  # simply mints a new one. Nothing durable is keyed by it.
+  CinderCapabilitySecret:
+    Type: String
+    NoEcho: true
+    Description: HMAC key for capability grants (rotatable; grants live 15 minutes)
+
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -277,6 +291,13 @@ Resources:
     Properties:
       CodeUri: api/
       Handler: src/lambda.createFile
+      # The one function on the transfer API that holds this secret, because it
+      # is the one that asks the capability gate. Finalize and claim are never
+      # gated — a recipient must not need an account to receive what a sender
+      # already paid to send — so neither of them can verify a grant either.
+      Environment:
+        Variables:
+          CAPABILITY_SECRET: !Ref CinderCapabilitySecret
       Policies:
         - Statement:
             - Effect: Allow
@@ -742,6 +763,34 @@ Resources:
           Properties:
             ApiId: !Ref IdentityApi
             Path: /entitlement
+            Method: POST
+
+  # The mint. Reads the entitlement row and signs a grant; it cannot write one.
+  # Same GetItem-only policy as CheckEntitlementFn on purpose — the webhook
+  # remains the only role in the account that can grant an entitlement.
+  MintCapabilityFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/identity-lambda.mintCapability
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref MattosUserPool
+          ENTITLEMENT_TABLE: !Ref EntitlementTable
+          CLIENT_PRODUCTS: !Sub '{"${CinderAppClient}": "cinder"}'
+          PRODUCT_PEPPERS: !Sub '{"cinder": "${CinderPepper}"}'
+          CAPABILITY_SECRET: !Ref CinderCapabilitySecret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt EntitlementTable.Arn
+      Events:
+        Mint:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IdentityApi
+            Path: /capability
             Method: POST
 
   DeleteAccountFn:
