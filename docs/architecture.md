@@ -16,8 +16,11 @@ The one idea that makes everything else work: **encryption happens in the browse
 │                                        │        │                        │           │
 │  key stays in the URL fragment (#…)    │        │                        ▼           │
 │  and never crosses this line ──────────┼────────┤                   DynamoDB         │
-│                                        │        │                  (ciphertext only) │
-│  static assets  ◄──────────────────────┼────────┤  CloudFront ──► S3                 │
+│                                        │        │            (ciphertext + grants)   │
+│  file create   ──encrypt──►  ciphertext├───────►│  presigned PUT ─┐                  │
+│  file reader   ──decrypt──◄  ciphertext│◄───────┤  claimFile ────►│  private S3      │
+│                                        │        │   (claim, delete, verify, return)  │
+│  static assets  ◄──────────────────────┼────────┤  CloudFront ──► S3 (site)          │
 └────────────────────────────────────────┘        └────────────────────────────────────┘
 ```
 
@@ -35,6 +38,11 @@ Each component has one job. The table is the fastest way to see the whole system
 | Link helpers | Build `/n/{id}#{key}` links; parse the fragment | `src/lib/link.ts` |
 | createNote Lambda | Validate, clamp TTL, store ciphertext, return an ID | `api/src/handlers.mjs` |
 | readNote Lambda | Atomically burn the note and return it, or 410 | `api/src/handlers.mjs` |
+| File crypto | Encrypt one file plus its name and type into one envelope | `src/lib/crypto/file-crypto.ts` |
+| createFile Lambda | Reserve a transfer, issue a constrained one-use upload | `api/src/handlers.mjs` |
+| finalizeFile Lambda | Inspect the stored object itself, then mark it ready | `api/src/handlers.mjs` |
+| claimFile Lambda | The one delivery attempt: claim, delete, verify, return | `api/src/handlers.mjs` |
+| S3 port | Four narrow verbs, so each role's IAM policy stays legible | `api/src/lambda.mjs` |
 | Store | The DynamoDB operations, isolated for testing | `api/src/store.mjs` |
 | Infrastructure | The whole AWS stack as one template | `template.yaml` |
 
@@ -80,6 +88,64 @@ The reason DynamoDB was chosen over anything else is covered in [design decision
    - If the condition fails (already read, or expired), the API returns `410 Gone`.
 4. The browser decrypts the returned ciphertext with the key from the fragment and shows the note. In two-factor mode, it asks for the passphrase first.
 
+## File transfer
+
+A file link makes one promise, and it is narrower than it first sounds: **exactly one server delivery attempt.** Not one recipient, not one successful download. Cinder controls its own stored copy and the single moment it hands that copy over, and it does not control networks, browsers, or what anyone does with the bytes afterward.
+
+Files use their own route (`/f/{locator}#{key}`) because the reader page has to know which protocol to speak before it fetches anything. Asking the server "is this a note or a file?" would be a request on link arrival, which is exactly what the preview-bot defense forbids.
+
+### Creating a transfer
+
+1. The browser encrypts the file, its name, and its MIME type into one AES-256-GCM envelope. Name and type live *inside* the encrypted region, not beside it — "severance-agreement.pdf" is often the whole story, and authenticating a filename while leaving it readable would protect the wrong half.
+2. `POST /files` reserves the transfer. The server generates three independent secrets: a **locator** (what the link carries), an **upload capability** (which never leaves the sender), and a random **object key**. DynamoDB stores only `sha256(locator)` and `sha256(uploadCapability)`, so a dump of the table cannot be replayed against the API.
+3. The response carries a presigned `PUT` signed against that exact key, byte length, and checksum, valid for five minutes. S3 itself refuses a substituted, resized, or corrupted body.
+4. The browser uploads ciphertext straight to the private bucket. It never passes through a Lambda.
+5. `POST /files/finalize` is where the server stops trusting the client. It asks S3 what it actually holds and compares size and checksum against what it authorized, then flips `uploading → ready` in a single conditional write. A client that uploads nothing and calls finalize gets the same refusal as a client that uploads the wrong thing.
+
+The finalize function is the one step that touches a stored object it has no business reading, so it uses `GetObjectAttributes` — size and checksum, no body — and its IAM role has no `s3:GetObject` at all. It cannot read what it approves.
+
+### The one delivery attempt
+
+Opening a file link fetches nothing. Only the explicit reveal starts the destructive path, and that path runs in exactly this order:
+
+1. **Claim.** A conditional `DeleteItem` on the grant, returning what it deleted. Exactly one concurrent caller wins; the grant is now gone.
+2. **Open.** Read the ciphertext from the private bucket.
+3. **Delete.** Remove the S3 object.
+4. **Verify absence.** `HeadObject` must report 404. S3 has been strongly read-after-write consistent for deletes since 2020, so this is a real answer and not a race we hope to win.
+5. **Only then** does a response body exist.
+
+Every failure after step 1 is permanent, and that is the design rather than a gap in it. The grant is already deleted and is never restored: a crash, a timeout, an S3 failure, a disconnect at byte zero, or a disconnect midstream all consume the transfer. `api/test/handlers.test.mjs` breaks each of those seams in turn and asserts the same two things every time — no response byte ever existed, and a later attempt still gets 410.
+
+Losers of the race, expired grants, malformed locators, and links that never existed all receive a byte-identical `410`. Distinguishing them would turn the endpoint into an oracle that confirms a link once existed.
+
+### Why the delete-before-delivery guarantee actually holds
+
+The interesting claim here is "no byte leaves before the deletion is verified," and it deserves more than a promise that the code is written in the right order. It holds because of the shape of the transport, which was verified against the deployed stack rather than assumed:
+
+| Property | Measured value | Why it matters |
+| --- | --- | --- |
+| Integration type | `AWS_PROXY`, payload format 2.0 | Fully buffered. The handler returns a complete response object; API Gateway cannot send a byte of a response it has not yet received. |
+| Lambda Function URLs | None on any function in the stack | Response streaming is only reachable through a Function URL or a direct streaming invoke. Neither exists, so there is no code path that *could* flush early. |
+| CloudFront in the API path | None — the distribution's only origin is the site bucket | No CDN buffering, caching, or reordering sits between the claim Lambda and the recipient. |
+| API Gateway integration timeout | 30,000 ms | Comfortably above the claim function's own 15 s ceiling, so the Lambda's timeout is what governs. |
+| Response payload ceiling | 6 MB (AWS hard limit, base64 on the wire) | This is what sets the file size ceiling. See below. |
+| Retry on failure | None. API Gateway does not retry a proxy integration, and Lambda does not retry synchronous invocations. | A failed delivery is not silently attempted twice. |
+
+That first row is the whole argument. In a buffered integration the guarantee is **structural**: the response object is constructed after the absence check, on the last line of the function, and there is no earlier exit. A future contributor cannot accidentally weaken it by reordering statements, because there is nothing to reorder — no stream handle exists to write to.
+
+Response streaming would have raised the ceiling to 200 MB, and it was rejected. It trades a structural guarantee for a behavioral one: with a writable stream in scope, "nothing flushed early" becomes a property of how carefully the handler is written, and a single stray `write()` in a future change would break the promise silently. It is also a worse product. Past the first 6 MB, AWS meters streamed responses at 2 MB/s, which would stretch the window in which a dropped connection permanently destroys someone's file from roughly a second to roughly a minute. Cinder took the smaller number.
+
+### Where the file size ceiling comes from
+
+The ceiling is derived, not chosen. The buffered response is capped at 6 MB — 6,291,456 bytes — and binary comes back base64, costing 4 bytes for every 3:
+
+```
+4 MiB plaintext + 255-byte filename + envelope + GCM tag ≈ 4,194,674 ciphertext bytes
+base64 → 5,592,900 bytes, leaving ~698 KB (11%) under the hard limit
+```
+
+So the advertised ceiling is **4 MiB**, enforced in the browser before a byte is read (`src/lib/crypto/file-crypto.ts`) and independently re-checked by the server (`api/src/handlers.mjs`). Raising it means changing the transport, and changing the transport means re-proving the guarantee above. Do not raise it in one place alone.
+
 ## Bot defense
 
 Messaging apps (iMessage, Slack, WhatsApp, Signal) fetch links to render preview cards. With a naive "burn on fetch" design, that preview bot becomes the first reader and the note is destroyed before the human ever clicks. Cinder defends against this in two layers:
@@ -102,6 +168,12 @@ The core requirement — exactly one successful server retrieval — is a concur
 ### Why TTL is a backstop, not the burn
 
 DynamoDB TTL deletion is best-effort — items are removed within roughly two days of expiry, not instantly, and *expired-but-unreaped items are still returned by reads*. So TTL alone would occasionally serve an expired note. The real expiry enforcement is a guard inside the burn condition (`expiresAt > :now`); TTL just keeps the table clean over time.
+
+### Why the file promise is "one delivery attempt"
+
+The tempting phrasing is "one download" or "one recipient." Both would be lies. Cinder cannot tell who is holding a link, and it cannot know whether bytes it sent ever arrived — a connection can drop at 99%, and no server anywhere can distinguish that from a completed transfer without the client saying so, which is a claim the client could fake.
+
+What Cinder *can* enforce is narrow and completely true: one atomic claim, and its own stored copy deleted and verified gone before the response body exists. So that is what the copy says. The cost is real and stated plainly on the reveal screen — if the delivery fails, the file is permanently unavailable, and nobody can undo that. A weaker promise that always held beats a stronger one that usually did.
 
 ### Why serverless
 
