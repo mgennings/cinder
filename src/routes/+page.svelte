@@ -266,7 +266,9 @@
 						<span id="ttl-note">if unread</span>
 					</div>
 
-					<label class="flex cursor-pointer items-center gap-2 text-sm text-mist">
+					<!-- min-h-11 on the LABEL: the checkbox itself is 20px, but the
+					     label is the real hit area and it measured 20px tall. -->
+					<label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-mist">
 						<input type="checkbox" bind:checked={usePassphrase} disabled={busy} class="accent-ember" />
 						Add a passphrase
 					</label>
