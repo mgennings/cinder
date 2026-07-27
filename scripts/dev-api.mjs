@@ -18,6 +18,14 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeHandlers } from '../api/src/handlers.mjs';
 
 const PORT = Number(process.env.DEV_API_PORT || 4000);
+
+// The fake bucket's URL has to sit on the SAME host the browser is already
+// using, not merely an equivalent one. `localhost` and `127.0.0.1` are
+// different origins to the browser and can even resolve to different address
+// families, which produces a bare "Failed to fetch" with no CORS message and
+// no clue. Everything local is pinned to 127.0.0.1 for exactly this reason.
+const HOST = process.env.DEV_API_HOST || '127.0.0.1';
+const ORIGIN = `http://${HOST}:${PORT}`;
 process.env.TABLE_NAME = process.env.TABLE_NAME || 'blip-notes';
 
 const raw = new DynamoDBClient({
@@ -36,7 +44,7 @@ const devS3 = {
 	async presignPut({ key, bytes, sha256, expiresIn }) {
 		grants.set(key, { bytes, sha: sha256, expiresAtMs: Date.now() + expiresIn * 1000 });
 		return {
-			url: `http://localhost:${PORT}/dev-bucket/${key}`,
+			url: `${ORIGIN}/dev-bucket/${key}`,
 			headers: { 'content-length': String(bytes), 'x-amz-checksum-sha256': sha256 }
 		};
 	},
@@ -114,7 +122,7 @@ const server = createServer(async (req, res) => {
 		return res.end();
 	}
 
-	const url = new URL(req.url, `http://localhost:${PORT}`);
+	const url = new URL(req.url, ORIGIN);
 	let result;
 	try {
 		const bucket = url.pathname.match(/^\/dev-bucket\/(.+)$/);
@@ -149,4 +157,4 @@ const server = createServer(async (req, res) => {
 });
 
 await ensureTable();
-server.listen(PORT, () => console.log(`dev-api on http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`dev-api on ${ORIGIN}`));
