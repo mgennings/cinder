@@ -20,10 +20,17 @@ Encrypted file transfer, with one promise Cinder can actually keep.
 - **API CORS is now exact-origin** rather than `*`, and the stage throttles at 20 rps with a burst of 40.
 - **The `/security` page and threat model** now cover the file promise, its permanent-loss cost, and what it still cannot control.
 
+- **A strict Content-Security-Policy, HSTS, and framing headers** on every alias. Scripts may load only from Cinder's own origin, and the only two places the page may send anything are the API and the private media bucket.
+- **The whole journey is now reachable without a mouse or a screen.** Every outcome is announced, focus follows the view change, and the ambient glow no longer scrolls the page sideways.
+
 ### Fixed
 
 - **The delete-before-delivery proof was corrected before release.** Without `s3:ListBucket`, S3 answers a request for a missing object with `403` rather than `404`, which would have made the post-delete absence check unable to distinguish "the object is gone" from "I am not allowed to look."
 - **A false privacy claim was removed.** Draft documentation said the finalize function could not read a stored object. AWS requires `s3:GetObject` alongside `s3:GetObjectAttributes`, so it can, and no S3 permission set can express otherwise. The claim was corrected rather than quietly dropped.
+- **A timing oracle on finalize.** A wrong upload capability used to cost one more round trip than an unknown locator — about 72 ms, with non-overlapping distributions — which let anyone holding a link poll to learn whether it was still live, and when the recipient opened it. The capability is now checked before any storage call, so both paths cost the same.
+- **The claim path delivered bytes it never checked.** It held the exact length and checksum verified at finalize and ignored both, so anyone who could write to the bucket could spend a recipient's single delivery attempt on tampered bytes. It now refuses to deliver anything that does not match.
+- **Two accessibility failures that broke the promise outright.** The primary button's label measured 2.57:1 against its own gradient in light mode, and the passphrase prompt appeared in total silence *after* the stored copy was already deleted — while still displaying a warning that said the delivery "can begin." Both are fixed and measured.
+- **A Subresource Integrity claim that was never true.** The threat model offered SRI as a mitigation for a compromised server. It was not deployed, and it would not have helped: SRI protects against a third-party CDN, and Cinder serves its own bundles.
 
 ### Notes
 
