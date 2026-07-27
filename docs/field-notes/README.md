@@ -11,7 +11,7 @@ A field note is not a changelog entry. It exists when a choice was genuinely har
 `build/` holds the rendered PDF. Regenerate it after editing the source:
 
 ```bash
-python3 docs/field-notes/render.py           # markdown -> styled html
+python3 docs/field-notes/render.py 001-the-vote-to-stay-blind.md
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --headless --disable-gpu --no-pdf-header-footer \
   --print-to-pdf=docs/field-notes/build/cinder-field-note-001.pdf \
