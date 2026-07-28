@@ -102,7 +102,18 @@
 	<link rel="canonical" href="https://cinder.ink/pro" />
 	<meta
 		name="description"
-		content="Prepaid credits for sending larger files. What a credit buys, what Stripe sees, what Cinder does not, and why a payment is never linked to a note."
+		content="Buy 10 Cinder Pro large-send credits for $4.94. No subscription, and files under 4 MiB remain free without an account."
+	/>
+	<meta property="og:title" content="Cinder Pro" />
+	<meta property="og:url" content="https://cinder.ink/pro" />
+	<meta
+		property="og:description"
+		content="Buy 10 Cinder Pro large-send credits for $4.94. No subscription, and files under 4 MiB remain free without an account."
+	/>
+	<meta name="twitter:title" content="Cinder Pro" />
+	<meta
+		name="twitter:description"
+		content="Buy 10 Cinder Pro large-send credits for $4.94. No subscription, and files under 4 MiB remain free without an account."
 	/>
 </svelte:head>
 

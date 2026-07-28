@@ -89,10 +89,12 @@
 <svelte:head>
 	<title>How private is Cinder, really?</title>
 	<link rel="canonical" href="https://cinder.ink/security" />
+	<meta property="og:url" content="https://cinder.ink/security" />
 	<meta
 		name="description"
 		content="An honest account of what Cinder's zero-knowledge encryption protects against — and what it can't."
 	/>
+	<meta name="twitter:description" content="An honest account of what Cinder's zero-knowledge encryption protects against — and what it can't." />
 </svelte:head>
 
 <BenchPage>

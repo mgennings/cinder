@@ -27,9 +27,21 @@
 		<meta name="twitter:title" content="Cinder — an encrypted note or file retrieved once" />
 		<meta
 			name="twitter:description"
-			content="One successful reveal removes Cinder's stored copy. Copies outside Cinder remain outside its control."
+			content="Encrypted in your browser, the key never touches the server. One successful reveal removes Cinder's stored copy."
 		/>
 		<meta name="twitter:image" content="https://cinder.ink/og.png" />
+		<script type="application/ld+json">
+			{
+				"@context": "https://schema.org",
+				"@type": "WebApplication",
+				"@id": "https://cinder.ink/#app",
+				"name": "Cinder",
+				"url": "https://cinder.ink/",
+				"applicationCategory": "SecurityApplication",
+				"operatingSystem": "Any modern browser",
+				"description": "An encrypted note and file service retrieved once from Cinder."
+			}
+		</script>
 
 		%sveltekit.head%
 	</head>
