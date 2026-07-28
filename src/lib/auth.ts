@@ -15,6 +15,8 @@
 // expect if they thought about it. Nothing about an account is written to a
 // cookie, so no note request can carry one.
 
+import { bytesToBase64Url } from './crypto/codec';
+
 const HOSTED_UI = import.meta.env.VITE_IDENTITY_HOSTED_UI ?? '';
 const CLIENT_ID = import.meta.env.VITE_IDENTITY_CLIENT_ID ?? '';
 const API_BASE = import.meta.env.VITE_IDENTITY_API_BASE ?? '';
@@ -29,11 +31,11 @@ export const identityConfigured = () => Boolean(HOSTED_UI && CLIENT_ID && API_BA
 
 const redirectUri = () => `${location.origin}/account`;
 
-const b64url = (bytes: ArrayBuffer) =>
-	btoa(String.fromCharCode(...new Uint8Array(bytes)))
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+// The crypto layer's encoder rather than a third hand-rolled copy of the
+// base64url alphabet. PKCE is exact about this: a verifier and its challenge
+// that disagree by one padding character fail the exchange with an error that
+// says nothing about which side got it wrong.
+const b64url = (bytes: ArrayBuffer) => bytesToBase64Url(new Uint8Array(bytes));
 
 // PKCE S256. The verifier never leaves this browser; the server only ever sees
 // its hash, so an intercepted authorization code is useless without the tab
@@ -170,9 +172,6 @@ export async function entitlement(): Promise<Entitlement> {
 	// one place decides what a balance means and it is the place that holds it.
 	return { entitled: body.entitled === true, credits };
 }
-
-/** The same question with the number dropped, for screens that only need yes/no. */
-export const isEntitled = async (): Promise<boolean> => (await entitlement()).entitled;
 
 // Start a purchase. Returns the Stripe-hosted checkout URL, or null.
 //

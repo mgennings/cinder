@@ -78,13 +78,97 @@ export class TransferTooLargeError extends Error {
 
 export type TransferEnvelope = {
 	/** One S3 object body per part, in order. */
-	parts: FileEnvelope[];
+	parts: PartEnvelope[];
 	/** Never sent anywhere — this goes in the URL fragment. */
 	fragmentKey: string;
 };
 
 export function partCountFor(size: number): number {
 	return Math.max(1, Math.ceil(size / PART_BYTES));
+}
+
+// --- the envelope, in one place -------------------------------------------
+//
+// There are two envelope versions and they share every byte of their framing:
+// version, salt length, salt, IV, then the GCM region. Only the version byte
+// and whether position is authenticated differ. The chunked lane arrived after
+// the single-file one and wrote the framing, the preamble parse, and the key
+// derivation a second time, which left the same five-line offset arithmetic in
+// four places. An off-by-one fixed in one copy and not the other is a file that
+// encrypts fine and never decrypts, so they live here once.
+
+/** version ‖ saltLen ‖ salt ‖ iv ‖ sealed. The complete S3 object body. */
+function frame(version: number, salt: Uint8Array | undefined, iv: Uint8Array, sealed: Uint8Array) {
+	const saltLen = salt ? salt.length : 0;
+	const out = new Uint8Array(2 + saltLen + IV_BYTES + sealed.length);
+	out[0] = version;
+	out[1] = saltLen;
+	if (salt) out.set(salt, 2);
+	out.set(iv, 2 + saltLen);
+	out.set(sealed, 2 + saltLen + IV_BYTES);
+	return out;
+}
+
+/**
+ * The inverse of `frame`, refusing anything that is not this exact version.
+ *
+ * The prefix is not authenticated and does not need to be: every rejection here
+ * throws, and every corruption that survives this far fails the GCM tag. What
+ * this must never do is return a plausible envelope from implausible bytes.
+ */
+function unframe(ciphertext: Uint8Array, version: number) {
+	if (ciphertext.length < 2) throw new Error('Envelope is truncated.');
+	if (ciphertext[0] !== version) throw new Error(`Unsupported envelope version ${ciphertext[0]}.`);
+
+	const saltLen = ciphertext[1];
+	if (saltLen !== 0 && saltLen !== SALT_BYTES) throw new Error('Envelope is malformed.');
+
+	// Smallest legal body is an empty file: the preamble, a 4-byte header length,
+	// and the tag. Anything shorter cannot be a whole envelope.
+	if (ciphertext.length < 2 + saltLen + IV_BYTES + HEADER_LEN_BYTES + TAG_BYTES) {
+		throw new Error('Envelope is truncated.');
+	}
+
+	return {
+		salt: saltLen ? ciphertext.subarray(2, 2 + saltLen) : undefined,
+		iv: ciphertext.subarray(2 + saltLen, 2 + saltLen + IV_BYTES),
+		sealed: ciphertext.subarray(2 + saltLen + IV_BYTES)
+	};
+}
+
+/** A fresh key, and the salt that has to travel with it when there is one. */
+async function sealingKey(raw: Uint8Array, passphrase?: string) {
+	if (!passphrase) return { key: await importRaw(raw), salt: undefined };
+	const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+	return { key: await deriveWithPassphrase(raw, passphrase, salt), salt };
+}
+
+/** The same key, reconstructed. A salted envelope without a passphrase refuses. */
+async function openingKey(raw: Uint8Array, salt: Uint8Array | undefined, passphrase?: string) {
+	if (!salt) return importRaw(raw);
+	if (!passphrase) throw new Error('passphrase required');
+	return deriveWithPassphrase(raw, passphrase, salt);
+}
+
+/** headerLen ‖ header ‖ payload, the GCM region's own framing. */
+function withHeader(header: Uint8Array, payload: Uint8Array) {
+	const plain = new Uint8Array(HEADER_LEN_BYTES + header.length + payload.length);
+	new DataView(plain.buffer).setUint32(0, header.length, false); // big-endian
+	plain.set(header, HEADER_LEN_BYTES);
+	plain.set(payload, HEADER_LEN_BYTES + header.length);
+	return plain;
+}
+
+/** Splits the decrypted region back apart. `meta` is null when there is none. */
+function splitHeader(plain: Uint8Array): { bytes: Uint8Array; meta: Record<string, unknown> | null } {
+	const headerLen = new DataView(plain.buffer, plain.byteOffset).getUint32(0, false);
+	if (headerLen > plain.length - HEADER_LEN_BYTES) throw new Error('Envelope is malformed.');
+	return {
+		bytes: plain.slice(HEADER_LEN_BYTES + headerLen),
+		meta: headerLen
+			? JSON.parse(dec.decode(plain.subarray(HEADER_LEN_BYTES, HEADER_LEN_BYTES + headerLen)))
+			: null
+	};
 }
 
 // Position and total, authenticated. Each part decrypts on its own, so without
@@ -121,17 +205,10 @@ export async function encryptFileParts(
 
 	// One salt and one derivation for the whole transfer. Deriving per part
 	// would run 600,000 PBKDF2 rounds 64 times on a phone, for no added secrecy.
-	let salt: Uint8Array | undefined;
-	let key: CryptoKey;
-	if (passphrase) {
-		salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-		key = await deriveWithPassphrase(raw, passphrase, salt);
-	} else {
-		key = await importRaw(raw);
-	}
+	const { key, salt } = await sealingKey(raw, passphrase);
 
 	const partCount = partCountFor(file.size);
-	const parts: FileEnvelope[] = [];
+	const parts: PartEnvelope[] = [];
 
 	for (let index = 0; index < partCount; index++) {
 		// A Blob slice, so only this part's bytes are ever resident. Reading the
@@ -147,10 +224,7 @@ export async function encryptFileParts(
 				? enc.encode(JSON.stringify({ name: file.name, type: file.type, parts: partCount }))
 				: new Uint8Array(0);
 
-		const plain = new Uint8Array(HEADER_LEN_BYTES + header.length + slice.length);
-		new DataView(plain.buffer).setUint32(0, header.length, false); // big-endian
-		plain.set(header, HEADER_LEN_BYTES);
-		plain.set(slice, HEADER_LEN_BYTES + header.length);
+		const plain = withHeader(header, slice);
 
 		// A fresh 96-bit IV per part. Random IVs under one key are safe far past
 		// 64 messages; the birthday bound that makes this a real question starts
@@ -168,19 +242,12 @@ export async function encryptFileParts(
 			)
 		);
 
-		const saltLen = salt ? salt.length : 0;
-		const ciphertext = new Uint8Array(2 + saltLen + IV_BYTES + sealed.length);
-		ciphertext[0] = CHUNKED_ENVELOPE_VERSION;
-		ciphertext[1] = saltLen;
-		if (salt) ciphertext.set(salt, 2);
-		ciphertext.set(iv, 2 + saltLen);
-		ciphertext.set(sealed, 2 + saltLen + IV_BYTES);
+		const ciphertext = frame(CHUNKED_ENVELOPE_VERSION, salt, iv, sealed);
 
 		parts.push({
 			ciphertext,
 			ciphertextBytes: ciphertext.length,
-			ciphertextSha256: await sha256Base64(ciphertext),
-			fragmentKey: '' // the transfer owns the key, not the part
+			ciphertextSha256: await sha256Base64(ciphertext)
 		});
 	}
 
@@ -212,31 +279,8 @@ export async function decryptPart(
 	partCount: number,
 	passphrase?: string
 ): Promise<DecryptedPart> {
-	if (ciphertext.length < 2) throw new Error('Envelope is truncated.');
-
-	const version = ciphertext[0];
-	if (version !== CHUNKED_ENVELOPE_VERSION) {
-		throw new Error(`Unsupported envelope version ${version}.`);
-	}
-
-	const saltLen = ciphertext[1];
-	if (saltLen !== 0 && saltLen !== SALT_BYTES) throw new Error('Envelope is malformed.');
-
-	const minimum = 2 + saltLen + IV_BYTES + HEADER_LEN_BYTES + TAG_BYTES;
-	if (ciphertext.length < minimum) throw new Error('Envelope is truncated.');
-
-	const salt = saltLen ? ciphertext.subarray(2, 2 + saltLen) : undefined;
-	const iv = ciphertext.subarray(2 + saltLen, 2 + saltLen + IV_BYTES);
-	const sealed = ciphertext.subarray(2 + saltLen + IV_BYTES);
-
-	const raw = base64UrlToBytes(fragmentKey);
-	let key: CryptoKey;
-	if (salt) {
-		if (!passphrase) throw new Error('passphrase required');
-		key = await deriveWithPassphrase(raw, passphrase, salt);
-	} else {
-		key = await importRaw(raw);
-	}
+	const { salt, iv, sealed } = unframe(ciphertext, CHUNKED_ENVELOPE_VERSION);
+	const key = await openingKey(base64UrlToBytes(fragmentKey), salt, passphrase);
 
 	const plain = new Uint8Array(
 		await crypto.subtle.decrypt(
@@ -246,19 +290,17 @@ export async function decryptPart(
 		)
 	);
 
-	const headerLen = new DataView(plain.buffer, plain.byteOffset).getUint32(0, false);
-	if (headerLen > plain.length - HEADER_LEN_BYTES) throw new Error('Envelope is malformed.');
-	const bytes = plain.slice(HEADER_LEN_BYTES + headerLen);
+	const { bytes, meta } = splitHeader(plain);
+	// Only part zero carries a header, so a missing one is the ordinary case for
+	// every part after it rather than a malformed envelope.
+	if (!meta) return { bytes };
 
-	if (headerLen === 0) return { bytes };
-
-	const meta = JSON.parse(dec.decode(plain.subarray(HEADER_LEN_BYTES, HEADER_LEN_BYTES + headerLen)));
 	return {
 		bytes,
 		meta: {
 			name: typeof meta.name === 'string' ? meta.name : 'file',
 			type: typeof meta.type === 'string' ? meta.type : '',
-			parts: Number.isInteger(meta.parts) ? meta.parts : partCount
+			parts: Number.isInteger(meta.parts) ? (meta.parts as number) : partCount
 		}
 	};
 }
@@ -277,13 +319,21 @@ export class FilenameTooLongError extends Error {
 	}
 }
 
-export type FileEnvelope = {
+// One uploadable object. A part of a transfer is exactly this and no more —
+// the key belongs to the transfer, not to any one part, so a part has nowhere
+// to put a `fragmentKey` and used to carry an empty string in that field. A
+// field that is always a lie is worse than a field that is absent.
+export type PartEnvelope = {
 	/** The complete S3 object body. */
 	ciphertext: Uint8Array;
-	/** Exact length the server independently re-verifies with HeadObject. */
+	/** Exact length the server independently re-verifies at finalize. */
 	ciphertextBytes: number;
 	/** Base64 SHA-256, the shape S3's `x-amz-checksum-sha256` wants. */
 	ciphertextSha256: string;
+};
+
+/** A single-file transfer: one part, and it owns the key. */
+export type FileEnvelope = PartEnvelope & {
 	/** Never sent anywhere — this goes in the URL fragment. */
 	fragmentKey: string;
 };
@@ -314,36 +364,17 @@ export async function encryptFile(file: File, passphrase?: string): Promise<File
 
 	const raw = crypto.getRandomValues(new Uint8Array(32)); // AES-256 key
 	const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-
-	let salt: Uint8Array | undefined;
-	let key: CryptoKey;
-	if (passphrase) {
-		salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-		key = await deriveWithPassphrase(raw, passphrase, salt);
-	} else {
-		key = await importRaw(raw);
-	}
+	const { key, salt } = await sealingKey(raw, passphrase);
 
 	// Plaintext fed to GCM: a length-prefixed JSON header, then the file itself.
 	const header = enc.encode(JSON.stringify({ name: file.name, type: file.type }));
-	const bytes = new Uint8Array(await file.arrayBuffer());
-
-	const plain = new Uint8Array(HEADER_LEN_BYTES + header.length + bytes.length);
-	new DataView(plain.buffer).setUint32(0, header.length, false); // big-endian
-	plain.set(header, HEADER_LEN_BYTES);
-	plain.set(bytes, HEADER_LEN_BYTES + header.length);
+	const plain = withHeader(header, new Uint8Array(await file.arrayBuffer()));
 
 	const sealed = new Uint8Array(
 		await crypto.subtle.encrypt({ name: 'AES-GCM', iv: toBuf(iv) }, key, toBuf(plain))
 	);
 
-	const saltLen = salt ? salt.length : 0;
-	const ciphertext = new Uint8Array(2 + saltLen + IV_BYTES + sealed.length);
-	ciphertext[0] = ENVELOPE_VERSION;
-	ciphertext[1] = saltLen;
-	if (salt) ciphertext.set(salt, 2);
-	ciphertext.set(iv, 2 + saltLen);
-	ciphertext.set(sealed, 2 + saltLen + IV_BYTES);
+	const ciphertext = frame(ENVELOPE_VERSION, salt, iv, sealed);
 
 	return {
 		ciphertext,
@@ -358,31 +389,8 @@ export async function decryptFile(
 	fragmentKey: string,
 	passphrase?: string
 ): Promise<DecryptedFile> {
-	if (ciphertext.length < 2) throw new Error('Envelope is truncated.');
-
-	const version = ciphertext[0];
-	if (version !== ENVELOPE_VERSION) throw new Error(`Unsupported envelope version ${version}.`);
-
-	const saltLen = ciphertext[1];
-	if (saltLen !== 0 && saltLen !== SALT_BYTES) throw new Error('Envelope is malformed.');
-
-	// Smallest legal body is an empty file: 4-byte header length, a two-key JSON
-	// header, and the tag. Anything shorter cannot be a whole envelope.
-	const minimum = 2 + saltLen + IV_BYTES + HEADER_LEN_BYTES + TAG_BYTES;
-	if (ciphertext.length < minimum) throw new Error('Envelope is truncated.');
-
-	const salt = saltLen ? ciphertext.subarray(2, 2 + saltLen) : undefined;
-	const iv = ciphertext.subarray(2 + saltLen, 2 + saltLen + IV_BYTES);
-	const sealed = ciphertext.subarray(2 + saltLen + IV_BYTES);
-
-	const raw = base64UrlToBytes(fragmentKey);
-	let key: CryptoKey;
-	if (salt) {
-		if (!passphrase) throw new Error('passphrase required');
-		key = await deriveWithPassphrase(raw, passphrase, salt);
-	} else {
-		key = await importRaw(raw);
-	}
+	const { salt, iv, sealed } = unframe(ciphertext, ENVELOPE_VERSION);
+	const key = await openingKey(base64UrlToBytes(fragmentKey), salt, passphrase);
 
 	// Throws on a wrong key, a wrong passphrase, or any tampering. There is no
 	// path from here that returns altered content.
@@ -390,12 +398,14 @@ export async function decryptFile(
 		await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toBuf(iv) }, key, toBuf(sealed))
 	);
 
-	const headerLen = new DataView(plain.buffer, plain.byteOffset).getUint32(0, false);
-	if (headerLen > plain.length - HEADER_LEN_BYTES) throw new Error('Envelope is malformed.');
+	const { bytes, meta } = splitHeader(plain);
+	// A version-1 envelope ALWAYS carries a header — it is where the name lives,
+	// and there is no second part to have written it. Its absence is a malformed
+	// envelope, not a nameless file, and it is refused rather than defaulted.
+	if (!meta) throw new Error('Envelope is malformed.');
 
-	const meta = JSON.parse(dec.decode(plain.subarray(HEADER_LEN_BYTES, HEADER_LEN_BYTES + headerLen)));
 	return {
-		bytes: plain.slice(HEADER_LEN_BYTES + headerLen),
+		bytes,
 		name: typeof meta.name === 'string' ? meta.name : 'file',
 		type: typeof meta.type === 'string' ? meta.type : ''
 	};

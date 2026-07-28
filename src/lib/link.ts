@@ -1,6 +1,8 @@
 // Note-link helpers. The fragment (everything after `#`) holds the decryption
 // key and is never sent to the server — keep it out of query strings and logs.
 
+import { bytesToBase64Url } from './crypto/codec';
+
 export function buildLink(origin: string, id: string, fragmentKey: string): string {
 	return `${origin}/n/${id}#${fragmentKey}`;
 }
@@ -60,8 +62,8 @@ export async function derivePartLocator(locator: string, index: number): Promise
 		new TextEncoder().encode(`${locator}:part:${index}`)
 	);
 	// base64url, unpadded — Node's `digest('base64url')` produces exactly this.
-	return btoa(String.fromCharCode(...new Uint8Array(digest)))
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	// The encoding is the crypto layer's, not a second hand-rolled copy of it:
+	// this string has to match a Node digest byte for byte, and two independent
+	// implementations of the same alphabet is exactly how that stops being true.
+	return bytesToBase64Url(new Uint8Array(digest));
 }

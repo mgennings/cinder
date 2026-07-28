@@ -42,9 +42,6 @@ const DEV_GRANT: string | null = import.meta.env.VITE_DEV_CAPABILITY_GRANT ?? nu
 const EARLY_SECONDS = 60;
 const cache = new Map<string, { grant: string; usableUntilMs: number }>();
 
-/** Test seam. Nothing in the product calls this; the vitest suite does. */
-export const forgetCachedGrants = () => cache.clear();
-
 export async function capabilityGrant(capability: string): Promise<string | null> {
 	const cached = cache.get(capability);
 	if (cached && Date.now() < cached.usableUntilMs) return cached.grant;
