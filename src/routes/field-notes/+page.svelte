@@ -70,6 +70,10 @@
 		content="A privacy tool was asked to defend itself, and every defense on offer required it to start looking at who its users were. What was measured, what it cost, and why the answer generalizes."
 	/>
 	<meta
+		property="og:description"
+		content="A privacy tool was asked to defend itself, and every defense on offer required it to start looking at who its users were. What was measured, what it cost, and why the answer generalizes."
+	/>
+	<meta
 		name="twitter:description"
 		content="A privacy tool was asked to defend itself, and every defense on offer required it to start looking at who its users were. What was measured, what it cost, and why the answer generalizes."
 	/>

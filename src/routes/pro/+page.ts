@@ -1,5 +1,5 @@
-// The pay point. Prerender the shell, but never server-render: the entitlement
-// check and the checkout call both carry a bearer token, and a server render
-// would mean a token passing through a server with no business holding one.
+// The pay point. Prerender its public shell so crawlers and no-JavaScript
+// visitors receive truthful metadata. Entitlement and checkout still begin
+// only after onMount, so bearer tokens remain browser-only.
 export const prerender = true;
-export const ssr = false;
+export const ssr = true;

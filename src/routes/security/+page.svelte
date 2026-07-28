@@ -94,6 +94,7 @@
 		name="description"
 		content="An honest account of what Cinder's zero-knowledge encryption protects against — and what it can't."
 	/>
+	<meta property="og:description" content="An honest account of what Cinder's zero-knowledge encryption protects against — and what it can't." />
 	<meta name="twitter:description" content="An honest account of what Cinder's zero-knowledge encryption protects against — and what it can't." />
 </svelte:head>
 
