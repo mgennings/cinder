@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, createHmac, scryptSync } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { JSDOM } from "jsdom";
 
 process.env.STATS_SECRET_ID = "test-surface";
 process.env.STATS_SHARED_SECRET_ID = "test-shared";
@@ -170,13 +171,74 @@ const groupContract = {
     { id: "insecure", group: "products", label: "insecure", href: "http://example.test/" },
     { id: "script", group: "products", label: "script", href: "javascript:alert(1)" },
     { id: "credentialed", group: "products", label: "credentialed", href: "https://matt:secret@example.test/" },
+    { id: "username-only", group: "products", label: "username only", href: "https://matt@example.test/" },
+    { id: "password-only", group: "products", label: "password only", href: "https://:secret@example.test/" },
+    { id: "empty-credential", group: "products", label: "empty credential", href: "https://@example.test/" },
+    { id: "malformed-authority", group: "products", label: "malformed", href: "https://[::1/" },
+    { id: "empty-host", group: "products", label: "empty host", href: "https://" },
+    { id: "path-at-sign", group: "products", label: "path at sign", href: "https://example.test/a@b" },
     { id: "extra-field", group: "products", label: "extra", href: "https://example.test/", handoff: "x" },
   ],
 };
 assert.deepEqual(
   mattNavigation(groupContract, {}).map(({ id }) => id),
-  ["signal-one", "product-one", "place-one"],
+  ["signal-one", "product-one", "place-one", "path-at-sign"],
 );
+
+// Filtering is the backend's job; ordering the render is the reader's.
+// allowedNavigation must never itself sort into signals/products/places -- it
+// only has to decide keep-or-discard per record. If it silently started
+// sorting, a broken render loop could hide behind a backend that quietly
+// fixed the order for it. Feed a fixture whose groups are deliberately NOT
+// listed canonically and compare the filtered result as a sorted set, never
+// as an order-sensitive list, so this test cannot mistake "the fixture
+// happens to be pre-sorted" for "the filter is correct."
+const shuffledGroupOrder = {
+  schema: "org.uxuiai.stats-navigation.v1",
+  destinations: [
+    { id: "place-one", group: "places", label: "place", href: "https://mgennings.com/" },
+    { id: "unknown-group", group: "experiments", label: "unknown", href: "https://example.test/" },
+    { id: "product-one", group: "products", label: "product", href: "https://stats.cinder.ink/" },
+    { id: "insecure", group: "products", label: "insecure", href: "http://example.test/" },
+    { id: "signal-one", group: "signals", label: "signal", href: "https://stats.uxuiai.org/" },
+  ],
+};
+assert.deepEqual(
+  mattNavigation(shuffledGroupOrder, {}).map(({ id }) => id).sort(),
+  ["place-one", "product-one", "signal-one"].sort(),
+);
+
 assert.match(navigationSource, /\["signals", "products", "places"\]/);
+
+// The literal-source check above proves the canonical array text is present,
+// but not that the real loop uses it to order the DOM -- a reordered loop
+// with the original array left behind in a comment would still pass it. Run
+// the actual navigation.js in jsdom against a deliberately shuffled fixture
+// and read the rendered group headings back out, so the render order itself
+// is what the test proves rather than a string match on the source.
+{
+  const shuffledFixture = [
+    { id: "place-one", group: "places", label: "place", href: "https://mgennings.com/" },
+    { id: "product-one", group: "products", label: "product", href: "https://stats.cinder.ink/" },
+    { id: "signal-one", group: "signals", label: "signal", href: "https://stats.uxuiai.org/" },
+  ];
+  const dom = new JSDOM(`<!doctype html><body><div id="private-navigation"></div></body>`, {
+    url: "https://stats.cinder.ink/",
+    runScripts: "dangerously",
+  });
+  dom.window.fetch = async () => ({ ok: true, json: async () => ({ destinations: shuffledFixture }) });
+  const script = dom.window.document.createElement("script");
+  script.textContent = navigationSource;
+  dom.window.document.body.append(script);
+  // refresh_navigation() runs as an unawaited async IIFE at module load; give
+  // its fetch-then-render microtask chain a few event-loop turns to settle.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    if (dom.window.document.querySelector("li.group")) break;
+  }
+  const renderedGroups = [...dom.window.document.querySelectorAll("li.group")].map((li) => li.textContent);
+  assert.deepEqual(renderedGroups, ["signals", "products", "places"]);
+  dom.window.close();
+}
 
 console.log("Cinder stats authentication contracts pass");

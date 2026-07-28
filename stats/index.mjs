@@ -228,6 +228,14 @@ const allowedNavigation = (document, destinationIds = null) => {
       // destination host on the first click. Owner-only registry, second lock.
       if (!href.startsWith("https://")) return false;
       if (href.slice("https://".length).split(/[/?#]/, 1)[0].includes("@")) return false;
+      // A malformed or hostless authority (an unbalanced IPv6 literal, a bare
+      // "https://") must not reach the renderer as a broken link; discard the
+      // single bad record instead of raising through the whole navigation route.
+      try {
+        new URL(href);
+      } catch {
+        return false;
+      }
       return ["signals", "products", "places"].includes(item.group);
     })
     : [];
@@ -256,7 +264,7 @@ export const mattNavigation = (document, sharedCredential) => {
       if (target.protocol === "https:" && target.hostname.startsWith("stats.") && typeof secret === "string" && secret) {
         return { ...item, handoff: mintHandoff(secret, target.hostname) };
       }
-    } catch { /* allowedNavigation already rejects malformed non-HTTPS destinations */ }
+    } catch { /* unreachable: allowedNavigation already discards any href that fails to parse */ }
     return item;
   });
 };
