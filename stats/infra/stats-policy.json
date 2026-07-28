@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadExactStatsAuthority",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": [
+        "arn:aws:secretsmanager:us-east-1:553806908724:secret:cinder-stats-secrets-*",
+        "arn:aws:secretsmanager:us-east-1:553806908724:secret:stats-shared-credential-*",
+        "arn:aws:secretsmanager:us-east-1:553806908724:secret:stats-private-navigation-*"
+      ]
+    },
+    {
+      "Sid": "ReadLambdaAggregates",
+      "Effect": "Allow",
+      "Action": ["cloudwatch:GetMetricData"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
+      }
+    }
+  ]
+}

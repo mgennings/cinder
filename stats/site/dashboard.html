@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <title>aggregate infrastructure · Cinder</title>
+    <link rel="stylesheet" href="/stats.css" />
+    <script defer src="/navigation.js"></script>
+    <script defer src="/dashboard.js"></script>
+  </head>
+  <body class="dashboard">
+    <header class="masthead">
+      <a href="/" aria-current="page">Cinder <span>/ stats</span></a>
+      <nav aria-label="private controls">
+        <div id="private-navigation"></div>
+        <button id="logout" class="quiet-button" type="button">lock</button>
+      </nav>
+    </header>
+    <main class="dashboard-shell">
+      <section class="hero" aria-labelledby="title">
+        <p class="eyebrow">AWS/LAMBDA / EXACT CINDER FUNCTIONS</p>
+        <h1 id="title">only the infrastructure.</h1>
+        <p>
+          Invocations, errors, throttles, and duration are aggregated across
+          Cinder's exact Lambda function set. No logs or application data are read.
+        </p>
+      </section>
+
+      <div class="window-control" role="group" aria-label="metric window">
+        <button type="button" data-window="24h" aria-pressed="true">24 hours</button>
+        <button type="button" data-window="7d" aria-pressed="false">7 days</button>
+      </div>
+
+      <section id="metric-grid" class="metric-grid" aria-label="aggregate Lambda metrics" aria-busy="true"></section>
+
+      <footer class="proof-line">
+        <p><strong id="scope">11 exact functions</strong> · <span id="checked-at">checking origin</span></p>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </footer>
+    </main>
+  </body>
+</html>

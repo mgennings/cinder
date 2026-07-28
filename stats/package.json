@@ -1,0 +1,19 @@
+{
+  "name": "cinder-private-stats",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check index.mjs && node --check site/login.js && node --check site/navigation.js && node --check site/dashboard.js && bash -n deploy-stats.sh",
+    "test": "node test-auth.mjs && node test-metrics.mjs",
+    "test:layout": "node test-layout.mjs",
+    "test:all": "npm run check && npm test && npm run test:layout"
+  },
+  "dependencies": {
+    "@aws-sdk/client-apigatewayv2": "^3.1095.0",
+    "@aws-sdk/client-cloudwatch": "^3.1095.0",
+    "@aws-sdk/client-secrets-manager": "^3.862.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0"
+  }
+}

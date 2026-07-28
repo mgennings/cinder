@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <title>private infrastructure · Cinder</title>
+    <link rel="stylesheet" href="/stats.css" />
+    <script defer src="/login.js"></script>
+  </head>
+  <body class="arrival">
+    <main class="arrival-grid">
+      <section class="arrival-copy" aria-labelledby="title">
+        <p class="eyebrow">CINDER / PRIVATE INFRASTRUCTURE</p>
+        <h1 id="title">the vault stays closed.</h1>
+        <p class="lead">
+          This private surface reads aggregate Lambda infrastructure metrics.
+          It cannot read application records or request logs.
+        </p>
+        <form id="login">
+          <label for="password">operator password</label>
+          <div class="field">
+            <input id="password" type="password" autocomplete="current-password" required />
+            <button type="submit">open stats <span aria-hidden="true">↗</span></button>
+          </div>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+      <section class="vault-artifact" aria-hidden="true">
+        <div class="artifact-row"><span>AGGREGATES</span><span>ORIGIN LOCKED</span></div>
+        <div class="vault-mark"><span></span><i></i><b></b></div>
+        <div class="artifact-row"><span>NO LOGS</span><span>NO RECORD READS</span></div>
+      </section>
+    </main>
+  </body>
+</html>
