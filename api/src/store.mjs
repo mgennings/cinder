@@ -97,6 +97,24 @@ export async function getFileGrant(doc, pk) {
 	};
 }
 
+// A sender-only status read. It returns one bit and carries no object key,
+// filename, size, creation time, or recipient data out of the store.
+export async function fileGrantAvailable(doc, pk, nowEpoch) {
+	const res = await doc.send(
+		new GetCommand({
+			TableName: TABLE(),
+			Key: { pk },
+			ConsistentRead: true,
+			ProjectionExpression: '#k, #s, expiresAt',
+			ExpressionAttributeNames: NAMES
+		})
+	);
+	const item = res.Item;
+	return Boolean(
+		item && item.kind === 'file' && item.state === 'ready' && item.expiresAt > nowEpoch
+	);
+}
+
 // uploading -> ready, and only that. Every fact the caller claims must already
 // match what create recorded, so a finalize cannot redirect the grant at a
 // different object, a different size, or a different checksum.

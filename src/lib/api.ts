@@ -76,6 +76,7 @@ export type UploadGrant = { url: string; headers: Record<string, string> };
 export type TransferGrant = {
 	locator: string;
 	uploadCapability: string;
+	statusToken: string;
 	upload: UploadGrant;
 };
 
@@ -108,6 +109,7 @@ export type TransferPartGrant = { index: number; upload: UploadGrant };
 export type MultipartGrant = {
 	locator: string;
 	uploadCapability: string;
+	statusToken: string;
 	parts: TransferPartGrant[];
 };
 
@@ -182,6 +184,18 @@ export async function finalizeFileTransfer(
 	});
 	if (res.status === 410) throw new TransferGoneError();
 	if (!res.ok) throw new Error(`finalize failed: ${res.status}`);
+}
+
+export async function checkTransferStatus(statusToken: string): Promise<'available' | 'gone'> {
+	const res = await fetch(`${API_BASE}/files/status`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ statusToken })
+	});
+	if (!res.ok) throw new Error(`status failed: ${res.status}`);
+	const status = (await res.json()).status;
+	if (status !== 'available' && status !== 'gone') throw new Error('status failed: bad response');
+	return status;
 }
 
 // The one delivery attempt. A 410 here means it was never available to us; any

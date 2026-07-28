@@ -1,6 +1,6 @@
 # API reference
 
-Cinder's API is five endpoints — two for notes, three for files. This document is the exact contract. All request and response bodies are JSON. The base URL for the reference deployment is `https://tlfcdvq445.execute-api.us-east-1.amazonaws.com`; your own deployment's URL comes from the SAM stack output (see [Deployment](deployment.md)).
+Cinder's API is six endpoints — two for notes, four for files. This document is the exact contract. All request and response bodies are JSON. The base URL for the reference deployment is `https://tlfcdvq445.execute-api.us-east-1.amazonaws.com`; your own deployment's URL comes from the SAM stack output (see [Deployment](deployment.md)).
 
 > **Note:** The API only ever sees ciphertext. It never receives the decryption key — that stays in the URL fragment on the client. Everything here operates on already-encrypted data.
 
@@ -73,7 +73,7 @@ curl -X POST https://tlfcdvq445.execute-api.us-east-1.amazonaws.com/notes/<id>/b
 
 ## File transfer
 
-Three endpoints, and they are deliberately shaped so that no single one of them is enough to do harm. All capabilities travel in request **bodies**, never in a path or query string, so nothing sensitive can end up in an access log if logging is ever switched on. The one exception is the presigned upload URL, which necessarily carries its signature in an S3 query string; it is scoped to a single key, a single length, and a single checksum, and it expires in five minutes.
+Four endpoints, and they are deliberately shaped so that no single one of them is enough to do harm. All capabilities travel in request **bodies**, never in a path or query string, so nothing sensitive can end up in an access log if logging is ever switched on. The one exception is the presigned upload URL, which necessarily carries its signature in an S3 query string; it is scoped to a single key, a single length, and a single checksum, and it expires in five minutes.
 
 ### Reserve a transfer
 
@@ -93,10 +93,10 @@ POST /files
 
 | Status | Body | Meaning |
 | --- | --- | --- |
-| `201 Created` | `{ "locator", "uploadCapability", "upload": { "url", "headers" } }` | Transfer reserved. Build the link as `/f/{locator}#{key}`. |
+| `201 Created` | `{ "locator", "uploadCapability", "statusToken", "upload": { "url", "headers" } }` | Transfer reserved. Build the link as `/f/{locator}#{key}` and keep `statusToken` only in the sender browser. |
 | `400 Bad Request` | `{ "error": "..." }` | Missing or malformed size/checksum, or over the size limit. |
 
-The `locator` and `uploadCapability` are independent 256-bit secrets; the server stores only their SHA-256 hashes. `upload.url` is a presigned `PUT` valid for five minutes, signed against one random object key, that exact byte length, and that exact checksum — S3 itself refuses anything else.
+The `locator` and `uploadCapability` are independent 256-bit secrets; the server stores only their SHA-256 hashes. `statusToken` is a separately signed, expiring sender capability and never belongs in the recipient link. `upload.url` is a presigned `PUT` valid for five minutes, signed against one random object key, that exact byte length, and that exact checksum — S3 itself refuses anything else.
 
 ### Reserve a multipart transfer
 
@@ -114,7 +114,7 @@ The same endpoint, with a `parts` array instead of a single size and checksum. T
 
 | Status | Body | Meaning |
 | --- | --- | --- |
-| `201 Created` | `{ "locator", "uploadCapability", "parts": [{ "index", "upload" }] }` | N transfers reserved. Build the link as `/f/{locator}#{key}.{n}`. |
+| `201 Created` | `{ "locator", "uploadCapability", "statusToken", "parts": [{ "index", "upload" }] }` | N transfers reserved. Build the link as `/f/{locator}#{key}.{n}` and keep `statusToken` only in the sender browser. |
 | `400 Bad Request` | `{ "error": "..." }` | Empty array, more than 64 parts, or any part malformed or oversized. One bad part refuses the whole request. |
 | `402 Payment Required` | `{ "error": "..." }` | No valid grant for `transfer.multipart`. A single-part request never reaches this check. The sender ran out of credits, never bought any, or is anonymous — this API cannot tell which, and does not want to. |
 | `403 Forbidden` | `{ "error": "..." }` | Granted, but for fewer parts than requested. |
@@ -144,6 +144,16 @@ The server asks S3 what it actually stored and compares size and checksum agains
 | `200 OK` | `{ "state": "ready" }` | The stored object was verified. Retrying with identical facts is idempotent. |
 | `410 Gone` | `{ "error": "This transfer is no longer available." }` | Unknown locator, wrong capability, missing object, wrong size, wrong checksum, expired, or already claimed. |
 
+### Sender status
+
+```
+POST /files/status
+```
+
+Body: `{ "statusToken" }`. This is a non-consuming advisory read for the creating browser. It returns only `{ "status": "available" }` when every expected grant is ready and unexpired; malformed, forged, expired, uploading, partial, missing, or claimed transfers all return the identical `{ "status": "gone" }`. Infrastructure failure is non-2xx so the browser never fabricates a gone state.
+
+The status role has only `dynamodb:GetItem`. It cannot write DynamoDB, read or delete S3, claim a transfer, or learn an identity. The token is not in the recipient link. Repeated sender checks can still infer the interval in which availability changed, so Cinder says that plainly rather than calling the check anonymous telemetry.
+
 ### Claim
 
 ```
@@ -165,6 +175,7 @@ The `410` is byte-identical whether the link never existed, was malformed, is st
 - **Deletion precedes delivery, structurally.** The order is claim, open, delete, verify absence, respond. Because this is a buffered Lambda proxy integration, the response object does not exist until every prior step has returned — API Gateway cannot send a byte of a response it has not received. See [architecture](architecture.md#why-the-delete-before-delivery-guarantee-actually-holds).
 - **Any post-claim failure is permanent.** A crash, timeout, S3 error, or dropped connection consumes the transfer. The grant is never restored and the object is never recreated.
 - **No presigned GET, Range, retry, resume, or preview.** The only way ciphertext leaves the bucket is through the claim path above.
+- **Sender status is separate and read-only.** It returns one availability bit to a second capability kept on the creating device. It never returns content, identity, or a timestamp and never consumes a transfer.
 - **Orphans expire.** Abandoned uploads and unclaimed expired grants are removed by a DynamoDB TTL and an eight-day S3 lifecycle rule. That cleanup is asynchronous and best-effort; it is a backstop, not the guarantee.
 
 ## CORS

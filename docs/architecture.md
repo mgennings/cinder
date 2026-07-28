@@ -34,13 +34,14 @@ Each component has one job. The table is the fastest way to see the whole system
 | Reader page | Human-gated reveal: burn the note, then decrypt it | `src/routes/n/[id]/+page.svelte` |
 | Crypto core | AES-256-GCM encrypt/decrypt, two-factor passphrase derivation | `src/lib/crypto/note-crypto.ts` |
 | Codec | base64 / base64url conversion with a fallback for older browsers | `src/lib/crypto/codec.ts` |
-| API client | Talk to the five endpoints; map wire names to crypto names | `src/lib/api.ts` |
+| API client | Talk to the six endpoints; map wire names to crypto names | `src/lib/api.ts` |
 | Link helpers | Build `/n/{id}#{key}` links; parse the fragment | `src/lib/link.ts` |
 | createNote Lambda | Validate, clamp TTL, store ciphertext, return an ID | `api/src/handlers.mjs` |
 | readNote Lambda | Atomically burn the note and return it, or 410 | `api/src/handlers.mjs` |
 | File crypto | Encrypt one file plus its name and type into one envelope | `src/lib/crypto/file-crypto.ts` |
 | createFile Lambda | Reserve a transfer, issue a constrained one-use upload | `api/src/handlers.mjs` |
 | finalizeFile Lambda | Inspect the stored object itself, then mark it ready | `api/src/handlers.mjs` |
+| statusFile Lambda | Sender-only, read-only available/gone check | `api/src/handlers.mjs` |
 | claimFile Lambda | The one delivery attempt: claim, delete, verify, return | `api/src/handlers.mjs` |
 | S3 port | Five narrow verbs, so each role's IAM policy stays legible | `api/src/lambda.mjs` |
 | S3 error reading | The two opposite readings of "is this object there?" | `api/src/s3-errors.mjs` |
@@ -55,17 +56,18 @@ Dynamic note URLs like `/n/abc123` are handled by the SPA fallback: CloudFront s
 
 The landing and security pages are the exception: they carry no secrets, so they are prerendered and indexable for speed and discoverability.
 
-### API (five Lambdas behind API Gateway)
+### API (six Lambdas behind API Gateway)
 
-The API is intentionally five endpoints and nothing more:
+The API is intentionally six endpoints and nothing more:
 
 - `POST /notes` → `createNote` — stores a ciphertext blob, returns an ID.
 - `POST /notes/{id}/burn` → `readNote` — atomically deletes and returns the note.
 - `POST /files` → `createFile` — reserves a transfer, issues a constrained one-use upload.
 - `POST /files/finalize` → `finalizeFile` — inspects the stored object, then marks it ready.
+- `POST /files/status` → `statusFile` — checks availability with a separate sender capability and changes nothing.
 - `POST /files/claim` → `claimFile` — the one delivery attempt.
 
-All five are AWS Lambda functions (Node.js 22, ARM64) fronted by an API Gateway HTTP API. The handlers take the DynamoDB client as an argument (`makeHandlers(doc)`), which is what lets the tests run them against a local DynamoDB with no mocking. See [the API reference](api.md) for exact request and response shapes.
+All six are AWS Lambda functions (Node.js 22, ARM64) fronted by an API Gateway HTTP API. The handlers take the DynamoDB client as an argument (`makeHandlers(doc)`), which is what lets the tests run them against a local DynamoDB with no mocking. See [the API reference](api.md) for exact request and response shapes.
 
 ### Storage (DynamoDB)
 
@@ -96,12 +98,12 @@ The reason DynamoDB was chosen over anything else is covered in [design decision
 
 A file link makes one promise, and it is narrower than it first sounds: **exactly one server delivery attempt.** Not one recipient, not one successful download. Cinder controls its own stored copy and the single moment it hands that copy over, and it does not control networks, browsers, or what anyone does with the bytes afterward.
 
-Files use their own route (`/f/{locator}#{key}`) because the reader page has to know which protocol to speak before it fetches anything. Asking the server "is this a note or a file?" would be a request on link arrival, which is exactly what the preview-bot defense forbids.
+Files use their own route (`/f/{locator}#{key}`) because the reader page has to know which protocol to speak before it fetches anything. A recipient browser still fetches nothing on link arrival. The creating browser may hold a separate on-device status capability; when it revisits the link, it performs one read-only availability check that cannot claim or fetch ciphertext.
 
 ### Creating a transfer
 
 1. The browser encrypts the file, its name, and its MIME type into one AES-256-GCM envelope. Name and type live *inside* the encrypted region, not beside it — "severance-agreement.pdf" is often the whole story, and authenticating a filename while leaving it readable would protect the wrong half.
-2. `POST /files` reserves the transfer. The server generates three independent secrets: a **locator** (what the link carries), an **upload capability** (which never leaves the sender), and a random **object key**. DynamoDB stores only `sha256(locator)` and `sha256(uploadCapability)`, so a dump of the table cannot be replayed against the API.
+2. `POST /files` reserves the transfer. The server generates a **locator** (what the link carries), an **upload capability**, a separately signed **status token**, and a random **object key**. The two sender capabilities never enter the recipient link. DynamoDB stores only `sha256(locator)` and `sha256(uploadCapability)`; the status token is signed, expires with the transfer, and is not stored server-side.
 3. The response carries a presigned `PUT` signed against that exact key, byte length, and checksum, valid for five minutes. S3 itself refuses a substituted, resized, or corrupted body.
 4. The browser uploads ciphertext straight to the private bucket. It never passes through a Lambda.
 5. `POST /files/finalize` is where the server stops trusting the client. It asks S3 what it actually holds and compares size and checksum against what it authorized, then flips `uploading → ready` in a single conditional write. A client that uploads nothing and calls finalize gets the same refusal as a client that uploads the wrong thing.
@@ -110,7 +112,7 @@ Finalize asks for `GetObjectAttributes` — size and checksum rather than the bo
 
 ### The one delivery attempt
 
-Opening a file link fetches nothing. Only the explicit reveal starts the destructive path, and that path runs in exactly this order:
+A recipient opening a file link fetches nothing. The sender's creating browser may make a read-only status request, but only the explicit reveal starts the destructive path, and that path runs in exactly this order:
 
 1. **Claim.** A conditional `DeleteItem` on the grant, returning what it deleted. Exactly one concurrent caller wins; the grant is now gone.
 2. **Open.** Read the ciphertext from the private bucket.

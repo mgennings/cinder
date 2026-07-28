@@ -12,6 +12,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeHandlers } from '../src/handlers.mjs';
 import { deriveChunkLocator } from '../src/id.mjs';
 import { CAPABILITY, denyAll, checkCapability } from '../src/capabilities.mjs';
+import { mintStatusToken, verifyStatusToken } from '../src/status-token.mjs';
 
 const cfg = {
 	region: 'us-east-1',
@@ -93,11 +94,23 @@ const proGate = {
 
 const partBody = (i) => Buffer.from(`part-${i}-`.padEnd(64, 'x'));
 const sha = (b) => createHash('sha256').update(b).digest('base64');
+const statusTokens = {
+	mint: (claims) => mintStatusToken({ secret: 'multipart-status-secret', ...claims }),
+	verify: (token) => verifyStatusToken(token, { secret: 'multipart-status-secret' })
+};
 
 // Drives a whole sender journey for an N-part transfer and returns everything a
 // test needs to poke at it.
-async function makeTransfer(s3, partCount, { events = [], gate = proGate } = {}) {
-	const h = makeHandlers(doc, s3, { onEvent: (e) => events.push(e), capabilities: gate });
+async function makeTransfer(
+	s3,
+	partCount,
+	{ events = [], gate = proGate, status = undefined } = {}
+) {
+	const h = makeHandlers(doc, s3, {
+		onEvent: (e) => events.push(e),
+		capabilities: gate,
+		...(status ? { statusTokens: status } : {})
+	});
 	const bodies = Array.from({ length: partCount }, (_, i) => partBody(i));
 
 	const created = await h.createFile({
@@ -107,7 +120,7 @@ async function makeTransfer(s3, partCount, { events = [], gate = proGate } = {})
 		})
 	});
 	assert.equal(created.statusCode, 201);
-	const { locator, uploadCapability, parts } = JSON.parse(created.body);
+	const { locator, uploadCapability, statusToken, parts } = JSON.parse(created.body);
 
 	const keys = parts.map((p) => new URL(p.upload.url).pathname.slice(1));
 	keys.forEach((k, i) => s3.put(k, bodies[i]));
@@ -116,7 +129,7 @@ async function makeTransfer(s3, partCount, { events = [], gate = proGate } = {})
 		parts.map((_, i) => Promise.resolve(deriveChunkLocator(locator, i)))
 	);
 
-	return { h, locator, uploadCapability, parts, keys, bodies, locators, events };
+	return { h, locator, uploadCapability, statusToken, parts, keys, bodies, locators, events };
 }
 
 async function finalizeAll(h, locators, uploadCapability) {
@@ -234,6 +247,20 @@ test('every part is an independent grant with its own object key', async () => {
 		assert.ok(!k.includes(locator));
 		assert.match(k, /^d1\/[0-9a-f]{64}$/);
 	}
+});
+
+test('multipart status is available only while every expected part is ready', async () => {
+	const s3 = fakeS3();
+	const { h, uploadCapability, statusToken, locators } = await makeTransfer(s3, 4, {
+		status: statusTokens
+	});
+	const check = async () =>
+		JSON.parse((await h.statusFile({ body: JSON.stringify({ statusToken }) })).body).status;
+	assert.equal(await check(), 'gone');
+	await finalizeAll(h, locators, uploadCapability);
+	assert.equal(await check(), 'available');
+	await h.claimFile({ body: JSON.stringify({ locator: locators[2] }) });
+	assert.equal(await check(), 'gone');
 });
 
 test('a twelve-part transfer delivers every part exactly once, in order', async () => {

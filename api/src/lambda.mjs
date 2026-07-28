@@ -20,10 +20,15 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { makeHandlers } from './handlers.mjs';
 import { absentProven, notRetrievable } from './s3-errors.mjs';
 import { gate } from './entitlement-provider.mjs';
+import { mintStatusToken, verifyStatusToken } from './status-token.mjs';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3client = new S3Client({});
 const BUCKET = () => process.env.MEDIA_BUCKET;
+const statusTokens = {
+	mint: (claims) => mintStatusToken({ secret: process.env.STATUS_SECRET, ...claims }),
+	verify: (token) => verifyStatusToken(token, { secret: process.env.STATUS_SECRET })
+};
 
 const s3 = {
 	// The upload is signed against this exact key, length, and checksum, so S3
@@ -101,6 +106,11 @@ const s3 = {
 	}
 };
 
-export const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, s3, {
-	capabilities: gate
-});
+export const { createNote, readNote, createFile, finalizeFile, statusFile, claimFile } = makeHandlers(
+	doc,
+	s3,
+	{
+		capabilities: gate,
+		statusTokens
+	}
+);

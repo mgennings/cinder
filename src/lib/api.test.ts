@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { claimFile, TransferGoneError, DeliveryFailedError, TransferBusyError } from './api';
+import {
+	checkTransferStatus,
+	claimFile,
+	TransferGoneError,
+	DeliveryFailedError,
+	TransferBusyError
+} from './api';
 
 // The single most consequential branch in the client: telling "we never
 // started" apart from "we started and it is gone forever."
@@ -58,5 +64,22 @@ describe('claimFile error mapping', () => {
 	it('returns the ciphertext on success', async () => {
 		respondWith({ status: 200, body: new Uint8Array([1, 2, 3]) });
 		expect(Array.from(await claimFile('loc'))).toEqual([1, 2, 3]);
+	});
+});
+
+describe('sender status check', () => {
+	it('sends only the separate status token and accepts the two bounded states', async () => {
+		const fetch = vi.fn(async () =>
+			new Response(JSON.stringify({ status: 'available' }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		vi.stubGlobal('fetch', fetch);
+		await expect(checkTransferStatus('sender-token')).resolves.toBe('available');
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringContaining('/files/status'),
+			expect.objectContaining({ body: JSON.stringify({ statusToken: 'sender-token' }) })
+		);
 	});
 });

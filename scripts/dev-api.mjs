@@ -17,6 +17,7 @@ import {
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeHandlers } from '../api/src/handlers.mjs';
 import { gate } from '../api/src/entitlement-provider.mjs';
+import { mintStatusToken, verifyStatusToken } from '../api/src/status-token.mjs';
 
 const PORT = Number(process.env.DEV_API_PORT || 4000);
 
@@ -32,6 +33,7 @@ const HOST = process.env.DEV_API_HOST || '127.0.0.1';
 // which looks exactly like a broken product rather than a mismatched key. The
 // default is what stops that from being a thing anyone discovers.
 process.env.CAPABILITY_SECRET = process.env.CAPABILITY_SECRET || 'dev-capability-secret';
+const DEV_STATUS_SECRET = 'dev-status-secret-separate-from-capability-grants';
 
 const ORIGIN = `http://${HOST}:${PORT}`;
 process.env.TABLE_NAME = process.env.TABLE_NAME || 'blip-notes';
@@ -94,9 +96,17 @@ const devGate = {
 	}
 };
 
-const { createNote, readNote, createFile, finalizeFile, claimFile } = makeHandlers(doc, devS3, {
-	capabilities: devGate
-});
+const { createNote, readNote, createFile, finalizeFile, statusFile, claimFile } = makeHandlers(
+	doc,
+	devS3,
+	{
+		capabilities: devGate,
+		statusTokens: {
+			mint: (claims) => mintStatusToken({ secret: DEV_STATUS_SECRET, ...claims }),
+			verify: (token) => verifyStatusToken(token, { secret: DEV_STATUS_SECRET })
+		}
+	}
+);
 
 async function ensureTable() {
 	try {
@@ -172,6 +182,8 @@ const server = createServer(async (req, res) => {
 			result = await createFile({ body: (await readBody(req)).toString() });
 		} else if (req.method === 'POST' && url.pathname === '/files/finalize') {
 			result = await finalizeFile({ body: (await readBody(req)).toString() });
+		} else if (req.method === 'POST' && url.pathname === '/files/status') {
+			result = await statusFile({ body: (await readBody(req)).toString() });
 		} else if (req.method === 'POST' && url.pathname === '/files/claim') {
 			result = await claimFile({ body: (await readBody(req)).toString() });
 		} else {

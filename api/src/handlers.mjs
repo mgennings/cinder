@@ -8,6 +8,7 @@ import {
 	burnNote,
 	putFileGrant,
 	getFileGrant,
+	fileGrantAvailable,
 	markFileReady,
 	claimFileGrant
 } from './store.mjs';
@@ -70,6 +71,7 @@ const MAX_PARTS = 64;
 const GONE = () => json(410, { error: 'This transfer is no longer available.' });
 
 const isBase64Sha256 = (s) => typeof s === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(s);
+const noStatusTokens = { mint: () => null, verify: () => null };
 
 // One part's declared shape, validated exactly as a single file's is. Returns
 // null for anything malformed so the caller can refuse the whole request — a
@@ -83,7 +85,11 @@ function readPart(p) {
 	return { ciphertextBytes, ciphertextSha256 };
 }
 
-export function makeHandlers(doc, s3, { onEvent = () => {}, capabilities = denyAll } = {}) {
+export function makeHandlers(
+	doc,
+	s3,
+	{ onEvent = () => {}, capabilities = denyAll, statusTokens = noStatusTokens } = {}
+) {
 	async function createNote(event) {
 		let data;
 		try {
@@ -195,7 +201,13 @@ export function makeHandlers(doc, s3, { onEvent = () => {}, capabilities = denyA
 		const uploadCapability = newCapability();
 		const ttl = Math.min(Math.max(Number(ttlSeconds) || 0, 1), MAX_TTL);
 		const createdAt = Math.floor(Date.now() / 1000);
+		const expiresAt = createdAt + ttl;
 		const expiresIn = uploadWindowFor(declared.length);
+		const statusToken = statusTokens.mint({
+			locator,
+			parts: declared.length,
+			expiresAt
+		});
 
 		// Every part is an ordinary grant. The only thing tying them together is
 		// that the recipient's browser can derive each part's locator from the one
@@ -226,7 +238,7 @@ export function makeHandlers(doc, s3, { onEvent = () => {}, capabilities = denyA
 					ciphertextBytes: part.ciphertextBytes,
 					ciphertextSha256: part.ciphertextSha256,
 					createdAt,
-					expiresAt: createdAt + ttl
+					expiresAt
 				});
 
 				return { index, upload };
@@ -235,9 +247,45 @@ export function makeHandlers(doc, s3, { onEvent = () => {}, capabilities = denyA
 
 		// The single-part response shape is unchanged, to the byte.
 		if (!multipart) {
-			return json(201, { locator, uploadCapability, upload: grants[0].upload });
+			return json(201, {
+				locator,
+				uploadCapability,
+				...(statusToken ? { statusToken } : {}),
+				upload: grants[0].upload
+			});
 		}
-		return json(201, { locator, uploadCapability, parts: grants });
+		return json(201, {
+			locator,
+			uploadCapability,
+			...(statusToken ? { statusToken } : {}),
+			parts: grants
+		});
+	}
+
+	// POST /files/status — sender-only, read-only, and advisory. The token is a
+	// second capability returned only to the creating browser. It never enters
+	// the recipient URL, so a recipient link alone remains unable to poll state.
+	async function statusFile(event) {
+		let data;
+		try {
+			data = JSON.parse(event.body || '{}');
+		} catch {
+			return json(200, { status: 'gone' });
+		}
+
+		const claims = statusTokens.verify(data.statusToken);
+		if (!claims) return json(200, { status: 'gone' });
+		const now = Math.floor(Date.now() / 1000);
+		const locators =
+			claims.parts === 1
+				? [claims.locator]
+				: Array.from({ length: claims.parts }, (_, index) =>
+						deriveChunkLocator(claims.locator, index)
+					);
+		const available = await Promise.all(
+			locators.map((locator) => fileGrantAvailable(doc, hashCapability(locator), now))
+		);
+		return json(200, { status: available.every(Boolean) ? 'available' : 'gone' });
 	}
 
 	// POST /files/finalize — the server looks at S3 itself and decides.
@@ -364,5 +412,5 @@ export function makeHandlers(doc, s3, { onEvent = () => {}, capabilities = denyA
 		};
 	}
 
-	return { createNote, readNote, createFile, finalizeFile, claimFile };
+	return { createNote, readNote, createFile, finalizeFile, statusFile, claimFile };
 }

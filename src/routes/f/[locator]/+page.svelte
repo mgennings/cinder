@@ -4,9 +4,16 @@
 	// that is renderable, and none of the rendering is decidable from here — so
 	// every surface below belongs to a component and every claim belongs here.
 	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
-	import { claimFile, TransferGoneError, DeliveryFailedError, TransferBusyError } from '$lib/api';
+	import {
+		checkTransferStatus,
+		claimFile,
+		TransferGoneError,
+		DeliveryFailedError,
+		TransferBusyError
+	} from '$lib/api';
 	import {
 		decryptFile,
 		decryptPart,
@@ -14,6 +21,7 @@
 		type DecryptedFile
 	} from '$lib/crypto/file-crypto';
 	import { parseFragmentKey, parseFragmentParts, derivePartLocator } from '$lib/link';
+	import { transferStatusToken } from '$lib/status-store';
 	import { humanSize } from '$lib/ui/format';
 	import Card from '$lib/ui/atoms/Card.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
@@ -47,6 +55,7 @@
 	let needsPassphrase = $state(false);
 	let errorMsg = $state('');
 	let saved: DecryptedFile | null = $state(null);
+	let senderCheck: 'none' | 'checking' | 'available' | 'error' = $state('none');
 
 	// One announcement region for the whole page, deliberately OUTSIDE the view
 	// branches. An earlier version put it inside the gate, so it unmounted at the
@@ -73,6 +82,23 @@
 	$effect(() => {
 		fragmentKey = parseFragmentKey(page.url.hash);
 		partCount = parseFragmentParts(page.url.hash);
+	});
+
+	onMount(async () => {
+		const token = transferStatusToken(locator);
+		if (!token) return;
+		senderCheck = 'checking';
+		try {
+			if ((await checkTransferStatus(token)) === 'gone') {
+				view = 'gone';
+				announcement = 'This transfer is gone. Cinder has no stored copy to return.';
+				return;
+			}
+			senderCheck = 'available';
+		} catch {
+			// Advisory only. A failed glance never disables the actual claim.
+			senderCheck = 'error';
+		}
 	});
 
 	$effect(() => {
@@ -315,6 +341,18 @@
 
 	<Card as="section" class="p-6">
 		{#if view === 'gate'}
+			{#if senderCheck !== 'none'}
+				<p class="mb-4 text-center text-xs text-ghost" role="status">
+					{#if senderCheck === 'checking'}
+						Checking whether your transfer is still available…
+					{:else if senderCheck === 'available'}
+						Available now. Cinder returns no identity or timestamp; checking again can reveal when
+						availability changes.
+					{:else}
+						Status is unavailable. Reveal still works and has not been attempted.
+					{/if}
+				</p>
+			{/if}
 			<RevealGate
 				{partCount}
 				{needsPassphrase}

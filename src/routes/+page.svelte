@@ -25,6 +25,7 @@
 		TransferNotEntitledError
 	} from '$lib/api';
 	import { buildLink, buildFileLink, buildTransferLink, derivePartLocator } from '$lib/link';
+	import { rememberTransferStatus } from '$lib/status-store';
 	import { capabilityGrant, CAPABILITY_MULTIPART_TRANSFER } from '$lib/entitlement';
 	import { entitlement, signedIn, identityConfigured } from '$lib/auth';
 	import { PRO_PRICE, PRO_CREDITS } from '$lib/pro';
@@ -152,6 +153,7 @@
 
 				phase = 'finalizing';
 				await finalizeFileTransfer(grant.locator, grant.uploadCapability);
+				rememberTransferStatus(grant.locator, grant.statusToken);
 				link = buildFileLink(location.origin, grant.locator, envelope.fragmentKey);
 			}
 		} catch (e) {
@@ -220,6 +222,7 @@
 				grant.uploadCapability
 			);
 		}
+		rememberTransferStatus(grant.locator, grant.statusToken);
 
 		return buildTransferLink(
 			location.origin,

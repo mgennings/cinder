@@ -85,6 +85,7 @@ test('file: create → reveal once → second reveal is gone', async ({ page, co
 
 	await reader.goto(link);
 	await expect(reader.getByRole('button', { name: /reveal and destroy/i })).toBeVisible();
+	await expect(reader.getByText(/Available now/)).toBeVisible();
 	await reader.waitForTimeout(500);
 	expect(claims, 'link arrival must not claim').toBe(0);
 
@@ -111,13 +112,13 @@ test('file: create → reveal once → second reveal is gone', async ({ page, co
 
 	await expect(reader.getByText(/Deleted, absence verified/i)).toBeVisible();
 
-	// A second reader gets the generic gone state, and — the part that used to
-	// be silent — it reaches a screen reader too.
+	// The creating browser keeps a separate status capability. Reopening its own
+	// sent link now shows gone on arrival, without spending another claim.
 	const reader2 = await context.newPage();
 	await reader2.goto(link);
-	await reader2.getByRole('button', { name: /reveal and destroy/i }).click();
 	await expect(reader2.getByRole('heading', { name: /this transfer is gone/i })).toBeVisible();
 	await expect(reader2.locator('[aria-live="polite"]')).toContainText(/no stored copy to return/i);
+	await expect(reader2.getByRole('button', { name: /reveal and destroy/i })).toHaveCount(0);
 });
 
 test('file: the reveal button cannot be double-activated', async ({ page, context }) => {

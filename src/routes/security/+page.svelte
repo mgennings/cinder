@@ -29,6 +29,10 @@
 			body: 'That is the exact promise, and it is narrower than "one download." Cinder allows a single atomic claim on a file. It deletes its own encrypted stored copy and confirms the copy is gone before any response byte exists — so holding the bytes is itself proof the deletion already happened.'
 		},
 		{
+			title: 'Sender-only availability',
+			body: 'The browser that creates a file keeps a separate status capability on that device. If that same browser revisits the link, it can ask whether the transfer is available or gone without claiming it. The recipient link does not carry this capability. Cinder returns no identity or timestamp, but repeated checks can reveal when availability changed.'
+		},
+		{
 			title: 'A failed delivery is permanent',
 			body: 'If the connection drops after the claim, Cinder has already deleted its copy and will not recreate it. There is no retry, no resume, and no second attempt. This is the cost of the guarantee above, and it is real: ask the sender for a new link.'
 		},

@@ -10,6 +10,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeHandlers } from '../src/handlers.mjs';
 import { putFileGrant, markFileReady } from '../src/store.mjs';
 import { hashCapability } from '../src/id.mjs';
+import { mintStatusToken, verifyStatusToken } from '../src/status-token.mjs';
 
 const cfg = {
 	region: 'us-east-1',
@@ -139,6 +140,11 @@ test('read of unknown id is 410', async () => {
 
 const BODY = Buffer.from('encrypted-file-bytes-pretend-this-is-ciphertext');
 const BODY_SHA = createHash('sha256').update(BODY).digest('base64');
+const STATUS_SECRET = 'test-status-secret-that-is-not-a-capability-secret';
+const statusTokens = {
+	mint: (claims) => mintStatusToken({ secret: STATUS_SECRET, ...claims }),
+	verify: (token) => verifyStatusToken(token, { secret: STATUS_SECRET })
+};
 
 // Drives the whole sender journey against a given bucket, returning the
 // capabilities plus the trace sink so a test can assert what happened.
@@ -215,6 +221,36 @@ test('the full journey delivers the ciphertext exactly once', async () => {
 
 	const again = await h.claimFile({ body: JSON.stringify({ locator }) });
 	assert.equal(again.statusCode, 410);
+});
+
+test('sender status is read-only, token-gated, and changes from available to gone', async () => {
+	const s3 = fakeS3();
+	const h = makeHandlers(doc, s3, { statusTokens });
+	const created = await h.createFile({
+		body: JSON.stringify({
+			ciphertextBytes: BODY.length,
+			ciphertextSha256: BODY_SHA,
+			ttlSeconds: 3600
+		})
+	});
+	const { locator, uploadCapability, statusToken, upload } = JSON.parse(created.body);
+	const key = new URL(upload.url).pathname.slice(1);
+	s3.put(key, BODY);
+
+	const check = () => h.statusFile({ body: JSON.stringify({ statusToken }) });
+	assert.deepEqual(JSON.parse((await check()).body), { status: 'gone' }, 'uploading is not available');
+	await h.finalizeFile({ body: JSON.stringify({ locator, uploadCapability }) });
+	for (let index = 0; index < 100; index += 1) {
+		assert.deepEqual(JSON.parse((await check()).body), { status: 'available' });
+	}
+	assert.equal(s3.calls.filter((call) => call !== 'attributes').length, 0);
+
+	assert.equal((await h.claimFile({ body: JSON.stringify({ locator }) })).statusCode, 200);
+	assert.deepEqual(JSON.parse((await check()).body), { status: 'gone' });
+	for (const bad of [null, '', `${statusToken}x`, 'not-a-token']) {
+		const result = await h.statusFile({ body: JSON.stringify({ statusToken: bad }) });
+		assert.deepEqual(JSON.parse(result.body), { status: 'gone' });
+	}
 });
 
 test('claim before finalize is refused and does not consume the transfer', async () => {

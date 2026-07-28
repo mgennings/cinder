@@ -122,6 +122,13 @@ Parameters:
     NoEcho: true
     Description: HMAC key for capability grants (rotatable; grants live 15 minutes)
 
+  # Separate from account capability grants. A sender status token authorizes
+  # exactly one read-only lifecycle check and carries no identity.
+  CinderStatusSecret:
+    Type: String
+    NoEcho: true
+    Description: Rotatable HMAC key for sender-only transfer status tokens
+
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -323,6 +330,7 @@ Resources:
       Environment:
         Variables:
           CAPABILITY_SECRET: !Ref CinderCapabilitySecret
+          STATUS_SECRET: !Ref CinderStatusSecret
       Policies:
         - Statement:
             - Effect: Allow
@@ -370,6 +378,33 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /files/finalize
             Method: POST
+
+  StatusFileFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/lambda.statusFile
+      Environment:
+        Variables:
+          STATUS_SECRET: !Ref CinderStatusSecret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt NotesTable.Arn
+      Events:
+        Status:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/status
+            Method: POST
+
+  StatusFileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${StatusFileFn}'
+      RetentionInDays: 14
 
   ClaimFileFn:
     Type: AWS::Serverless::Function
