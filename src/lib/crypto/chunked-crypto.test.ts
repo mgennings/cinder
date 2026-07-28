@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { base64UrlToBytes, bytesToBase64Url } from './codec';
 import {
 	encryptFileParts,
 	decryptPart,
@@ -120,7 +121,17 @@ describe('chunked file-crypto', () => {
 
 	it('refuses a wrong key and a tampered part', async () => {
 		const { parts, fragmentKey } = await encryptFileParts(fileOf(pattern(1000)));
-		const wrong = fragmentKey.slice(0, -1) + (fragmentKey.endsWith('A') ? 'B' : 'A');
+		// Mutate the KEY, not its spelling. A 256-bit key is 43 base64url
+		// characters and 43 x 6 = 258 bits, so the last character carries two bits
+		// that decode to nothing: for any key ending A, B, C, or D, swapping that
+		// character yields a different STRING that decodes to the IDENTICAL key.
+		// Decryption then correctly succeeds and this test failed, roughly 6.8% of
+		// runs, measured over 2000 random keys. It looked like intermittent crypto
+		// and it was an assertion that was not testing anything.
+		const keyBytes = base64UrlToBytes(fragmentKey);
+		keyBytes[0] ^= 0xff;
+		const wrong = bytesToBase64Url(keyBytes);
+		expect(wrong).not.toBe(fragmentKey);
 		await expect(decryptPart(parts[0].ciphertext, wrong, 0, parts.length)).rejects.toThrow();
 
 		const tampered = new Uint8Array(parts[0].ciphertext);
