@@ -72,6 +72,17 @@
 	<title>A one-time note · Cinder</title>
 	<!-- Reader pages are noindex: they're ephemeral and carry a key in the fragment. -->
 	<meta name="robots" content="noindex, nofollow" />
+	<meta property="og:title" content="Someone left you a one-time note · Cinder" />
+	<meta
+		property="og:description"
+		content="Encrypted in the sender's browser. Revealing it removes Cinder's stored copy."
+	/>
+	<meta property="og:image" content="https://cinder.ink/og-private-note.png" />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+	<meta property="og:image:alt" content="A Cinder one-time note shown on a phone against an encrypted signal landscape" />
+	<meta name="twitter:title" content="Someone left you a one-time note · Cinder" />
+	<meta name="twitter:image" content="https://cinder.ink/og-private-note.png" />
 </svelte:head>
 
 <VaultPage>
