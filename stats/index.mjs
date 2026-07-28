@@ -223,7 +223,12 @@ const allowedNavigation = (document, destinationIds = null) => {
     ? document.destinations.filter((item) => {
       if (Object.keys(item ?? {}).sort().join(",") !== "group,href,id,label") return false;
       if (allowed && !allowed.has(item.id)) return false;
-      return ["signals", "places"].includes(item.group) && String(item.href).startsWith("https://");
+      const href = String(item.href);
+      // A username or password in the authority would hand a credential to the
+      // destination host on the first click. Owner-only registry, second lock.
+      if (!href.startsWith("https://")) return false;
+      if (href.slice("https://".length).split(/[/?#]/, 1)[0].includes("@")) return false;
+      return ["signals", "products", "places"].includes(item.group);
     })
     : [];
 };

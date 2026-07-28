@@ -49,7 +49,7 @@ const render_navigation = (destinations) => {
   summary.textContent = "private constellation"
   summary.setAttribute("aria-label", "open private destination switcher")
   const list = document.createElement("ul")
-  for (const group of ["signals", "places"]) {
+  for (const group of ["signals", "products", "places"]) {
     const members = destinations.filter((item) => item.group === group)
     if (!members.length) continue
     const heading = document.createElement("li")

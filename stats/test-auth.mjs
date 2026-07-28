@@ -157,4 +157,26 @@ assert.doesNotMatch(deploySource, /AWSLambdaBasicExecutionRole|describe-stack-re
 assert.match(deploySource, /CINDER_FUNCTION_MAP_JSON/);
 assert.match(deploySource, /ensure-dualstack\.mjs/);
 
+// The registry gains a Products group before it gains any Product destination,
+// so every reader has to accept and order it while the live document still
+// holds nine. Each rejection below already held and must keep holding.
+const groupContract = {
+  schema: "org.uxuiai.stats-navigation.v1",
+  destinations: [
+    { id: "signal-one", group: "signals", label: "signal", href: "https://stats.uxuiai.org/" },
+    { id: "product-one", group: "products", label: "product", href: "https://stats.cinder.ink/" },
+    { id: "place-one", group: "places", label: "place", href: "https://mgennings.com/" },
+    { id: "unknown-group", group: "experiments", label: "unknown", href: "https://example.test/" },
+    { id: "insecure", group: "products", label: "insecure", href: "http://example.test/" },
+    { id: "script", group: "products", label: "script", href: "javascript:alert(1)" },
+    { id: "credentialed", group: "products", label: "credentialed", href: "https://matt:secret@example.test/" },
+    { id: "extra-field", group: "products", label: "extra", href: "https://example.test/", handoff: "x" },
+  ],
+};
+assert.deepEqual(
+  mattNavigation(groupContract, {}).map(({ id }) => id),
+  ["signal-one", "product-one", "place-one"],
+);
+assert.match(navigationSource, /\["signals", "products", "places"\]/);
+
 console.log("Cinder stats authentication contracts pass");
