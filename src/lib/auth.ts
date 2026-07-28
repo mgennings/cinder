@@ -76,13 +76,39 @@ export const signedIn = () => readTokens() !== null;
    an open redirect wearing a convenience feature's clothes, so one is never
    accepted, not even for this site's own origin. */
 const safePath = (value: string | null | undefined): string | null => {
-	// A leading `//` is protocol-relative and resolves to another host entirely,
-	// which is exactly the input this exists to refuse.
-	if (!value || !value.startsWith('/') || value.startsWith('//')) return null;
-	// `\` because some browsers normalize it to `/`, so `/\evil.com` is the same
-	// attack spelled differently.
+	if (!value) return null;
+
+	/* The character checks below are the cheap first pass. They are NOT the
+	   guarantee, because a blocklist of dangerous characters is a race against
+	   whoever knows one more of them, and that race was already lost here once.
+
+	   The URL parser STRIPS ASCII tab, line feed, and carriage return before it
+	   resolves anything. So a path holding a tab passed the leading-slash check,
+	   passed the protocol-relative check, passed the backslash check, and then
+	   resolved to another origin entirely. Reproduced in a real browser, one
+	   click, on a product whose whole promise is that you can trust where it
+	   sends you. */
+	// eslint-disable-next-line no-control-regex
+	if (/[\u0000-\u001f\u007f]/.test(value)) return null;
+	// A leading `//` is protocol-relative and resolves to another host entirely.
+	if (!value.startsWith('/') || value.startsWith('//')) return null;
+	// `\` because some browsers normalize it to `/`, so a backslash host is the
+	// same attack spelled differently.
 	if (value.includes('\\')) return null;
-	return value;
+
+	/* THE GUARANTEE, and the reason the list above no longer has to be complete.
+	   Resolve the candidate against an origin that cannot exist and demand the
+	   result still be on it. Anything that escapes, by a character nobody
+	   thought of or a parser quirk nobody has published yet, changes the origin
+	   and is refused here without having to be enumerated first. */
+	try {
+		const probe = 'https://cinder.invalid';
+		const resolved = new URL(value, probe);
+		if (resolved.origin !== probe) return null;
+		return resolved.pathname + resolved.search + resolved.hash;
+	} catch {
+		return null;
+	}
 };
 
 /** Read a `?next=` intent off the current URL, or null if it is not a safe path. */

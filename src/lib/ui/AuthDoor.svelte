@@ -71,10 +71,23 @@
 			const clean = new URL(page.url);
 			clean.searchParams.delete('failed');
 			clean.searchParams.delete('detail');
-			// SvelteKit's own replaceState, not the browser's: the raw one desyncs
-			// the router's idea of the URL from the address bar and SvelteKit warns
-			// about exactly this in dev.
-			replaceState(clean.pathname + clean.search, {});
+			/* SvelteKit's replaceState keeps the router's idea of the URL in step
+			   with the address bar, so it is the one to reach for FIRST. But on a
+			   direct load of this page the router is not initialized yet and it
+			   THROWS, and the rejection aborted the rest of this function: the
+			   session was never read, `view` stayed 'loading', and the person sat
+			   on "Checking this browser..." with no way forward. That is the exact
+			   page a failed sign-in lands on, so the failure path was the one path
+			   guaranteed to be dead.
+
+			   Tidying the address bar is a courtesy. Rendering the page is not.
+			   The courtesy never gets to cost the page again. */
+			try {
+				replaceState(clean.pathname + clean.search, {});
+			} catch {
+				// Before the router exists there is nothing to desync from.
+				history.replaceState(null, '', clean.pathname + clean.search);
+			}
 		}
 
 		const session = await sessionState();

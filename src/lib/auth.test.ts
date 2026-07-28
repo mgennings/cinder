@@ -33,6 +33,42 @@ describe('the destination a sign-in is allowed to return to', () => {
 		expect(intendedPath('')).toBeNull();
 	});
 
+	/* THE ONE THAT GOT THROUGH.
+
+	   The six cases above are real and a mutation test proved they fire. They
+	   also all missed this, because they describe characters somebody thought
+	   of. The URL parser STRIPS ASCII tab, line feed, and carriage return before
+	   it resolves, so a path holding one satisfies "starts with a single slash",
+	   satisfies "no backslash", and then resolves to another origin. Found by an
+	   independent review, reproduced in a real browser in one click.
+
+	   Percent-encoded here because that is how it arrives on a query string, and
+	   because a literal control character in a source file is invisible to
+	   whoever reads this next. */
+	it('refuses the control characters the URL parser strips before resolving', () => {
+		for (const encoded of ['%09', '%0A', '%0D', '%00']) {
+			expect(intendedPath(`?next=/${encoded}/evil.example`)).toBeNull();
+			expect(intendedPath(`?next=/${encoded}%2F%2Fevil.example`)).toBeNull();
+		}
+
+		// And in storage, which is the other way in.
+		for (const raw of ['/\u0009/evil.example', '/\u000a/evil.example', '/\u000d/evil.example']) {
+			sessionStorage.setItem('cinder.returnto', raw);
+			expect(peekReturnTo()).toBeNull();
+			expect(takeReturnTo()).toBeNull();
+		}
+	});
+
+	/* The guarantee that makes the blocklist above stop being load-bearing:
+	   anything that changes the origin when resolved is refused, whether or not
+	   anyone enumerated the character that did it. */
+	it('refuses anything that resolves off this origin, and keeps what does not', () => {
+		expect(intendedPath('?next=/pro')).toBe('/pro');
+		expect(intendedPath('?next=/pro?a=1#b')).toBe('/pro?a=1#b');
+		expect(intendedPath('?next=/../../etc/passwd')).toBe('/etc/passwd');
+		expect(intendedPath('?next=%2F%2Fevil.example')).toBeNull();
+	});
+
 	it('hands the destination back exactly once', () => {
 		sessionStorage.setItem('cinder.returnto', '/pro');
 		expect(peekReturnTo()).toBe('/pro');
