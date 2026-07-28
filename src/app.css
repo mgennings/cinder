@@ -369,6 +369,115 @@ body::before {
 		background: var(--color-ink-raised);
 	}
 
+	/* =================================================================
+	   PROVIDER BUTTONS — the two doors into an account.
+
+	   These are the only controls in Cinder that are NOT free to look like
+	   Cinder, and that is the point rather than a compromise. Apple and
+	   Google both publish what their button may look like, and a sign-in
+	   button that reads as our design language instead of theirs is asking
+	   somebody to hand credentials to a shape they have never seen.
+
+	   WHAT THE RULES ACTUALLY REQUIRE, and what each declaration answers:
+
+	   - Apple's button comes in black, white, and white-with-outline. On the
+	     vault floor a black button is a black rectangle on near-black, so
+	     dark mode gets the WHITE style (black mark, black text) and light
+	     mode gets the BLACK style. Both are published styles; neither is a
+	     recolor of the other.
+	   - Apple's corner radius may run from square to half the height. The
+	     button is 44px and --radius-field is 12px, comfortably inside that.
+	   - Apple must not be less prominent than another provider. Both buttons
+	     are the same width, the same height, the same type size, and Apple is
+	     first in the DOM and first on the screen. Neither is `.btn-ghost`,
+	     which is Cinder's word for "the quiet one."
+	   - Google's button is its own palette, not ours: #131314 on dark with
+	     #E3E3E3 text and a #8E918F border, #FFFFFF on light with #1F1F1F text
+	     and a #747775 border. These are literal hex values on purpose — a
+	     theme token here would drift the moment the theme did, and Google's
+	     mark is only correct against Google's surface.
+	   - The full-color G is never recolored, never outlined, never dimmed.
+
+	   The mark sizes are fixed at 18px (Google's published minimum for the
+	   standard button) and 17px for the Apple logo, which optically matches
+	   at the same cap height because the Apple mark has no square bounding
+	   presence at its top and bottom.
+	   ================================================================= */
+	.btn-provider {
+		width: 100%;
+		gap: 0.5rem;
+		padding-inline: 1rem;
+		font-size: 0.9375rem;
+		/* Their type, not ours. Both companies specify a system-native face,
+		   which is what -apple-system resolves to on the devices that have one. */
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	}
+	.btn-provider svg {
+		flex: none;
+	}
+
+	/* Apple — WHITE style. Dark scheme default. */
+	.btn-apple {
+		background: #ffffff;
+		color: #000000;
+		border: 1px solid #ffffff;
+		font-weight: 500;
+	}
+	.btn-apple:hover {
+		background: #f0f0f0;
+		border-color: #f0f0f0;
+	}
+	.btn-apple:active {
+		transform: scale(0.99);
+	}
+
+	/* Google — dark surface. */
+	.btn-google {
+		background: #131314;
+		color: #e3e3e3;
+		border: 1px solid #8e918f;
+		font-weight: 500;
+	}
+	.btn-google:hover {
+		background: #1d1d1f;
+	}
+	.btn-google:active {
+		transform: scale(0.99);
+	}
+
+	@media (prefers-color-scheme: light) {
+		/* Apple — BLACK style, which is the one that carries on paper. */
+		.btn-apple {
+			background: #000000;
+			color: #ffffff;
+			border-color: #000000;
+		}
+		.btn-apple:hover {
+			background: #1a1a1a;
+			border-color: #1a1a1a;
+		}
+		/* Google — light surface, Google's own neutrals. */
+		.btn-google {
+			background: #ffffff;
+			color: #1f1f1f;
+			border-color: #747775;
+		}
+		.btn-google:hover {
+			background: #f2f2f2;
+		}
+	}
+
+	/* Both brands hand the button a surface of their own, so Cinder's ember
+	   focus halo needs its dark spacer ring recomputed against that surface
+	   rather than against the page. Without this the ring's inner stop is the
+	   vault floor and it reads as a gap on a white button. */
+	.btn-provider:focus-visible {
+		box-shadow:
+			0 0 0 2px var(--color-ink),
+			0 0 0 4px var(--color-ember),
+			0 0 18px -2px rgba(255, 107, 74, 0.45);
+	}
+
 	/* DISABLED — for any .btn. Reads as "not yet", not "broken": no glow,
 	   no lift, ghosted text, and the pointer says so. */
 	.btn:disabled,
@@ -792,7 +901,13 @@ body::before {
 	}
 	.btn,
 	.btn-ember:hover,
-	.btn-ember:active {
+	.btn-ember:active,
+	/* The provider buttons name themselves here rather than relying on `.btn`.
+	   `.btn-apple:active` is a two-class selector and outranks the one above it,
+	   so the press-sink survived reduced motion on exactly the two controls a
+	   person has to press to get an account. */
+	.btn-apple:active,
+	.btn-google:active {
 		transform: none;
 	}
 	/* The composed final frame of the terrain, and it stays there. The action
