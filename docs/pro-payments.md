@@ -352,7 +352,7 @@ Copy that endpoint's signing secret into `StripeWebhookSecret` and deploy again.
 
 ### 5. Before live mode — the gates
 
-- [ ] Every parameter is `sk_test_` / a sandbox `price_`, and it belongs to **Cinder's own Stripe account**, not undertext's. **No live key has ever been in this repository, this stack, or this session.**
+- [ ] Confirm the deployed key, webhook, and Price all belong to Cinder's own Stripe account and the intended Stripe mode before any payment test. Secret values stay outside the repository and release record.
 - [ ] The statement descriptor on that account reads `CINDER.INK`.
 - [x] `entitlement-provider.mjs` exports the real gate, wired at `lambda.mjs:22,104`. It verifies a signed grant and denies on signature, expiry, capability mismatch, unknown payload key, or a missing secret.
 - [ ] The whole grant path has been run once against a real test-mode Stripe, not only against the suite.
@@ -372,7 +372,7 @@ The deploy is therefore two steps. A CloudFormation resource import brings those
 
 Read the changeset before executing anything. `sam deploy --no-execute-changeset` names every action CloudFormation intends and answers empirically what reading the template can only infer.
 
-Eleven parameters have no defaults and are absent from `samconfig.toml`: `AppleServicesId`, `AppleTeamId`, `AppleKeyId`, `ApplePrivateKey`, `GoogleClientId`, `GoogleClientSecret`, `CinderPepper`, `CinderStripeSecretKey`, `CinderStripeWebhookSecret`, `CinderProPriceId`, and `CinderCapabilitySecret`. Passing `--parameter-overrides` on the command line REPLACES the samconfig list rather than merging with it, so the invocation has to carry `CertificateArn` and the four domains as well. Both behaviors fail closed, which is the point, but it means the real deploy command has never been run.
+Eleven parameters have no defaults and are absent from `samconfig.toml`: `AppleServicesId`, `AppleTeamId`, `AppleKeyId`, `ApplePrivateKey`, `GoogleClientId`, `GoogleClientSecret`, `CinderPepper`, `CinderStripeSecretKey`, `CinderStripeWebhookSecret`, `CinderProPriceId`, and `CinderCapabilitySecret`. Passing `--parameter-overrides` on the command line REPLACES the samconfig list rather than merging with it, so a secret-bearing deploy must carry the complete set. For an update that does not change those values, create the CloudFormation change set with `UsePreviousValue: true` for every current stack parameter. The production stack was first completed with the identity and Cinder Pro resources on 2026-07-28; never reconstruct its secrets from logs or documentation.
 
 ## Where the seam is, and what a second product costs
 

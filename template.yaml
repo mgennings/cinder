@@ -529,6 +529,49 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  CinderViewerRequest:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub 'cinder-viewer-request-${AWS::AccountId}'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Keep the apex canonical and give note links a crawler-readable shell
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function encodeQuery(query) {
+          var pairs = [];
+
+          for (var key in query) {
+            var item = query[key];
+            var values = item.multiValue || [item];
+
+            for (var index = 0; index < values.length; index++) {
+              pairs.push(encodeURIComponent(key) + '=' + encodeURIComponent(values[index].value));
+            }
+          }
+
+          return pairs.length ? '?' + pairs.join('&') : '';
+        }
+
+        function handler(event) {
+          var request = event.request;
+          var host = request.headers.host.value.toLowerCase();
+
+          if (host === '${WwwDomain}') {
+            return {
+              statusCode: 301,
+              statusDescription: 'Moved Permanently',
+              headers: {
+                location: { value: 'https://${PrimaryDomain}' + request.uri + encodeQuery(request.querystring) }
+              }
+            };
+          }
+
+          if (request.uri.indexOf('/n/') === 0) request.uri = '/note.html';
+
+          return request;
+        }
+
   SiteDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -554,6 +597,9 @@ Resources:
         DefaultCacheBehavior:
           TargetOriginId: s3-site
           ViewerProtocolPolicy: redirect-to-https
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt CinderViewerRequest.FunctionMetadata.FunctionARN
           # CachingOptimized managed policy
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
           ResponseHeadersPolicyId: !Ref SiteHeadersPolicy

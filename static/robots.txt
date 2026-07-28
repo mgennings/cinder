@@ -5,3 +5,4 @@
 User-agent: *
 Disallow: /n/
 Disallow: /f/
+Sitemap: https://cinder.ink/sitemap.xml

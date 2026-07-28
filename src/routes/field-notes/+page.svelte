@@ -63,6 +63,7 @@
 
 <svelte:head>
 	<title>Field Note 001 — The Vote To Stay Blind · Cinder</title>
+	<link rel="canonical" href="https://cinder.ink/field-notes" />
 	<meta
 		name="description"
 		content="A privacy tool was asked to defend itself, and every defense on offer required it to start looking at who its users were. What was measured, what it cost, and why the answer generalizes."

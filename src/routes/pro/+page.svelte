@@ -99,6 +99,7 @@
 
 <svelte:head>
 	<title>Cinder Pro</title>
+	<link rel="canonical" href="https://cinder.ink/pro" />
 	<meta
 		name="description"
 		content="Prepaid credits for sending larger files. What a credit buys, what Stripe sees, what Cinder does not, and why a payment is never linked to a note."

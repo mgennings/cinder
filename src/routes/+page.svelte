@@ -242,6 +242,7 @@
 
 <svelte:head>
 	<title>Cinder — an encrypted note or file retrieved once</title>
+	<link rel="canonical" href="https://cinder.ink/" />
 	<meta
 		name="description"
 		content="Write a note or choose a file. Cinder encrypts it in your browser and hands you one link. One successful reveal removes Cinder's stored copy. Copies outside Cinder remain outside its control."

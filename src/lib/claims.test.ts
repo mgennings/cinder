@@ -97,10 +97,10 @@ describe('destruction claims', () => {
 		expect(llms).toMatch(/fetches nothing until (?:a human|someone) clicks reveal/i);
 	});
 
-	it('gives private note links their own social card without making them indexable', () => {
+	it('gives private note links their own crawler-safe card without making them indexable', () => {
 		const note = publicSurfaces['../routes/n/[id]/+page.svelte'];
 
-		expect(note).toContain('https://cinder.ink/og-private-note.png');
+		expect(note).toContain('https://cinder.ink/og-note.png');
 		expect(note).toContain('noindex, nofollow');
 	});
 });
