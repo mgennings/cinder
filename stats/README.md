@@ -10,6 +10,36 @@ read the three exact stats secrets. It has no log permission and no application
 data permission. The browser response contains aggregate series only and never
 includes Lambda physical names.
 
+## Anchored explorer windows
+
+`GET /api/metrics` with no query string keeps returning the deployed
+`windows: [24h, 7d]` document for old clients. A query-carrying request scrubs
+one anchored range at a time:
+
+```
+GET /api/metrics?window=4h
+GET /api/metrics?window=4h&end=2026-07-28T18:00:00.000Z
+```
+
+`window` is one of `1h`, `4h`, `24h`, `7d`, pinned to periods `60`, `300`,
+`1800`, and `10800` seconds. An absent `end` returns the live/current partial
+interval; a present `end` must be an exact UTC hour boundary
+(`YYYY-MM-DDTHH:00:00.000Z`) and is end-exclusive. A request is rejected with
+`400` before any CloudWatch call for an unknown or repeated `window`/`end`, a
+malformed or non-hour `end`, a future anchor, an anchor more than 336 hours
+(14 days) old, or a range whose *start* -- anchor minus the window's own
+duration -- would exceed that same 336-hour lookback. 336 hours sits exactly at
+CloudWatch's 1-minute-resolution retention ceiling.
+
+The response reuses the existing 61 `GetMetricData` query structures (55
+per-function metrics plus 6 aggregate expressions) at the anchored period, and
+adds two series derived entirely server-side from those same aggregates:
+`error_rate` and `throttle_rate`, each `errors|throttles / invocations * 100`
+aligned by timestamp. A bucket whose invocations are zero or absent produces no
+rate point for that bucket, and the whole-range `summary` is `null` -- never
+`Infinity`, `NaN`, or a falsely reassuring `0` -- whenever total invocations
+are zero.
+
 ## Local verification
 
 ```bash

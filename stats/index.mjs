@@ -38,6 +38,22 @@ export const METRIC_WINDOWS = Object.freeze([
   Object.freeze({ id: "7d", label: "last 7 days", seconds: 604_800, periodSeconds: 21_600 }),
 ]);
 
+// Anchored explorer windows. Distinct from METRIC_WINDOWS above -- these serve
+// the scrubbable /api/metrics?window=... range endpoint and deliberately use
+// finer periods than the legacy no-query document. 336 hours (14 days) sits
+// exactly at CloudWatch's 1-minute-resolution retention ceiling, which is why
+// the 1h window's 60-second period stays valid across the whole lookback.
+export const RANGE_WINDOWS = Object.freeze([
+  Object.freeze({ id: "1h", label: "last hour", seconds: 3_600, periodSeconds: 60 }),
+  Object.freeze({ id: "4h", label: "last 4 hours", seconds: 14_400, periodSeconds: 300 }),
+  Object.freeze({ id: "24h", label: "last 24 hours", seconds: 86_400, periodSeconds: 1_800 }),
+  Object.freeze({ id: "7d", label: "last 7 days", seconds: 604_800, periodSeconds: 10_800 }),
+]);
+
+export const MAX_LOOKBACK_HOURS = 336;
+const HOUR_MILLISECONDS = 3_600_000;
+const ANCHOR_FORMAT = /^\d{4}-\d{2}-\d{2}T\d{2}:00:00\.000Z$/;
+
 const secrets = new SecretsManagerClient({ region: REGION });
 const cloudwatch = new CloudWatchClient({ region: REGION });
 
@@ -340,6 +356,42 @@ export const parseFunctionMap = (wireValue = process.env.CINDER_FUNCTION_MAP) =>
 };
 
 
+// Parses and validates a `/api/metrics` query string before anything ever
+// reaches CloudWatch. Returns `null` for any malformed, unknown, repeated, or
+// out-of-range input; `{ legacy: true }` for the deployed no-query document
+// old clients still call; or `{ legacy: false, window, end }` for a validated
+// anchored range, where `end` is a Date for a fixed anchor or `null` for
+// live/current.
+export const parseRangeRequest = (rawQueryString, now = new Date()) => {
+  const params = new URLSearchParams(rawQueryString ?? "");
+  if (!params.has("window") && !params.has("end")) return { legacy: true };
+
+  const windowValues = params.getAll("window");
+  if (windowValues.length !== 1) return null;
+  const window = RANGE_WINDOWS.find((candidate) => candidate.id === windowValues[0]);
+  if (!window) return null;
+
+  const endValues = params.getAll("end");
+  if (endValues.length > 1) return null;
+  const endValue = endValues[0];
+  if (endValue === undefined) return { legacy: false, window, end: null };
+
+  if (!ANCHOR_FORMAT.test(endValue)) return null;
+  const anchor = new Date(endValue);
+  if (Number.isNaN(anchor.getTime()) || anchor.toISOString() !== endValue) return null;
+  if (anchor.getTime() > now.getTime()) return null;
+
+  const anchorHoursOld = (now.getTime() - anchor.getTime()) / HOUR_MILLISECONDS;
+  if (anchorHoursOld > MAX_LOOKBACK_HOURS) return null;
+
+  const start = new Date(anchor.getTime() - window.seconds * 1000);
+  const startHoursOld = (now.getTime() - start.getTime()) / HOUR_MILLISECONDS;
+  if (startHoursOld > MAX_LOOKBACK_HOURS) return null;
+
+  return { legacy: false, window, end: anchor };
+};
+
+
 const metricStat = (functionName, metricName, period, stat) => ({
   Metric: {
     Namespace: "AWS/Lambda",
@@ -440,6 +492,131 @@ export const metricsDocument = async ({
 });
 
 
+// The scrubbable range endpoint adds Error rate and Throttle rate beside the
+// four existing series. Both are derived here, server-side, from the same 61
+// queries -- never a new CloudWatch query, never client-side math.
+const rangeSeriesDefinitions = Object.freeze([
+  Object.freeze({ id: "invocations", label: "Invocations", unit: "count", aggregation: "sum" }),
+  Object.freeze({ id: "errors", label: "Errors", unit: "count", aggregation: "sum" }),
+  Object.freeze({ id: "error_rate", label: "Error rate", unit: "percent", aggregation: "ratio" }),
+  Object.freeze({ id: "throttles", label: "Throttles", unit: "count", aggregation: "sum" }),
+  Object.freeze({ id: "throttle_rate", label: "Throttle rate", unit: "percent", aggregation: "ratio" }),
+  Object.freeze({ id: "duration", label: "Duration", unit: "milliseconds", aggregation: "average" }),
+]);
+
+
+const timestampMap = (result) => new Map(
+  (result?.Timestamps ?? [])
+    .map((timestamp, index) => [new Date(timestamp).toISOString(), result.Values?.[index]])
+    .filter(([, value]) => Number.isFinite(value)),
+);
+
+
+// A per-bucket rate needs its own denominator bucket to exist and be positive.
+// A missing or zero-invocation bucket produces no point at all -- never
+// Infinity, never NaN, and never a zero that would misrepresent "no traffic"
+// as "no errors."
+const ratePoints = (numeratorResult, denominatorResult) => {
+  const numerators = timestampMap(numeratorResult);
+  const points = [];
+  for (const [at, denominator] of timestampMap(denominatorResult)) {
+    if (!(denominator > 0)) continue;
+    const numerator = numerators.get(at);
+    if (!Number.isFinite(numerator)) continue;
+    points.push({ at, value: (numerator / denominator) * 100 });
+  }
+  return points;
+};
+
+
+export const readRangeWindow = async (
+  window,
+  start,
+  end,
+  functionMap,
+  send = (command) => cloudwatch.send(command),
+) => {
+  const response = await send(new GetMetricDataCommand({
+    StartTime: start,
+    EndTime: end,
+    ScanBy: "TimestampAscending",
+    MetricDataQueries: metricQueries(functionMap, window.periodSeconds),
+  }));
+  const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
+  const durationCount = sumValues(results.get("aggregate_duration_count"));
+  const invocationsTotal = sumValues(results.get("aggregate_invocations"));
+  const errorsTotal = sumValues(results.get("aggregate_errors"));
+  const throttlesTotal = sumValues(results.get("aggregate_throttles"));
+
+  const summaries = {
+    invocations: invocationsTotal,
+    errors: errorsTotal,
+    error_rate: invocationsTotal > 0 ? (errorsTotal / invocationsTotal) * 100 : null,
+    throttles: throttlesTotal,
+    throttle_rate: invocationsTotal > 0 ? (throttlesTotal / invocationsTotal) * 100 : null,
+    duration: durationCount > 0 ? sumValues(results.get("aggregate_duration_sum")) / durationCount : null,
+  };
+  const pointsById = {
+    invocations: pointsFor(results.get("aggregate_invocations")),
+    errors: pointsFor(results.get("aggregate_errors")),
+    error_rate: ratePoints(results.get("aggregate_errors"), results.get("aggregate_invocations")),
+    throttles: pointsFor(results.get("aggregate_throttles")),
+    throttle_rate: ratePoints(results.get("aggregate_throttles"), results.get("aggregate_invocations")),
+    duration: pointsFor(results.get("aggregate_duration")),
+  };
+
+  return rangeSeriesDefinitions.map((definition) => ({
+    ...definition,
+    summary: summaries[definition.id],
+    points: pointsById[definition.id],
+  }));
+};
+
+
+export const rangeDocument = async ({
+  window,
+  end = null,
+  functionMap = parseFunctionMap(),
+  now = new Date(),
+  send,
+}) => {
+  const anchor = end ?? now;
+  const start = new Date(anchor.getTime() - window.seconds * 1000);
+  const series = await readRangeWindow(window, start, anchor, functionMap, send);
+  return {
+    checkedAt: now.toISOString(),
+    source: "AWS/Lambda",
+    scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length },
+    range: {
+      id: window.id,
+      label: window.label,
+      start: start.toISOString(),
+      end: anchor.toISOString(),
+      periodSeconds: window.periodSeconds,
+      mode: end ? "fixed" : "live",
+    },
+    series,
+  };
+};
+
+
+// Thin, testable seam between the raw query string and CloudWatch: every
+// rejection returns before `functionMap` or `send` is ever touched.
+export const metricsRouteReply = async (rawQueryString, { now = new Date(), functionMap, send } = {}) => {
+  const parsed = parseRangeRequest(rawQueryString, now);
+  if (!parsed) return jsonReply(400, { error: "invalid range request" });
+  try {
+    const resolvedFunctionMap = functionMap ?? parseFunctionMap();
+    const document = parsed.legacy
+      ? await metricsDocument({ functionMap: resolvedFunctionMap, now, send })
+      : await rangeDocument({ window: parsed.window, end: parsed.end, functionMap: resolvedFunctionMap, now, send });
+    return jsonReply(200, document);
+  } catch {
+    return jsonReply(503, { error: "metrics unavailable" });
+  }
+};
+
+
 export async function handler(event) {
   const path = event.rawPath || event.requestContext?.http?.path || "/";
   const method = event.requestContext?.http?.method || "GET";
@@ -487,11 +664,7 @@ export async function handler(event) {
     return navigationReply(event, surface, navigation, shared);
   }
   if (path === "/api/metrics" && method === "GET") {
-    try {
-      return jsonReply(200, await metricsDocument());
-    } catch {
-      return jsonReply(503, { error: "metrics unavailable" });
-    }
+    return metricsRouteReply(event.rawQueryString);
   }
   return jsonReply(404, { error: "route not found" });
 }
