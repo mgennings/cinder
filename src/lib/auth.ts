@@ -26,6 +26,7 @@ export type Provider = 'SignInWithApple' | 'Google';
 
 const VERIFIER_KEY = 'cinder.pkce';
 const TOKENS_KEY = 'cinder.tokens';
+const RETURN_KEY = 'cinder.returnto';
 
 export const identityConfigured = () => Boolean(HOSTED_UI && CLIENT_ID && API_BASE);
 
@@ -58,10 +59,54 @@ const readTokens = (): Tokens | null => {
 
 export const signedIn = () => readTokens() !== null;
 
+/* WHERE THE PERSON WAS WHEN THEY DECIDED TO SIGN IN.
+
+   The callback URL is fixed — Cognito will only redirect to a URL the app
+   client already lists, and every one of those is `/account`. So somebody who
+   pressed sign in on /pro used to complete Apple and land on an account page
+   they never asked for, with the thing they were about to buy two clicks away.
+
+   Kept in sessionStorage rather than round-tripped through OAuth `state`. The
+   PKCE verifier already lives there and already binds this round trip to this
+   one tab, so `state` would be a second copy of a guarantee that is already
+   made — and a second thing to get wrong. If sessionStorage did not survive,
+   the exchange would fail on the missing verifier before any of this mattered.
+
+   Only a same-origin PATH is ever stored or honored. A returned absolute URL is
+   an open redirect wearing a convenience feature's clothes, so one is never
+   accepted, not even for this site's own origin. */
+const safePath = (value: string | null | undefined): string | null => {
+	// A leading `//` is protocol-relative and resolves to another host entirely,
+	// which is exactly the input this exists to refuse.
+	if (!value || !value.startsWith('/') || value.startsWith('//')) return null;
+	// `\` because some browsers normalize it to `/`, so `/\evil.com` is the same
+	// attack spelled differently.
+	if (value.includes('\\')) return null;
+	return value;
+};
+
+/** Read a `?next=` intent off the current URL, or null if it is not a safe path. */
+export const intendedPath = (search: string): string | null =>
+	safePath(new URLSearchParams(search).get('next'));
+
+/** The pending destination, consumed. Null when there is not one. */
+export function takeReturnTo(): string | null {
+	const stored = safePath(sessionStorage.getItem(RETURN_KEY));
+	sessionStorage.removeItem(RETURN_KEY);
+	return stored;
+}
+
+/** The pending destination, left in place — for a retry after a failed sign-in. */
+export const peekReturnTo = (): string | null => safePath(sessionStorage.getItem(RETURN_KEY));
+
 // Send the browser to Apple or Google. `identity_provider` skips Cognito's
 // provider-chooser screen, so the button says Apple and the next thing on the
 // screen is Apple — no intermediate page asking again.
-export async function startSignIn(provider: Provider): Promise<void> {
+export async function startSignIn(provider: Provider, returnTo?: string | null): Promise<void> {
+	const destination = safePath(returnTo);
+	if (destination) sessionStorage.setItem(RETURN_KEY, destination);
+	else sessionStorage.removeItem(RETURN_KEY);
+
 	const { verifier, challenge } = await newChallenge();
 	sessionStorage.setItem(VERIFIER_KEY, verifier);
 
@@ -203,6 +248,27 @@ export async function freshIdToken(): Promise<string | null> {
 	if (!body.id_token) return null;
 	sessionStorage.setItem(TOKENS_KEY, JSON.stringify({ ...tokens, idToken: body.id_token }));
 	return body.id_token;
+}
+
+/* THREE ANSWERS, NOT TWO, BECAUSE THE MIDDLE ONE HAS ITS OWN SENTENCE.
+
+   `signedIn()` reads storage: it says a token was written here once. That is a
+   different question from whether the origin still honors it, and the two used
+   to collapse into one word. A refresh token revoked on another device, expired
+   after seven days, or belonging to a deleted account all rendered as the plain
+   signed-out page — so somebody who WAS signed in a minute ago was shown the
+   same screen as somebody who never had been, with nothing to explain why the
+   balance they were looking at vanished.
+
+   'expired' is that gap named. It costs one network round trip that the page
+   was already making. */
+export type SessionState = 'none' | 'live' | 'expired';
+
+export async function sessionState(): Promise<SessionState> {
+	if (!signedIn()) return 'none';
+	// freshIdToken clears storage itself when the origin refuses, so by the time
+	// this returns, `signedIn()` already agrees with the answer given here.
+	return (await freshIdToken()) ? 'live' : 'expired';
 }
 
 // The one question this whole layer exists to answer, and under prepaid credits
