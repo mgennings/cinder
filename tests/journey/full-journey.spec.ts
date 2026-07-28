@@ -45,14 +45,15 @@ async function attemptSend(page: Page): Promise<void> {
 		mimeType: 'application/octet-stream',
 		buffer: bytes
 	});
-	// The sender is told the shape before committing. 9 MiB over a 4 MiB part
-	// size is three pieces, and the page says so.
-	await expect(page.getByText(/this goes in 3 pieces/i)).toBeVisible();
+	// The sender is told the shape AND the price before committing. 9 MiB over a
+	// 4 MiB part size is three pieces costing one credit, and the page says both
+	// at file selection — not after encrypting 9 MiB and refusing.
+	await expect(page.getByText(/this goes in 3 pieces and costs 1 Cinder Pro credit/i)).toBeVisible();
 	await page.getByRole('button', { name: /create one-time link/i }).click();
 }
 
-const refusal = (page: Page) =>
-	expect(page.getByRole('alert')).toContainText(/needs Cinder Pro/i, { timeout: 300_000 });
+const refusal = (page: Page, wording: RegExp) =>
+	expect(page.getByRole('alert')).toContainText(wording, { timeout: 300_000 });
 
 test('refused anonymous, refused signed-in-unpaid, delivered after paying', async ({
 	page,
@@ -60,7 +61,9 @@ test('refused anonymous, refused signed-in-unpaid, delivered after paying', asyn
 }) => {
 	// --- 1. anonymous -------------------------------------------------------
 	await attemptSend(page);
-	await refusal(page);
+	// Anonymous, so the page has no balance to name and says what a large send
+	// costs rather than what this account has left.
+	await refusal(page, /costs one Cinder Pro credit/i);
 	// And the refusal says the promise is unchanged, because that is the actual
 	// product claim: Pro adds size, it does not buy a different guarantee.
 	await expect(page.getByRole('alert')).toContainText(/Pro adds size/i);
@@ -76,7 +79,7 @@ test('refused anonymous, refused signed-in-unpaid, delivered after paying', asyn
 	// Matched on the visible paragraph's own wording: the same sentence also
 	// reaches the live region, which is the point of that region and not an
 	// ambiguity to remove.
-	await expect(page.getByText(/no purchase is recorded for this account\. signing/i)).toBeVisible();
+	await expect(page.getByText(/no credits on this account\. sending under the free/i)).toBeVisible();
 
 	// The mint is asked and refuses. Asserted at the network rather than
 	// inferred from the 402, because a client that never asked and a server that
@@ -90,13 +93,16 @@ test('refused anonymous, refused signed-in-unpaid, delivered after paying', asyn
 	});
 
 	await attemptSend(page);
-	await refusal(page);
+	// Signed in with a zero balance, so the wording is the top-up state rather
+	// than the anonymous one — and it never implies the send failed for a reason
+	// the sender cannot fix.
+	await refusal(page, /this account has none left/i);
 	expect(minted, 'the client asked the identity API for a grant').toHaveLength(1);
 	expect(minted[0], 'an account without a purchase mints nothing').toBeNull();
 
 	// --- 3. pay -------------------------------------------------------------
 	await page.goto('/pro');
-	await page.getByRole('button', { name: /pay .* once/i }).click();
+	await page.getByRole('button', { name: /pay .* for 10 sends/i }).click();
 	// Checkout, the webhook, and the return trip. The page polls because Stripe's
 	// redirect and Stripe's webhook are independent and the browser usually wins.
 	await expect(page.getByRole('heading', { name: /cinder pro is active/i })).toBeVisible({
@@ -183,7 +189,7 @@ test('a second send in the same session reuses one grant and mints nothing new',
 		timeout: 30_000
 	});
 	await page.goto('/pro');
-	await page.getByRole('button', { name: /pay .* once/i }).click();
+	await page.getByRole('button', { name: /pay .* for 10 sends/i }).click();
 	await expect(page.getByRole('heading', { name: /cinder pro is active/i })).toBeVisible({
 		timeout: 60_000
 	});
@@ -226,4 +232,13 @@ test('a second send in the same session reuses one grant and mints nothing new',
 	expect(presented, 'two multipart creates').toHaveLength(2);
 	expect(presented[0]).toBe(presented[1]);
 	expect(mints, 'one mint, reused for both').toHaveLength(1);
+
+	// AND IT COST ONE CREDIT, not two. This is the assertion the retry safety was
+	// always for: one mint is one charge, so two sends behind one cached grant
+	// move the balance by exactly one. Read off the account page rather than the
+	// API, because the number a person can see is the number that has to be true.
+	await page.goto('/account');
+	await expect(page.getByRole('heading', { name: /^9 credits left$/i })).toBeVisible({
+		timeout: 30_000
+	});
 });

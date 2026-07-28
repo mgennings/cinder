@@ -57,10 +57,10 @@ const handlers = makeEntitlementHandlers(doc, {
 	// handlers.mjs; the transport takes the smaller of the two, so raising this
 	// alone cannot raise the real limit.
 	//
-	// This map is the credits seam. Under prepaid credits the shape stays
-	// identical — what changes is that the row read above becomes a counter and
-	// the mint spends one. Nothing here grows a balance field: see the note in
-	// capability-grant.mjs about a rare balance being a fingerprint.
+	// This map is unchanged by credits and stays that way: the row the mint reads
+	// is a counter now and the mint spends one, but nothing here grows a balance
+	// field — see the note in capability-grant.mjs about a rare balance being a
+	// fingerprint.
 	capabilityLimits: { cinder: { 'transfer.multipart': { maxParts: 64 } } }
 });
 
@@ -78,6 +78,7 @@ export const { checkEntitlement, mintCapability, deleteAccount } = handlers;
 //   STRIPE_WEBHOOK_SECRETS — JSON {"<product>": "whsec_…"}     that account's secret
 //   PRODUCT_PRICES         — JSON {"<product>": "<stripe price id>"}
 //   PRODUCT_RETURN_URLS    — JSON {"<product>": {"success": "…", "cancel": "…"}}
+//   PRODUCT_CREDITS        — JSON {"<product>": 10}  sends one purchase adds
 //
 // Every one of these is a MAP, never a single value. Stripe's branding and
 // statement descriptor are account-level, so Cinder has its OWN Stripe account
@@ -89,5 +90,11 @@ export const { checkout: startCheckout, webhook: purchaseWebhook } = makePurchas
 	webhookSecrets: parseMap(process.env.STRIPE_WEBHOOK_SECRETS),
 	prices: parseMap(process.env.PRODUCT_PRICES),
 	urls: parseMap(process.env.PRODUCT_RETURN_URLS),
+	// How many large sends one purchase buys. It has to agree with the Stripe
+	// Price this same product is billed at — the bundle is the reason the price
+	// is $4.94 rather than $0.94, since the fixed 30¢ of a card fee is 92% of the
+	// fee damage on a sub-dollar charge. docs/pro-payments.md is where that
+	// agreement is checked.
+	credits: parseMap(process.env.PRODUCT_CREDITS),
 	createSession: createCheckoutSession
 });

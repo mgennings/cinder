@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { encryptNote } from '$lib/crypto/note-crypto';
@@ -22,6 +23,8 @@
 	} from '$lib/api';
 	import { buildLink, buildFileLink, buildTransferLink, derivePartLocator } from '$lib/link';
 	import { capabilityGrant, CAPABILITY_MULTIPART_TRANSFER } from '$lib/entitlement';
+	import { entitlement, signedIn, identityConfigured } from '$lib/auth';
+	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 	import CopyLink from '$lib/ui/CopyLink.svelte';
 	import Merkaba from '$lib/ui/Merkaba.svelte';
 
@@ -44,6 +47,17 @@
 	// string comparison would silently stop offering the link.
 	let needsPro = $state(false);
 	let link = $state('');
+
+	// The balance, if this browser is signed in and this build has accounts at
+	// all. null means "we have no idea" — signed out, or a build with no identity
+	// API — and it must not be shown as zero: telling someone they have none when
+	// we never asked is worse than saying nothing.
+	let credits = $state<number | null>(null);
+
+	const readCredits = async () => {
+		credits = identityConfigured() && signedIn() ? (await entitlement()).credits : null;
+	};
+	onMount(readCredits);
 
 	let aborter: AbortController | null = null;
 
@@ -139,6 +153,11 @@
 				link = buildLink(location.origin, id, fragmentKey);
 			} else if (file && parts > 1) {
 				link = await createChunked(file, pass);
+				// The mint spent a credit somewhere inside that call, so the number on
+				// screen is now stale. Re-read it rather than decrementing locally: a
+				// retried send reuses one cached grant and costs nothing, and guessing
+				// which of those just happened is how a balance starts lying.
+				await readCredits();
 			} else if (file) {
 				phase = 'encrypting';
 				const envelope = await encryptFile(file, pass);
@@ -164,7 +183,10 @@
 		} catch (e) {
 			if (e instanceof DOMException && e.name === 'AbortError') return; // cancel() already reset
 			if (e instanceof TransferNotEntitledError) {
-				error = `Sending more than ${maxLabel} needs Cinder Pro. Everything else about the transfer is identical — Pro adds size, it does not change the promise.`;
+				error =
+					credits === 0
+						? `That send needs one credit and this account has none left. ${PRO_PRICE} adds ${PRO_CREDITS} more. Anything under ${maxLabel} still sends free.`
+						: `Sending more than ${maxLabel} costs one Cinder Pro credit. Everything else about the transfer is identical — Pro adds size, it does not change the promise.`;
 				needsPro = true;
 			} else if (e instanceof TransferTooLargeError) error = `That file is over the ${maxProLabel} limit.`;
 			else if (e instanceof FileTooLargeError) error = `That file is over the ${maxLabel} limit.`;
@@ -326,14 +348,30 @@
 							</p>
 							{#if parts > 1}
 								<!-- Said here, at the moment the file is chosen, rather than at the
-								     moment it fails. The recipient will be shown the same cost
-								     before they press anything. -->
+								     moment it fails — and the PRICE is said in the same breath as
+								     the piece count, before anything is encrypted. Encrypting 200 MB
+								     and then mentioning the cost is the failure mode this avoids.
+								     The recipient is shown the same piece count before they press
+								     anything. -->
 								<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist">
-									Over {maxLabel}, so this goes in {parts} pieces. Each piece is deleted before it is
-									handed over, exactly as one file is. If any piece fails on the way to your
-									recipient, the whole transfer is permanently gone — there is no retry. Needs Cinder
-									Pro.
+									Over {maxLabel}, so this goes in {parts} pieces and costs 1 Cinder Pro credit{credits ===
+									null
+										? ''
+										: `, out of the ${creditWord(credits)} on this account`}. Each piece is deleted
+									before it is handed over, exactly as one file is. If any piece fails on the way to
+									your recipient, the whole transfer is permanently gone — there is no retry, and the
+									credit is spent either way. Cinder cannot see which transfer failed, which is the
+									same reason it can never see who you sent it to.
 								</p>
+								{#if credits === 0}
+									<!-- Zero is a state, not a fault. It says what still works before
+									     it says what to do about it. -->
+									<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist">
+										This account has no credits left. Nothing is broken — anything under {maxLabel} sends
+										free, with no account, the way it always has. {PRO_PRICE} adds {PRO_CREDITS} large
+										sends. <a class="underline underline-offset-2" href="/pro">Top up</a>.
+									</p>
+								{/if}
 							{/if}
 						{/if}
 					</div>

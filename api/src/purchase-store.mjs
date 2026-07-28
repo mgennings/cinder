@@ -36,7 +36,12 @@ const PENDING_TTL_SECONDS = 60 * 60;
 // API, because what the API is handed is the preimage.
 const key = (nonce) => `purchase#${createHash('sha256').update(String(nonce), 'utf8').digest('base64')}`;
 
-export async function putPendingPurchase(doc, { nonce, product, pairwise, nowEpoch }) {
+// `expiresAt` is a parameter only so a failed credit can put the row BACK with
+// its original deadline (see restore in purchase.mjs). Normal checkout omits it.
+export async function putPendingPurchase(
+	doc,
+	{ nonce, product, pairwise, nowEpoch, expiresAt = nowEpoch + PENDING_TTL_SECONDS }
+) {
 	await doc.send(
 		new PutCommand({
 			TableName: TABLE(),
@@ -45,7 +50,7 @@ export async function putPendingPurchase(doc, { nonce, product, pairwise, nowEpo
 				kind: 'purchase',
 				product,
 				pairwise,
-				expiresAt: nowEpoch + PENDING_TTL_SECONDS
+				expiresAt
 			},
 			// A nonce is 256 random bits, so a collision is not a real event. The
 			// condition is here so that if one ever happened it would be an error
@@ -56,13 +61,9 @@ export async function putPendingPurchase(doc, { nonce, product, pairwise, nowEpo
 	);
 }
 
-// Resolve a nonce to what it was minted for. A DELIBERATE plain read rather than
-// a conditional consume, and the reason is the order in purchase.mjs: the grant
-// is idempotent, so a duplicate delivery re-granting the identical row is
-// harmless, whereas consuming BEFORE the grant would mean a webhook that died
-// between the two left a paying customer with no entitlement and a row that can
-// never grant it again. Read, grant, then delete — the failure mode of that
-// order is a retry that succeeds.
+// Resolve a nonce to what it was minted for, WITHOUT consuming it. This is the
+// read the webhook's cross-check runs on: an event signed by the wrong Stripe
+// account must be able to look at a pending row without destroying it.
 //
 // The expiry guard is mandatory: DynamoDB TTL deletion is best-effort and an
 // expired-but-unreaped row still comes back from a read.
@@ -74,8 +75,37 @@ export async function readPendingPurchase(doc, nonce, nowEpoch) {
 	return { product: item.product, pairwise: item.pairwise };
 }
 
-// Delete the translation. After this, nothing anywhere maps Stripe's stored
-// reference back to a person — not this table, not a log, not us.
-export async function clearPendingPurchase(doc, nonce) {
-	await doc.send(new DeleteCommand({ TableName: TABLE(), Key: { pk: key(nonce) } }));
+// CLAIM IT. The exactly-once gate for the whole money path, and the reason a
+// duplicate Stripe delivery cannot buy a second bundle of credits.
+//
+// Under the one-time unlock the grant was a PUT of a fixed item, so idempotency
+// was free: five deliveries of the same event wrote the identical row. Credits
+// accumulate, so the same five deliveries would have added fifty. The dedupe
+// therefore lives HERE, on the only artifact that is unique per purchase — the
+// pending row — and it is a conditional delete rather than a read-then-delete so
+// that two deliveries racing each other cannot both win.
+//
+// Returns the claimed row, or null if there was nothing left to claim: already
+// consumed, expired, or never minted. `ALL_OLD` is what makes one call both the
+// claim and the answer.
+//
+// It also deletes the translation. After this, nothing anywhere maps Stripe's
+// stored reference back to a person — not this table, not a log, not us.
+export async function claimPendingPurchase(doc, nonce, nowEpoch) {
+	try {
+		const res = await doc.send(
+			new DeleteCommand({
+				TableName: TABLE(),
+				Key: { pk: key(nonce) },
+				ConditionExpression: 'attribute_exists(pk) AND kind = :k AND expiresAt > :now',
+				ExpressionAttributeValues: { ':k': 'purchase', ':now': nowEpoch },
+				ReturnValues: 'ALL_OLD'
+			})
+		);
+		const item = res.Attributes;
+		return item ? { product: item.product, pairwise: item.pairwise, expiresAt: item.expiresAt } : null;
+	} catch (e) {
+		if (e?.name === 'ConditionalCheckFailedException') return null;
+		throw e;
+	}
 }

@@ -144,25 +144,42 @@ export async function freshIdToken(): Promise<string | null> {
 	return body.id_token;
 }
 
-// The one question this whole layer exists to answer.
-export async function isEntitled(): Promise<boolean> {
+// The one question this whole layer exists to answer, and under prepaid credits
+// it has a number in it: how many large sends are left.
+//
+// Zero for every failure — signed out, a token the server would not verify, an
+// unreachable API. A wrong "you have none" is a person told to top up when they
+// did not have to; a wrong "you have some" is a send that fails after the file
+// is already encrypted. The first is the better of the two to be wrong about.
+export type Entitlement = { entitled: boolean; credits: number };
+
+export async function entitlement(): Promise<Entitlement> {
+	const none: Entitlement = { entitled: false, credits: 0 };
 	const idToken = await freshIdToken();
-	if (!idToken) return false;
+	if (!idToken) return none;
 
 	const res = await fetch(`${API_BASE}/entitlement`, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${idToken}` }
 	});
-	if (!res.ok) return false;
-	return ((await res.json()) as { entitled?: boolean }).entitled === true;
+	if (!res.ok) return none;
+
+	const body = (await res.json()) as { entitled?: boolean; credits?: number };
+	const credits = Number.isFinite(body.credits) ? Math.max(0, Math.trunc(body.credits!)) : 0;
+	// `entitled` is the server's own answer, not a comparison recomputed here:
+	// one place decides what a balance means and it is the place that holds it.
+	return { entitled: body.entitled === true, credits };
 }
+
+/** The same question with the number dropped, for screens that only need yes/no. */
+export const isEntitled = async (): Promise<boolean> => (await entitlement()).entitled;
 
 // Start a purchase. Returns the Stripe-hosted checkout URL, or null.
 //
 // null covers every refusal with one answer: not signed in, a token the server
-// would not verify, a product with no configured price, and — the one worth
-// naming — already entitled, which the server refuses rather than charging a
-// second time for a one-time unlock.
+// would not verify, or a product with no configured price. Having credits
+// already is NOT a refusal — buying again is a top-up, the balance accumulates,
+// and nothing is charged for twice.
 //
 // The caller NAVIGATES to this URL; it is never fetched, framed, or proxied.
 // Cinder's page does not render a card field, does not touch one, and could not

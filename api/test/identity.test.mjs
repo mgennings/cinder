@@ -147,14 +147,36 @@ function makeApi({
 	capabilityLimits = LIMITS
 } = {}) {
 	const deleted = [];
+	// A DynamoDB small enough to read, and it enforces the ONE thing the mint
+	// depends on: the conditional decrement either takes a credit or throws
+	// ConditionalCheckFailedException. A mock that always succeeded would make a
+	// broken spend look like a working one.
 	const doc = {
 		async send(cmd) {
-			const { TableName, Key, Item } = cmd.input;
+			const { TableName, Key, Item, UpdateExpression, ExpressionAttributeValues } = cmd.input;
 			assert.equal(TableName, 'mattos-entitlements');
 			if (Item) return rows.set(Item.pk, Item), {};
 			if (cmd.constructor.name === 'DeleteCommand') return rows.delete(Key.pk), {};
+			if (UpdateExpression?.includes('credits - :one')) {
+				const item = rows.get(Key.pk);
+				if (!item || !(item.credits >= 1)) {
+					throw Object.assign(new Error('conditional'), {
+						name: 'ConditionalCheckFailedException'
+					});
+				}
+				rows.set(Key.pk, { ...item, credits: item.credits - 1 });
+				return {};
+			}
+			if (UpdateExpression) {
+				const item = rows.get(Key.pk) ?? {};
+				rows.set(Key.pk, {
+					...item,
+					credits: (item.credits ?? 0) + ExpressionAttributeValues[':n']
+				});
+				return {};
+			}
 			const item = rows.get(Key.pk);
-			return { Item: item ? { entitled: item.entitled } : undefined };
+			return { Item: item ? { credits: item.credits } : undefined };
 		}
 	};
 	const api = makeEntitlementHandlers(doc, {
@@ -178,7 +200,7 @@ test('entitlement: denies anonymous, expired, forged, and foreign-pool callers',
 	// A row exists for this person, so every denial below is the token failing,
 	// not an empty table.
 	rows.set(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`, {
-		entitled: true
+		credits: 3
 	});
 
 	const exp = Math.floor(Date.now() / 1000) - 3600;
@@ -192,23 +214,23 @@ test('entitlement: denies anonymous, expired, forged, and foreign-pool callers',
 	for (const [name, event] of Object.entries(denials)) {
 		const res = await api.checkEntitlement(event);
 		assert.equal(res.statusCode, 200, name);
-		assert.deepEqual(JSON.parse(res.body), { entitled: false }, name);
+		assert.deepEqual(JSON.parse(res.body), { entitled: false, credits: 0 }, name);
 	}
 
 	const ok = await api.checkEntitlement(authed(mint(pool, {})));
-	assert.deepEqual(JSON.parse(ok.body), { entitled: true });
+	assert.deepEqual(JSON.parse(ok.body), { entitled: true, credits: 3 });
 });
 
-test('entitlement: a valid token with no purchase is not entitled', async () => {
+test('entitlement: a valid token with no purchase has no credits', async () => {
 	const { api } = makeApi();
 	const res = await api.checkEntitlement(authed(mint(pool, {})));
-	assert.deepEqual(JSON.parse(res.body), { entitled: false });
+	assert.deepEqual(JSON.parse(res.body), { entitled: false, credits: 0 });
 });
 
 test('a missing pepper fails closed rather than sharing a key', async () => {
 	const { api } = makeApi({ peppers: {} });
 	const res = await api.checkEntitlement(authed(mint(pool, {})));
-	assert.deepEqual(JSON.parse(res.body), { entitled: false });
+	assert.deepEqual(JSON.parse(res.body), { entitled: false, credits: 0 });
 });
 
 test('the response body carries nothing but the answer', async () => {
@@ -222,7 +244,7 @@ test('the response body carries nothing but the answer', async () => {
 test('deletion removes the row and the Cognito user, and is idempotent', async () => {
 	const { api, rows, deleted } = makeApi();
 	const pairwise = pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER);
-	rows.set(`${PRODUCT}#${pairwise}`, { entitled: true });
+	rows.set(`${PRODUCT}#${pairwise}`, { credits: 10 });
 
 	const res = await api.deleteAccount(authed(mint(pool, {})));
 	assert.deepEqual(JSON.parse(res.body), { deleted: true });
@@ -230,7 +252,10 @@ test('deletion removes the row and the Cognito user, and is idempotent', async (
 	assert.deepEqual(deleted, ['signinwithapple_000123']);
 
 	// Nothing left to find, and a second call still succeeds without a read.
-	assert.equal((await api.checkEntitlement(authed(mint(pool, {})))).body, '{"entitled":false}');
+	assert.equal(
+		(await api.checkEntitlement(authed(mint(pool, {})))).body,
+		'{"entitled":false,"credits":0}'
+	);
 	await api.deleteAccount(authed(mint(pool, {})));
 	assert.equal(deleted.length, 2);
 });
@@ -240,7 +265,7 @@ test('deletion sweeps every product this function holds a pepper for', async () 
 	const { api, rows } = makeApi({ peppers });
 	for (const [product, pepper] of Object.entries(peppers)) {
 		rows.set(`${product}#${pairwiseSubject('cognito-subject-0001', product, pepper)}`, {
-			entitled: true
+			credits: 4
 		});
 	}
 	await api.deleteAccount(authed(mint(pool, {})));
@@ -249,7 +274,7 @@ test('deletion sweeps every product this function holds a pepper for', async () 
 
 test('an unauthenticated delete deletes nothing and says so', async () => {
 	const { api, rows, deleted } = makeApi();
-	rows.set('cinder#someone-else', { entitled: true });
+	rows.set('cinder#someone-else', { credits: 4 });
 	const res = await api.deleteAccount({ headers: {} });
 	assert.deepEqual(JSON.parse(res.body), { deleted: false });
 	assert.equal(rows.size, 1);
@@ -261,10 +286,11 @@ test('an unauthenticated delete deletes nothing and says so', async () => {
 // The last place identity exists in the chain. Everything after this holds a
 // signed string that says what may be done and nothing about who is doing it.
 
-const entitle = (rows) =>
-	rows.set(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`, {
-		entitled: true
-	});
+const entitle = (rows, credits = 5) =>
+	rows.set(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`, { credits });
+
+const balance = (rows) =>
+	rows.get(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`)?.credits ?? 0;
 
 const mintCap = (api, token, capability = 'transfer.multipart') =>
 	api.mintCapability({ ...authed(token), body: JSON.stringify({ capability }) });
@@ -295,6 +321,35 @@ test('capability: the grant carries no subject and no balance', async () => {
 	const second = JSON.parse((await mintCap(api, mint(pool, {}))).body);
 	const other = JSON.parse(Buffer.from(second.grant.split('.')[0], 'base64url').toString());
 	assert.notEqual(payload.nonce, other.nonce);
+});
+
+test('capability: minting spends exactly one credit, and a zero balance mints nothing', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows, 2);
+
+	assert.ok(JSON.parse((await mintCap(api, mint(pool, {}))).body).grant, 'first');
+	assert.equal(balance(rows), 1);
+	assert.ok(JSON.parse((await mintCap(api, mint(pool, {}))).body).grant, 'second');
+	assert.equal(balance(rows), 0);
+
+	// The third is the ordinary end of a purchase, and it is the SAME silent
+	// negative an anonymous caller gets — not an error, and not a different shape
+	// anyone could use as an oracle.
+	assert.deepEqual(JSON.parse((await mintCap(api, mint(pool, {}))).body), {
+		grant: null,
+		expiresIn: null
+	});
+	assert.equal(balance(rows), 0, 'a refused mint never goes negative');
+});
+
+test('capability: a refusal AFTER the balance check spends nothing', async () => {
+	// An unknown capability name is refused before the charge. If that order ever
+	// flipped, a typo in the client would silently burn a credit per attempt.
+	const { api, rows } = makeApi();
+	entitle(rows, 3);
+	await mintCap(api, mint(pool, {}), 'transfer.everything');
+	await api.mintCapability({ ...authed(mint(pool, {})), body: 'not json' });
+	assert.equal(balance(rows), 3);
 });
 
 test('capability: a valid token with no purchase mints nothing', async () => {

@@ -116,7 +116,7 @@ The same endpoint, with a `parts` array instead of a single size and checksum. T
 | --- | --- | --- |
 | `201 Created` | `{ "locator", "uploadCapability", "parts": [{ "index", "upload" }] }` | N transfers reserved. Build the link as `/f/{locator}#{key}.{n}`. |
 | `400 Bad Request` | `{ "error": "..." }` | Empty array, more than 64 parts, or any part malformed or oversized. One bad part refuses the whole request. |
-| `402 Payment Required` | `{ "error": "..." }` | No valid grant for `transfer.multipart`. A single-part request never reaches this check. |
+| `402 Payment Required` | `{ "error": "..." }` | No valid grant for `transfer.multipart`. A single-part request never reaches this check. The sender ran out of credits, never bought any, or is anonymous — this API cannot tell which, and does not want to. |
 | `403 Forbidden` | `{ "error": "..." }` | Granted, but for fewer parts than requested. |
 
 Each part is an independent grant with its own random object key, its own finalize, and its own atomic claim. They are addressed by **derived** locators rather than issued ones, so the link stays short:

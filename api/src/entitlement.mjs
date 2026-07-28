@@ -1,8 +1,8 @@
 // The mattOS identity API. Two routes, and between them they can say exactly
-// two things: "this caller is entitled to this product" and "this account no
-// longer exists."
+// two things: "this caller has this many prepaid sends left for this product"
+// and "this account no longer exists."
 //
-//   POST /entitlement    → { entitled: boolean }
+//   POST /entitlement    → { entitled: boolean, credits: number }
 //   POST /capability     → { grant: string|null, expiresIn: number|null }
 //   POST /account/delete → { deleted: boolean }
 //
@@ -19,7 +19,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { bearerToken, verifyIdToken, pairwiseSubject, parseMap } from './identity.mjs';
-import { isEntitled, forgetEntitlement } from './entitlement-store.mjs';
+import { readCredits, spendCredit, forgetEntitlement } from './entitlement-store.mjs';
 import { mintCapabilityGrant } from './capability-grant.mjs';
 
 // Both routes answer 200 with a negative body for every refusal: no token, a
@@ -82,10 +82,20 @@ export function makeEntitlementHandlers(
 		};
 	}
 
+	// The balance, and the only place it is ever legible. It is answered to the
+	// signed-in person about their own account, over an authenticated request, on
+	// the API that already knows who they are — which is exactly why it may be
+	// said here and may NOT enter a capability grant, where a rare remaining
+	// count would be a fingerprint across otherwise unlinkable transfers.
+	//
+	// `entitled` is kept alongside it, and it is simply `credits > 0`: the
+	// question every screen actually asks is "can I send a large file right now",
+	// and no caller should have to reimplement that comparison.
 	async function checkEntitlement(event) {
 		const who = await identify(event);
-		if (!who) return json(200, { entitled: false });
-		return json(200, { entitled: await isEntitled(doc, who.product, who.pairwise) });
+		if (!who) return json(200, { entitled: false, credits: 0 });
+		const credits = await readCredits(doc, who.product, who.pairwise);
+		return json(200, { entitled: credits > 0, credits });
 	}
 
 	// POST /capability — the only place a grant is ever created.
@@ -103,12 +113,11 @@ export function makeEntitlementHandlers(
 	// with no configured limits, no purchase. Telling them apart would be an
 	// oracle and buys the caller nothing they can act on.
 	//
-	// THE CREDITS SEAM. `limits` is resolved by a single lookup, so turning the
-	// one-time unlock into prepaid credits changes what `entitlementFor` returns
-	// and what this function reads out of it, and touches nothing downstream: the
-	// grant format, the gate, the transfer API, and the client are all unaware of
-	// which pricing model is in force. What must NOT move into the grant is the
-	// remaining balance — see the note in capability-grant.mjs.
+	// THE CREDITS SEAM, now wired. This function spends one credit per grant and
+	// nothing downstream can tell: the grant format, the gate, the transfer API,
+	// and the client are all unaware of which pricing model is in force. What must
+	// NOT move into the grant is the remaining balance — see the note in
+	// capability-grant.mjs about a rare count being a fingerprint.
 	async function mintCapability(event) {
 		const nothing = json(200, { grant: null, expiresIn: null });
 
@@ -129,7 +138,21 @@ export function makeEntitlementHandlers(
 		const limits = capabilityLimits?.[who.product]?.[requested];
 		if (!limits || !capabilitySecret) return nothing;
 
-		if (!(await isEntitled(doc, who.product, who.pairwise))) return nothing;
+		// THE CHARGE. One grant is one prepaid send, and this is the line that
+		// spends it — the last authenticated moment in the chain, before any bytes
+		// exist. Not at create (the transfer API has no subject and must never
+		// acquire one), not at claim (the recipient would be triggering the
+		// sender's charge), not at finalize (one transfer is many parts).
+		//
+		// It is atomic, so N mints racing against a balance of M hand out exactly M
+		// grants. A false answer here is the ordinary end of a purchase — zero
+		// credits is a state, not a fault — and it is the SAME silent negative that
+		// an anonymous caller gets, because telling them apart would be an oracle.
+		//
+		// A retry never reaches this line: the client presents its cached grant,
+		// byte for byte, and the gate verifies it again without a mint. That is the
+		// property tests/journey/full-journey.spec.ts pins.
+		if (!(await spendCredit(doc, who.product, who.pairwise))) return nothing;
 
 		return json(200, {
 			grant: mintCapabilityGrant({

@@ -1,7 +1,7 @@
 // The purchase path. Two routes, and between them exactly one thing can happen:
-// a person who signed in and paid becomes entitled.
+// a person who signed in and paid gets credits.
 //
-//   POST /purchase/checkout  → { url } | { alreadyEntitled: true }
+//   POST /purchase/checkout  → { url }
 //   POST /purchase/webhook   → Stripe's callback; the ONLY grantor in the stack
 //
 // It lives on the identity API rather than the note and file API, for the same
@@ -9,11 +9,15 @@
 // at CORS, so a browser cannot attach a token to a note request even by
 // accident, and the two APIs do not share an access log.
 //
-// WHAT THE GRANT REQUIRES, all four, in order:
+// WHAT CREDITS REQUIRE, all five, in order:
 //   1. a Stripe-Signature this server verified against the webhook secret
 //   2. a timestamp inside the 300-second replay window
 //   3. payment_status of paid (or no_payment_required)
 //   4. a client_reference_id matching a pending row THIS server minted
+//   5. an EXCLUSIVE CLAIM on that row — one delivery wins it, the rest add
+//      nothing. Under a boolean this step did not have to exist; under a counter
+//      it is the difference between at-least-once delivery and at-least-once
+//      billing.
 //
 // Nothing in the payload is ever believed on its own terms. The product and the
 // person come from our own row, never from the event, so an event describing a
@@ -42,9 +46,15 @@ import { verifyStripeSignature, purchaseReference } from './entitlement-logic.mj
 import {
 	putPendingPurchase,
 	readPendingPurchase,
-	clearPendingPurchase
+	claimPendingPurchase
 } from './purchase-store.mjs';
-import { isEntitled, grantEntitlement } from './entitlement-store.mjs';
+import { addCredits } from './entitlement-store.mjs';
+
+// How many large sends one purchase buys, when a product does not say. Ten, and
+// the price that goes with it lives in Stripe rather than here: the fixed 30¢ of
+// a card fee is 92% of the fee damage on a sub-dollar charge, so a bundle is the
+// difference between the fee eating a third of the money and eating a tenth.
+const DEFAULT_CREDITS_PER_PURCHASE = 10;
 
 const json = (statusCode, obj) => ({
 	statusCode,
@@ -67,6 +77,7 @@ const json = (statusCode, obj) => ({
  * @param webhookSecrets  {[product]: 'whsec_…'}     that account's signing secret
  * @param prices          {[product]: 'price_…'}
  * @param urls            {[product]: {success, cancel}}
+ * @param credits         {[product]: 10}  how many sends one purchase adds
  * @param createSession   injected so the suite runs with no Stripe credential at
  *                        all. The mock and the real client take the identical
  *                        arguments, so moving from mocked to sandbox test mode is
@@ -74,8 +85,13 @@ const json = (statusCode, obj) => ({
  */
 export function makePurchaseHandlers(
 	doc,
-	{ identify, secretKeys, webhookSecrets, prices, urls, createSession }
+	{ identify, secretKeys, webhookSecrets, prices, urls, credits = {}, createSession }
 ) {
+	const creditsFor = (product) => {
+		const n = Number(credits[product]);
+		return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_CREDITS_PER_PURCHASE;
+	};
+
 	async function checkout(event) {
 		const who = await identify(event);
 		// The same negative answer an anonymous caller gets. There is nothing to
@@ -83,13 +99,12 @@ export function makePurchaseHandlers(
 		// an oracle for "that token was real but expired".
 		if (!who) return json(200, { url: null });
 
-		// Refuse to charge twice for a one-time unlock. Not a security boundary —
-		// a duplicate purchase would grant the same row — but taking a second
-		// $0.94 for something already owned is the kind of thing a product only
-		// gets to do once.
-		if (await isEntitled(doc, who.product, who.pairwise)) {
-			return json(200, { alreadyEntitled: true, url: null });
-		}
+		// NO already-owns check, and its absence is the point. Under the one-time
+		// unlock a second purchase bought nothing, so it was refused. Under prepaid
+		// credits a second purchase is a TOP-UP, which is the whole model: someone
+		// with two credits left who is about to send five files must be able to buy
+		// more. The balance accumulates (addCredits), so nothing is lost by paying
+		// again and nothing is charged for twice.
 
 		const secretKey = secretKeys[who.product];
 		const price = prices[who.product];
@@ -185,13 +200,34 @@ export function makePurchaseHandlers(
 		// caller learns nothing either way.
 		if (pending.product !== signedBy) return json(200, { received: true });
 
-		// Grant, THEN clear. The grant is an idempotent PUT, so a retry that
-		// arrives before the clear writes the identical row; whereas clearing
-		// first would mean a webhook dying between the two left a paying customer
-		// permanently unentitled with no row left to grant from. The failure mode
-		// of this order is a retry that succeeds.
-		await grantEntitlement(doc, pending.product, pending.pairwise);
-		await clearPendingPurchase(doc, reference);
+		// CLAIM, then credit. Under the one-time unlock the order was the other way
+		// around — grant, then clear — because the grant was an idempotent PUT and
+		// a duplicate delivery rewrote the identical row. Credits ACCUMULATE, so
+		// that order would have turned Stripe's at-least-once delivery into
+		// at-least-once billing: five deliveries of one event, fifty credits.
+		//
+		// So the claim comes first and it is a conditional delete, which means two
+		// deliveries racing each other cannot both win. A duplicate finds nothing
+		// left to claim and adds nothing.
+		const claimed = await claimPendingPurchase(doc, reference, Math.floor(Date.now() / 1000));
+		if (!claimed) return json(200, { received: true });
+
+		try {
+			await addCredits(doc, claimed.product, claimed.pairwise, creditsFor(claimed.product));
+		} catch (e) {
+			// The one hole this order opens: a claim that succeeded and a credit that
+			// did not leaves someone who paid with nothing. So put the row back with
+			// its ORIGINAL deadline — not a fresh hour, which would quietly extend
+			// the window in which Stripe's reference is still translatable to a
+			// person — and answer non-2xx so Stripe retries into it.
+			await putPendingPurchase(doc, {
+				nonce: reference,
+				product: claimed.product,
+				pairwise: claimed.pairwise,
+				expiresAt: claimed.expiresAt
+			}).catch(() => {});
+			throw e;
+		}
 
 		return json(200, { received: true });
 	}

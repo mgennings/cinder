@@ -22,16 +22,21 @@
 	import { prefersReducedMotion } from 'svelte/motion';
 	import {
 		startCheckout,
-		isEntitled,
+		entitlement,
 		signedIn,
 		identityConfigured,
 		startSignIn
 	} from '$lib/auth';
-	import { MAX_FILE_BYTES } from '$lib/crypto/file-crypto';
+	import { MAX_FILE_BYTES, MAX_TRANSFER_BYTES } from '$lib/crypto/file-crypto';
+	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 
-	type State = 'loading' | 'signed-out' | 'ready' | 'owned' | 'unavailable';
+	// There is no 'owned' state any more, and its absence is the model: credits
+	// run down, so the buy button is never the wrong thing to show. What changes
+	// with a balance is the sentence next to it, not whether it exists.
+	type State = 'loading' | 'signed-out' | 'ready' | 'unavailable';
 
 	let view = $state<State>('loading');
+	let credits = $state(0);
 	let working = $state(false);
 	let error = $state('');
 	// One live region for the page, matching /account: every state change writes a
@@ -41,11 +46,9 @@
 
 	const dur = (ms: number) => (prefersReducedMotion.current ? 0 : ms);
 	const freeLabel = `${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MiB`;
+	const maxProLabel = `${Math.round(MAX_TRANSFER_BYTES / (1024 * 1024))} MiB`;
 
-	// The price, written once. It is the only number on this page that has to
-	// agree with something outside this repository — the Stripe Price object —
-	// and docs/pro-payments.md is where that agreement is checked.
-	const PRICE = '$0.94';
+	const PRICE = PRO_PRICE;
 
 	onMount(async () => {
 		if (!identityConfigured()) {
@@ -58,13 +61,11 @@
 			announcement = 'Sign in to buy Cinder Pro.';
 			return;
 		}
-		if (await isEntitled()) {
-			view = 'owned';
-			announcement = 'Cinder Pro is already active on this account.';
-			return;
-		}
+		credits = (await entitlement()).credits;
 		view = 'ready';
-		announcement = `Cinder Pro is a one-time ${PRICE}.`;
+		announcement = credits
+			? `${creditWord(credits)} left on this account. ${PRICE} adds ${PRO_CREDITS} more.`
+			: `${PRICE} buys ${PRO_CREDITS} large sends.`;
 	});
 
 	async function buy() {
@@ -92,7 +93,7 @@
 	<title>Cinder Pro</title>
 	<meta
 		name="description"
-		content="A one-time unlock for sending larger files. What Stripe sees, what Cinder does not, and why a payment is never linked to a note."
+		content="Prepaid credits for sending larger files. What a credit buys, what Stripe sees, what Cinder does not, and why a payment is never linked to a note."
 	/>
 </svelte:head>
 
@@ -101,9 +102,21 @@
 
 	<h1 class="text-2xl font-semibold text-body">Cinder Pro</h1>
 	<p class="mt-3 text-base leading-relaxed text-mist">
-		A one-time {PRICE}. It raises the size of what you can send past {freeLabel} and changes nothing
-		else. Not a subscription, not a plan, not a renewal — you buy it once.
+		{PRICE} for {PRO_CREDITS} large sends. One credit sends one file over {freeLabel}, up to the {maxProLabel}
+		ceiling. Not a subscription, not a plan, not a renewal — the credits sit there until you use
+		them, and anything under {freeLabel} stays free forever, with no account.
 	</p>
+
+	<!-- The balance, stated before the button rather than after the purchase.
+	     Someone with credits left needs to know that before they decide whether
+	     to buy more, and someone at zero needs to read it as an ordinary state. -->
+	{#if view === 'ready'}
+		<p in:fade={{ duration: dur(200) }} class="mt-3 text-sm leading-relaxed text-body">
+			{credits
+				? `You have ${creditWord(credits)} left. Buying again adds ${PRO_CREDITS} more to it.`
+				: 'You have no credits right now. Nothing is broken and nothing has expired — small sends work exactly as they always did.'}
+		</p>
+	{/if}
 
 	<!-- The disclosure. Deliberately ABOVE the button, in lowercase, in the plain
 	     register the product uses when it has something real to admit. It is not
@@ -128,8 +141,8 @@
 			</li>
 			<li>
 				cinder never asks stripe for your card or your email, never reads them, and never writes
-				them down. what we keep is one line: this account bought pro, on this date. there is no
-				name, no address, and no card on our side to lose.
+				them down. what we keep is one line: this account has this many sends left, and the date it
+				last bought some. there is no name, no address, and no card on our side to lose.
 			</li>
 			<li>
 				a payment is never linked to a note. notes and file transfers carry no account at all, so
@@ -137,9 +150,16 @@
 				delete as soon as your purchase lands — after that, nothing anywhere connects a payment to
 				you.
 			</li>
+			<li>
+				a credit is spent when cinder hands you the link, not when the file arrives. if the
+				delivery breaks partway, the pieces are destroyed and the credit is gone — cinder has no
+				way to see which transfer failed, which is the same reason it can never see who you sent
+				it to. credits do not expire and they never come back.
+			</li>
 		</ul>
 		<p class="mt-4 text-xs leading-relaxed text-ghost">
-			refunds and receipts go through stripe, because they are the only ones who know who paid.
+			receipts and any refund of the purchase itself go through stripe, because they are the only
+			ones who know who paid. a spent credit is not refundable by anyone, including us.
 		</p>
 	</section>
 
@@ -163,15 +183,10 @@
 				<button class="btn btn-ghost" onclick={() => startSignIn('Google')}>Continue with Google</button>
 			</div>
 		</div>
-	{:else if view === 'owned'}
-		<p in:fade={{ duration: dur(200) }} class="mt-8 text-sm leading-relaxed text-mist">
-			This account already has Cinder Pro. There is nothing to buy again, and Cinder will not
-			charge you a second time for it.
-		</p>
 	{:else}
 		<div in:fade={{ duration: dur(200) }} class="mt-8">
 			<button class="btn btn-ember" onclick={buy} disabled={working}>
-				{working ? 'Opening Stripe…' : `Pay ${PRICE} once`}
+				{working ? 'Opening Stripe…' : `Pay ${PRICE} for ${PRO_CREDITS} sends`}
 			</button>
 			<p class="mt-3 text-xs text-ghost">This opens Stripe. You can stop there and pay nothing.</p>
 		</div>

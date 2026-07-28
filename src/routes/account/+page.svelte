@@ -8,15 +8,16 @@
 		completeSignIn,
 		signOut,
 		deleteAccount,
-		isEntitled,
+		entitlement,
 		signedIn,
 		identityConfigured
 	} from '$lib/auth';
+	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 
 	type State = 'loading' | 'signed-out' | 'signed-in' | 'gone' | 'unavailable';
 
 	let view = $state<State>('loading');
-	let entitled = $state(false);
+	let credits = $state(0);
 	let confirmingDelete = $state(false);
 	// One live region for the whole page. Every state change writes a sentence
 	// here, so a screen reader hears the outcome rather than inferring it from a
@@ -24,12 +25,12 @@
 	let announcement = $state('');
 
 	async function refresh() {
-		entitled = await isEntitled();
+		credits = (await entitlement()).credits;
 		view = signedIn() ? 'signed-in' : 'signed-out';
-		announcement = entitled
-			? 'Signed in. Cinder Pro is active on this browser.'
+		announcement = credits
+			? `Signed in. ${creditWord(credits)} left.`
 			: view === 'signed-in'
-				? 'Signed in. No purchase is recorded for this account.'
+				? 'Signed in. No credits on this account.'
 				: 'Signed out.';
 	}
 
@@ -54,7 +55,7 @@
 	async function handleSignOut() {
 		announcement = 'Signing out.';
 		await signOut();
-		entitled = false;
+		credits = 0;
 		confirmingDelete = false;
 		view = 'signed-out';
 		announcement = 'Signed out. This browser no longer holds a token.';
@@ -70,7 +71,7 @@
 			return;
 		}
 		view = 'gone';
-		entitled = false;
+		credits = 0;
 		announcement = 'The account is deleted.';
 	}
 
@@ -79,7 +80,7 @@
 	const stored = [
 		{ label: 'From Apple or Google', value: 'An opaque account number' },
 		{ label: 'Stored by Cinder', value: 'A one-way hash of that number' },
-		{ label: 'Alongside it', value: 'Purchased: yes, and the date' },
+		{ label: 'Alongside it', value: 'Sends remaining, and the date of the last purchase' },
 		{ label: 'Email address', value: 'Not requested, not stored' },
 		{ label: 'Name', value: 'Not requested, not stored' },
 		{ label: 'Notes and files', value: 'Never linked to any of this' }
@@ -100,7 +101,7 @@
 		},
 		{
 			title: 'Deleting is real, and it is final',
-			body: 'Delete removes the purchase record and then deletes the account itself at Apple and Google’s link, Cognito, and here. Nothing is disabled, archived, or flagged. Because no email is kept, there is no way to look you up afterward and no way to restore the purchase. That is the cost of storing nothing, and it is a real cost.'
+			body: 'Delete removes your remaining credits and then deletes the account itself at Apple and Google’s link, Cognito, and here. Nothing is disabled, archived, or flagged. Because no email is kept, there is no way to look you up afterward and no way to restore credits you had not spent. That is the cost of storing nothing, and it is a real cost.'
 		},
 		{
 			title: 'Signing out ends within five minutes',
@@ -123,7 +124,7 @@
 	<h1 class="mt-8 text-2xl font-bold">An account, and nothing else</h1>
 	<p class="mt-3 leading-relaxed text-mist">
 		Sending a note or a file needs no account, and it never will. This exists for one reason: so a
-		Cinder Pro purchase can be honored on the browser you are using now, and on the next one. It is
+		Cinder Pro balance can be honored on the browser you are using now, and on the next one. It is
 		the smallest thing that can do that job.
 	</p>
 
@@ -143,7 +144,7 @@
 		{:else if view === 'gone'}
 			<h2 class="font-semibold">The account is deleted</h2>
 			<p class="mt-2 text-sm leading-relaxed text-mist">
-				The purchase record and the account are both gone. Notes and transfers were never affected
+				Any remaining credits and the account are both gone. Notes and transfers were never affected
 				by either.
 			</p>
 			<a href="/" class="btn btn-ghost mt-4 px-4">Back to Cinder</a>
@@ -162,21 +163,28 @@
 			</div>
 		{:else}
 			<h2 class="font-semibold">
-				{entitled ? 'Cinder Pro is active' : 'Signed in'}
+				{credits ? `${creditWord(credits)} left` : 'Signed in'}
 			</h2>
+			<!-- The balance is the whole reason this screen exists, so it is the
+			     heading rather than a detail underneath one. A zero balance says
+			     what still works before it says what to do about it: running out
+			     is the expected end of a purchase, not a broken product. -->
 			<p class="mt-2 text-sm leading-relaxed text-mist">
-				{entitled
-					? 'This account holds a Cinder Pro purchase. Nothing else about you is here.'
-					: 'No purchase is recorded for this account. Signing in on its own stores a hash and nothing more.'}
+				{credits
+					? `One credit sends one large file. That count and the date you last bought are the only things here besides a hash.`
+					: `No credits on this account. Sending under the free size limit still works, free, forever — ${PRO_PRICE} adds ${PRO_CREDITS} large sends when you want them.`}
 			</p>
 			<div class="mt-4 flex flex-col gap-2 sm:flex-row">
 				<!-- Signed in with nothing bought is otherwise a dead end: the page
 				     states the absence of a purchase and offers no way to make one.
 				     The link goes to the pay point, where the price and what Stripe
 				     sees are both stated before any button exists to press. -->
-				{#if !entitled}
-					<a class="btn btn-ember px-5" href="/pro">Get Cinder Pro</a>
-				{/if}
+				<!-- Always offered, never only at zero: a top-up is the model, and
+				     someone with two credits left who is about to send five files
+				     needs the button before they run out, not after. -->
+				<a class="btn btn-ember px-5" href="/pro">
+					{credits ? 'Add more credits' : 'Get Cinder Pro'}
+				</a>
 				<button class="btn btn-ghost px-5" onclick={handleSignOut}>Sign out</button>
 				{#if confirmingDelete}
 					<!-- A second, deliberate press rather than a browser confirm dialog:
@@ -196,7 +204,7 @@
 			</div>
 			{#if confirmingDelete}
 				<p class="mt-3 text-sm leading-relaxed text-mist">
-					This deletes the purchase record and the account itself. There is no email on file, so
+					This deletes any credits you have left and the account itself. There is no email on file, so
 					there is no way to restore it afterward.
 				</p>
 			{/if}

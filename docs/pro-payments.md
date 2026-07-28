@@ -1,6 +1,6 @@
 # Cinder Pro — the payment path
 
-A one-time **$0.94** unlocks sending more than 4 MiB. Stripe processes it. There is no subscription, no renewal, and no plan.
+**$4.94 buys 10 large sends.** One credit sends one file over 4 MiB. Stripe processes the purchase. There is no subscription, no renewal, and no plan — credits sit on the account until they are spent, and anything under 4 MiB stays free forever with no account at all.
 
 This document is the audit trail for the money side: what grants an entitlement, what each sentence on the pay point is standing on, what the fee actually costs, and how to run the whole thing in Stripe test mode.
 
@@ -17,10 +17,10 @@ browser                identity API                 Stripe                Dynamo
    │                        │◄─ POST /purchase/webhook ─┤                      │
    │                        ├─ verify signature        │                      │
    │                        ├─ read pending row ───────┼─────────────────────►│
-   │                        ├─ grant ──────────────────┼─────────────────────►│  cinder#<pairwise>
-   │                        ├─ delete pending row ─────┼─────────────────────►│
+   │                        ├─ CLAIM the pending row ──┼─────────────────────►│  (conditional delete)
+   │                        ├─ credits += 10 ──────────┼─────────────────────►│  cinder#<pairwise>
    │◄─ redirect to /pro/done                           │                      │
-   └─ poll /entitlement until true                     │                      │
+   └─ poll /entitlement until credits > 0              │                      │
 ```
 
 **Checkout Session, not Payment Intent.** A Payment Intent means rendering card fields on cinder.ink, which means the card touches this origin, which means the pay-point copy could no longer say it does not. A hosted Checkout Session keeps the fields on `checkout.stripe.com` and reduces Cinder's job to a redirect. It is also the shape undertext's Grace Pro already proved.
@@ -78,13 +78,13 @@ Every failure is the same silent `null`, which the transport turns into the same
 **Two honest consequences, stated rather than hidden:**
 
 - **A grant cannot be recalled.** Deleting an account closes the mint immediately, but a grant already issued keeps working until it expires. Fifteen minutes is the whole exposure and it buys the holder more transfers and nothing else. Closing it would mean the transfer API consulting the entitlement table on every send, which is exactly the link this design exists to prevent. This is the same trade a stateless ID token makes — see [identity](identity.md), "What sign-out actually does".
-- **A grant is not single-use.** A create retried after a dropped connection must not fail for the person who paid. That is free under a one-time unlock; under credits it is the thing that has to be designed rather than assumed, which is the next section.
+- **A grant is not single-use.** A create retried after a dropped connection must not fail for the person who paid. That was free under a one-time unlock; under credits it had to be designed rather than assumed, which is the next section.
 
 ## Credits, and the retry that must not double-charge
 
-The plan is moving from a one-time $0.94 unlock to prepaid credits — roughly **$4.94 for 10 large sends**, because the fixed 30¢ is 92% of the fee damage at $0.94 and this takes the fee share from 34.8% to about 9%.
+Cinder Pro is prepaid credits: **$4.94 for 10 large sends**, because the fixed 30¢ is 92% of the fee damage at $0.94 and a bundle takes the fee share from 34.8% to about 9%.
 
-None of the chain above changes shape. The grant format, the gate, the transfer API, and the client are all unaware of which pricing model is in force. What changes is what the entitlement row holds and what the mint does with it. **This is designed but not built** — the boolean is still what ships.
+None of the chain above changed shape. The grant format, the gate, the transfer API, and the client are all unaware of which pricing model is in force. What changed is what the entitlement row holds and what the mint does with it. **This is built.** The row is a counter, the mint spends one, and the webhook adds ten.
 
 ### When a credit is consumed: at the mint
 
@@ -99,18 +99,47 @@ Three candidates, and only one of them is honest.
 
 So: **one grant is one prepaid send.** Minting spends a credit; the grant is the receipt.
 
+The spend is a single conditional `UpdateItem`, never a read followed by a write:
+
+```
+UpdateExpression:   SET credits = credits - :one
+ConditionExpression: attribute_exists(pk) AND credits >= :one
+:one = 1
+```
+
+The check and the decrement are the same call, evaluated under the partition's own lock, so N mints racing against a balance of M hand out exactly M grants and the loser gets `ConditionalCheckFailedException` rather than a negative balance. `credits >= :one` on a row with no `credits` attribute does not match — a comparison against a missing attribute is false — so someone who never bought anything is refused by the same expression, with no second read and no extra branch.
+
+`api/test/credits.test.mjs` fires 40 spends at a balance of 7 against DynamoDB Local and asserts exactly 7 succeed. **That test was then falsified**: replacing the conditional update with a read-then-write made 40 of 40 succeed against 7 credits, and the test caught it. Worth knowing, because it is the trap in writing this test at all — the *floor* assertion alone (25 spends against a balance of 1, never negative) still PASSED with atomicity removed, since every racing writer computes `1 - 1 = 0`. Only the N-against-M count catches it.
+
 ### Why a retry is free, and what the idempotency key is
 
 The idempotency key is the **grant's nonce** — 256 bits minted once and carried in the payload.
 
 The client caches a grant for its lifetime (`src/lib/entitlement.ts`), so a create that is retried after a dropped connection presents the *identical* string, with the identical nonce. The gate verifies it again and grants again — it is deliberately not single-use — and the mint is never reached, so no second credit moves. A retry is free because the retry never touches the thing that charges.
 
-This is asserted now, before the counter exists, by two executed tests:
+This is asserted by three executed tests:
 
 - `api/test/capability-grant.test.mjs` — "the same grant verifies repeatedly: it is NOT single-use".
 - `tests/journey/full-journey.spec.ts` — "a second send in the same session reuses one grant and mints nothing new": two multipart creates in one page load present a byte-identical grant and the identity API mints exactly once.
 
-The second one is the load-bearing assertion. If a future change makes `capabilityGrant()` fetch per send, that test fails, and under credits it would have been a silent double charge.
+- `tests/journey/full-journey.spec.ts` then reads `/account` and asserts the heading says **9 credits left** after those two sends: one mint, one charge, two files.
+
+The second and third are the load-bearing assertions. If a future change makes `capabilityGrant()` fetch per send, they fail — and that would have been a silent double charge.
+
+### The duplicate delivery, which is now a money bug
+
+Stripe guarantees at-least-once delivery. Under the boolean, a duplicate was free: the grant was a PUT of a fixed item, so five deliveries wrote the identical row. Credits accumulate, so the same five deliveries would have bought fifty.
+
+The dedupe therefore lives on the only artifact that is unique per purchase — the pending row — and it is a **conditional delete with `ReturnValues: ALL_OLD`**, so the claim and the answer are one call and two racing deliveries cannot both win. The order inverted with it: the boolean credited then cleared, credits **claim then credit**.
+
+That inversion opens exactly one hole, and it is handled rather than hidden: a claim that succeeds followed by a credit that fails would leave a paying customer with nothing. So the row is put back with its **original** deadline — not a fresh hour, which would quietly extend the window in which Stripe's reference is still translatable to a person — and the handler answers non-2xx so Stripe retries into it.
+
+Executed proof, all against DynamoDB Local:
+
+- `api/test/purchase.test.mjs` — the same event five times buys exactly one bundle, and the out-of-order async settlement pair credits once.
+- `api/test/credits.test.mjs` — ten *simultaneous* deliveries of one payment add one bundle; two separate purchases accumulate to twenty; a replayed first delivery after a second purchase adds nothing.
+
+**Falsified as well.** Reverting the webhook to the old credit-then-clear order made ten concurrent deliveries award 100 credits instead of 10, two purchases award 40 instead of 20, the five-times duplicate award 50 instead of 10, and it also broke the pre-existing replay and out-of-order attacks — 5 failures across the two files, all reverted.
 
 The grant TTL is therefore also the **retry window**: fifteen minutes. Longer and one credit buys unbounded sends; shorter and a slow upload on a bad connection could strand a paid send.
 
@@ -142,13 +171,18 @@ So the grant carries `cap`, `limits`, `exp`, `nonce` and nothing else, and `api/
 
 | File | Change | Size |
 | --- | --- | --- |
-| `api/src/entitlement-store.mjs` | `isEntitled` gains a sibling `readCredits`; a conditional `UpdateItem` that decrements only when the balance is positive | ~30 lines |
-| `api/src/entitlement.mjs` | `mintCapability` spends a credit before signing; `checkEntitlement` answers with a count as well as a boolean | ~15 lines |
-| `api/src/purchase.mjs` | `checkout` stops refusing an already-entitled buyer (topping up is the point); the webhook increments rather than sets | ~10 lines |
-| `src/lib/auth.ts` + `/account` + `/pro` | Show and top up a balance | copy-led |
-| `src/routes/+page.svelte` | State the cost with the piece count | copy-led |
+| `api/src/entitlement-store.mjs` | `isEntitled`/`grantEntitlement` became `readCredits`/`spendCredit`/`addCredits` | done |
+| `api/src/purchase-store.mjs` | `clearPendingPurchase` became `claimPendingPurchase`, a conditional delete returning `ALL_OLD` | done |
+| `api/src/entitlement.mjs` | `mintCapability` spends a credit before signing; `checkEntitlement` answers with a count as well as a boolean | done |
+| `api/src/purchase.mjs` | `checkout` stops refusing a buyer who already has credits (topping up is the point); the webhook claims, then adds | done |
+| `api/src/identity-lambda.mjs`, `template.yaml` | `PRODUCT_CREDITS` / `CinderProCredits`; the mint's IAM widens from `GetItem` to `UpdateItem` | done |
+| `src/lib/pro.ts` (new) | The price and the bundle size, written once | done |
+| `src/lib/auth.ts` + `/account` + `/pro` + `/pro/done` | Show and top up a balance | done |
+| `src/routes/+page.svelte` | State the cost with the piece count, before encrypting | done |
 
-Nothing in `capabilities.mjs`, `capability-grant.mjs`, `entitlement-provider.mjs`, `handlers.mjs`, or `src/lib/api.ts` changes. **Half a day, and none of it is on the unlinkable path** — which is what the seam was shaped for.
+Nothing in `capabilities.mjs`, `capability-grant.mjs`, `entitlement-provider.mjs`, `handlers.mjs`, or `src/lib/api.ts` changed. **None of it is on the unlinkable path** — which is what the seam was shaped for.
+
+**One honest widening.** `MintCapabilityFn` needed `dynamodb:UpdateItem`, so the Stripe webhook is no longer the only role in the account that can write the entitlement table. DynamoDB cannot constrain an IAM principal to a particular `UpdateExpression`, so what remains is in the code rather than the policy: `spendCredit` only ever subtracts, under a condition that refuses to go below zero, and the mint never calls `addCredits`. The privacy boundary did not move — that role still cannot read a note, cannot see a transfer, and writes nothing but a number on a row that is already its caller's.
 
 ## Every clause of the pay-point copy, and the line that makes it true
 
@@ -160,7 +194,8 @@ The copy lives in `src/routes/pro/+page.svelte`. If a change makes one of these 
 | "you type your card on stripe's own page, not on cinder's" | `src/lib/auth.ts` → `startCheckout` returns a URL that `src/routes/pro/+page.svelte` passes to `location.assign`. It is never fetched, framed, or proxied. The CloudFront CSP in `template.yaml` sets `form-action 'none'` and names no `frame-src`. |
 | "cinder never asks stripe for your card or your email" | `api/src/stripe.mjs` sends `mode`, `line_items`, `client_reference_id`, and the two URLs. No `customer`, no `customer_email`, no `expand`. In `payment` mode Stripe's default `customer_creation` is `if_required`, so no Customer object is created. |
 | "never reads them, and never writes them down" | `api/src/purchase.mjs` → `webhook` reads exactly three fields out of the event: `type`, `data.object.payment_status`, and `data.object.client_reference_id` (`purchaseReference` in `entitlement-logic.mjs`). Nothing logs. The Lambda's log group holds Lambda's own START/END/REPORT lines and nothing else. |
-| "what we keep is one line: this account bought pro, on this date" | `api/src/entitlement-store.mjs` → `grantEntitlement` writes `{pk, entitled, grantedAt}`. That is the complete item. |
+| "what we keep is one line: this account has this many sends left, and the date it last bought some" | `api/src/entitlement-store.mjs` → `addCredits` writes `credits` and `grantedAt` on a row keyed by the pairwise subject. `{pk, credits, grantedAt}` is the complete item. |
+| "a credit is spent when cinder hands you the link, not when the file arrives … the credit is gone" | `api/src/entitlement.mjs` → `mintCapability` calls `spendCredit` before `mintCapabilityGrant`, and no code path anywhere returns a credit. The sentence is on `/pro` **and** on the send screen at file selection, before any encryption starts. |
 | "a payment is never linked to a note" | Notes and file transfers carry no identity to link to — see `api/src/handlers.mjs` and `api/src/store.mjs`. Separate table (`mattos-entitlements` vs `blip-notes`), separate HTTP API, separate access log. |
 | "stripe is told only a random one-time reference that we delete as soon as your purchase lands" | `api/src/purchase-store.mjs` — the nonce is `randomBytes(32)`, stored only as a SHA-256, TTL one hour; `purchase.mjs` calls `clearPendingPurchase` immediately after the grant. Proven by the test *"the pending row never stores the nonce in the clear"*. |
 
@@ -229,21 +264,20 @@ Stripe's published US rate for standard online card payments, read from [stripe.
 
 | | |
 | --- | --- |
-| Charge | $0.9400 |
-| Stripe fee | $0.0273 + $0.3000 = **$0.3273** |
-| Net | **$0.6127** |
-| Fee as a share of the charge | **34.8%** |
+| Charge | $4.9400 |
+| Stripe fee | $0.1433 + $0.3000 = **$0.4433** |
+| Net | **$4.4967** |
+| Fee as a share of the charge | **9.0%** |
+| Net per send, at 10 sends | **$0.45** |
 
-The fixed 30¢ is doing 92% of the damage. At this price the fee share is dominated entirely by it: at $1.94 the fee share would be 18.9%, at $4.94 it would be 8.9%.
+For comparison, the $0.94 single unlock this replaced: a $0.3273 fee, $0.6127 net, **34.8%** to Stripe. The fixed 30¢ was doing 92% of that damage, and bundling ten sends into one charge is the entire reason the fee share fell to 9%. That is the whole argument for credits, and it is arithmetic rather than taste.
 
 Two things worth knowing before deciding the price is fine:
 
-- **A refund does not return the fee.** Refunding a $0.94 purchase costs $0.3273 out of pocket, so a refunded sale is a $0.33 loss rather than a wash.
-- **A dispute costs $15.00.** One chargeback wipes out the net on roughly 24 sales.
+- **A refund does not return the fee.** Refunding a $4.94 purchase costs $0.4433 out of pocket, so a refunded sale is a $0.44 loss rather than a wash — and it refunds the whole bundle, including credits already spent, because Stripe is the only party that can see the payment at all.
+- **A dispute costs $15.00.** One chargeback wipes out the net on roughly 3.3 sales.
 
-Stripe does have micropayment pricing, but it is not published and is not self-serve — Stripe's own guidance is that availability [varies by market and has to be requested from Support](https://support.stripe.com/questions/accepting-microtransactions-on-stripe). No rate is quoted here because none was observed. If $0.94 is the intended price long term, that request is worth making before volume matters.
-
-None of this is an argument against the price. $0.94 is a deliberate number and 61¢ of it arrives. It is here so the number is known rather than discovered.
+Stripe does have micropayment pricing, but it is not published and is not self-serve — Stripe's own guidance is that availability [varies by market and has to be requested from Support](https://support.stripe.com/questions/accepting-microtransactions-on-stripe). No rate is quoted here because none was observed. A bundle is the answer that needs nobody's permission, which is why it is the one that shipped.
 
 ## Test-mode runbook
 
@@ -263,17 +297,17 @@ Dashboard → toggle **Test mode** on, top right. Or with the CLI:
 stripe login                      # authorizes the CLI against the account
 stripe products create \
   --name="Cinder Pro" \
-  --description="A one-time unlock for sending larger files."
+  --description="10 large sends. One credit sends one file over 4 MiB."
 
 stripe prices create \
   --product=prod_XXXX \
-  --unit-amount=94 \
+  --unit-amount=494 \
   --currency=usd
 ```
 
-`unit_amount` is in cents. **94, not 0.94** — a decimal here is the classic way to charge a hundredth of the intended price.
+`unit_amount` is in cents. **494, not 4.94** — a decimal here is the classic way to charge a hundredth of the intended price.
 
-Keep the resulting `price_...`. It is the `CinderProPriceId` stack parameter.
+Keep the resulting `price_...`. It is the `CinderProPriceId` stack parameter, and `CinderProCredits` (default 10) is what that price buys. Those two have to agree: the Price is only what it costs, the parameter is what it *is*. `src/lib/pro.ts` holds the same pair for the copy.
 
 ### 2. The webhook, locally
 
@@ -322,7 +356,9 @@ Copy that endpoint's signing secret into `StripeWebhookSecret` and deploy again.
 - [ ] The statement descriptor on that account reads `CINDER.INK`.
 - [ ] `entitlement-provider.mjs` still exports `denyAll`, so nothing paid actually unlocks anything yet. That file belongs to the identity lane and is the last wire to connect.
 - [ ] The whole grant path has been run once against a real test-mode Stripe, not only against the suite.
-- [ ] Matt has decided whether 61¢ net is the number he wants.
+- [ ] Matt has decided whether $4.50 net per bundle — about 45¢ a send — is the number he wants.
+- [ ] The Stripe Price (`494`) and `CinderProCredits` (`10`) agree with each other and with `src/lib/pro.ts`.
+- [ ] **The EULA still describes a one-time unlock.** It is in the uxuiai repo, reissued as v1.1 effective 2026-07-27, and it has not been amended for credits. What it must say is in this lane's handoff.
 
 ## Where the seam is, and what a second product costs
 
@@ -338,5 +374,5 @@ Copy that endpoint's signing secret into `StripeWebhookSecret` and deploy again.
 **Genuinely Cinder-specific:**
 
 - The pay-point copy in `src/routes/pro/+page.svelte`. Every sentence is a claim about Cinder's architecture; another product's claims are its own.
-- The `$0.94` price, the 4 MiB free ceiling, and Cinder's Stripe account.
+- The `$4.94` price, the 10-credit bundle, the 4 MiB free ceiling, and Cinder's Stripe account.
 - The capability being bought (`transfer.multipart`) and its `maxParts` limit, which are transport facts about this product.

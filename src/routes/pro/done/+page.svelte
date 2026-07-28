@@ -15,11 +15,13 @@
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
-	import { isEntitled, identityConfigured } from '$lib/auth';
+	import { entitlement, identityConfigured } from '$lib/auth';
+	import { creditWord } from '$lib/pro';
 
 	type State = 'waiting' | 'active' | 'slow';
 
 	let view = $state<State>('waiting');
+	let credits = $state(0);
 	let announcement = $state('Confirming your purchase.');
 
 	const dur = (ms: number) => (prefersReducedMotion.current ? 0 : ms);
@@ -35,9 +37,11 @@
 			return;
 		}
 		for (let i = 0; i < TRIES; i++) {
-			if (await isEntitled()) {
+			const now = await entitlement();
+			if (now.entitled) {
+				credits = now.credits;
 				view = 'active';
-				announcement = 'Cinder Pro is active on this account.';
+				announcement = `Cinder Pro is active. ${creditWord(credits)} on this account.`;
 				return;
 			}
 			await new Promise((r) => setTimeout(r, GAP_MS));
@@ -61,8 +65,8 @@
 		<div in:fade={{ duration: dur(200) }}>
 			<h1 class="text-2xl font-semibold text-body">Cinder Pro is active</h1>
 			<p class="mt-3 text-sm leading-relaxed text-mist">
-				Thank you. Larger transfers are available on this account now, and everything else about
-				them is exactly what it was.
+				Thank you. You have {creditWord(credits)} on this account — one sends one file over the
+				free size limit. Everything else about a transfer is exactly what it was.
 			</p>
 			<p class="mt-6"><a class="btn btn-ember" href="/">Send something</a></p>
 		</div>

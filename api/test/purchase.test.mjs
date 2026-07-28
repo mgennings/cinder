@@ -18,7 +18,7 @@ import {
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makePurchaseHandlers } from '../src/purchase.mjs';
 import { verifyStripeSignature, purchaseReference } from '../src/entitlement-logic.mjs';
-import { isEntitled, grantEntitlement } from '../src/entitlement-store.mjs';
+import { readCredits, addCredits } from '../src/entitlement-store.mjs';
 import { readPendingPurchase } from '../src/purchase-store.mjs';
 
 const TABLE = 'mattos-entitlements-p';
@@ -59,6 +59,12 @@ const sessionEvent = (reference, { type = 'checkout.session.completed', status =
 		type,
 		data: { object: { id: `cs_test_${randomBytes(8).toString('hex')}`, payment_status: status, client_reference_id: reference } }
 	});
+
+// "Did this person end up able to send?" — the question every attack below is
+// really asking. It is a balance now rather than a flag, so the count itself is
+// asserted wherever the count is the point.
+const hasCredits = async (product = PRODUCT) =>
+	(await readCredits(doc, product, PAIRWISE)) > 0;
 
 const post = (body, sigHeader) => ({ body, headers: { 'stripe-signature': sigHeader } });
 
@@ -146,14 +152,14 @@ test('attack: forged signature, HMAC computed with the attacker’s own secret',
 	const res = await handlers.webhook(post(payload, sign(payload, { secret: 'whsec_attacker' })));
 	assert.equal(res.statusCode, 400);
 	assert.equal(body(res).error, 'bad_signature');
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('attack: no signature header at all', async () => {
 	const nonce = await startedCheckout();
 	const res = await handlers.webhook({ body: sessionEvent(nonce), headers: {} });
 	assert.equal(res.statusCode, 400);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('attack: malformed signature header (no = separator, junk, empty v1)', () => {
@@ -189,7 +195,7 @@ test('attack: body tampered after signing', async () => {
 	assert.notEqual(tampered, original);
 	const res = await handlers.webhook(post(tampered, header));
 	assert.equal(res.statusCode, 400);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('attack: a valid signature lifted from a different body', async () => {
@@ -197,7 +203,7 @@ test('attack: a valid signature lifted from a different body', async () => {
 	const other = sessionEvent('someone-elses-nonce');
 	const res = await handlers.webhook(post(sessionEvent(nonce), sign(other)));
 	assert.equal(res.statusCode, 400);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('rotation: two v1 values, only one of which is ours, still verifies', () => {
@@ -241,47 +247,51 @@ test('attack: grant attempted without a completed payment (payment_status unpaid
 	const res = await handlers.webhook(post(payload, sign(payload)));
 	// 200 so Stripe stops retrying, and nothing granted.
 	assert.equal(res.statusCode, 200);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 	// The pending row survives, so the later async_payment_succeeded can still pay out.
 	assert.ok(await readPendingPurchase(doc, nonce, Math.floor(Date.now() / 1000)));
 });
 
-test('async settlement: unpaid completed, then async_payment_succeeded, grants once', async () => {
+test('async settlement: unpaid completed, then async_payment_succeeded, credits once', async () => {
 	const nonce = await startedCheckout();
 	const first = sessionEvent(nonce, { status: 'unpaid' });
 	await handlers.webhook(post(first, sign(first)));
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 
 	const second = sessionEvent(nonce, { type: 'checkout.session.async_payment_succeeded' });
 	await handlers.webhook(post(second, sign(second)));
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), true);
+	assert.equal(await readCredits(doc, PRODUCT, PAIRWISE), 10);
 });
 
 test('out-of-order delivery: async_payment_succeeded arrives before completed', async () => {
 	const nonce = await startedCheckout();
 	const later = sessionEvent(nonce, { type: 'checkout.session.async_payment_succeeded' });
 	await handlers.webhook(post(later, sign(later)));
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), true);
+	assert.equal(await hasCredits(PRODUCT), true);
 
 	// The earlier event now lands. It must not un-grant, and it must not create a
 	// second entitlement — the reference is already cleared, so it is a no-op.
 	const earlier = sessionEvent(nonce, { type: 'checkout.session.completed' });
 	const res = await handlers.webhook(post(earlier, sign(earlier)));
 	assert.equal(res.statusCode, 200);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), true);
+	assert.equal(await readCredits(doc, PRODUCT, PAIRWISE), 10, 'not a second bundle');
 });
 
-test('duplicate delivery: the same event five times yields exactly one entitlement row', async () => {
+test('duplicate delivery: the same event five times buys exactly one bundle', async () => {
+	// THE MONEY BUG THIS SUITE EXISTS FOR, under credits. Stripe guarantees
+	// at-least-once delivery. Under the boolean a duplicate rewrote the identical
+	// row and cost nothing; under a counter, five deliveries of one payment would
+	// be fifty credits. The exclusive claim on the pending row is what stops it.
 	const nonce = await startedCheckout();
 	const payload = sessionEvent(nonce);
 	const header = sign(payload);
 	for (let i = 0; i < 5; i++) {
 		assert.equal((await handlers.webhook(post(payload, header))).statusCode, 200);
 	}
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), true);
+	assert.equal(await readCredits(doc, PRODUCT, PAIRWISE), 10, 'one bundle, not five');
 
 	const scan = await raw.send(new ScanCommand({ TableName: TABLE }));
-	const granted = (scan.Items ?? []).filter((i) => i.entitled?.BOOL === true);
+	const granted = (scan.Items ?? []).filter((i) => i.credits);
 	assert.equal(granted.length, 1, 'exactly one entitlement row');
 	// And the translation row is gone, so nothing maps Stripe's reference to a person.
 	assert.equal(await readPendingPurchase(doc, nonce, Math.floor(Date.now() / 1000)), null);
@@ -307,7 +317,7 @@ test('attack: an event type that settles nothing', async () => {
 		});
 		const res = await handlers.webhook(post(payload, sign(payload)));
 		assert.equal(res.statusCode, 200, type);
-		assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false, type);
+		assert.equal(await hasCredits(PRODUCT), false, type);
 	}
 });
 
@@ -317,12 +327,13 @@ test('attack: replay of a genuine event after its reference was cleared', async 
 	const header = sign(payload);
 	await handlers.webhook(post(payload, header));
 
-	// Forget the grant, then replay. The reference no longer resolves, so the
-	// replay cannot re-establish it — a captured event is not a spare key.
+	// Forget the credits, then replay. The reference no longer resolves, so the
+	// replay cannot re-establish it — a captured event is not a spare key, and it
+	// is not a free top-up either.
 	const { forgetEntitlement } = await import('../src/entitlement-store.mjs');
 	await forgetEntitlement(doc, PRODUCT, PAIRWISE);
 	await handlers.webhook(post(payload, header));
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('attack: an oversized or non-string client_reference_id', () => {
@@ -339,7 +350,7 @@ test('attack: a malformed event body with a valid signature', async () => {
 	for (const payload of ['not json', '[]', 'null', '{"data":{"object":null},"type":"checkout.session.completed"}']) {
 		const res = await handlers.webhook(post(payload, sign(payload)));
 		assert.ok(res.statusCode === 200 || res.statusCode === 400, payload);
-		assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false, payload);
+		assert.equal(await hasCredits(PRODUCT), false, payload);
 	}
 });
 
@@ -354,13 +365,17 @@ test('attack: checkout without a token creates no session and no pending row', a
 	assert.equal((scan.Items ?? []).length, 0);
 });
 
-test('checkout refuses to charge someone who already owns it', async () => {
-	await grantEntitlement(doc, PRODUCT, PAIRWISE);
-	caller = { product: PRODUCT, pairwise: PAIRWISE };
-	const res = await handlers.checkout({});
-	assert.equal(body(res).alreadyEntitled, true);
-	assert.equal(body(res).url, null);
-	assert.equal(sessionsCreated.length, 0);
+test('checkout lets someone with credits buy more, and the balance accumulates', async () => {
+	// Under the one-time unlock this was a refusal. Under credits it is the
+	// model: someone with two left who is about to send five files has to be able
+	// to top up, and a purchase must ADD rather than overwrite.
+	await addCredits(doc, PRODUCT, PAIRWISE, 2);
+	const nonce = await startedCheckout();
+	assert.equal(sessionsCreated.length, 1, 'Stripe was called, not refused');
+
+	const payload = sessionEvent(nonce);
+	await handlers.webhook(post(payload, sign(payload)));
+	assert.equal(await readCredits(doc, PRODUCT, PAIRWISE), 12, '2 kept, 10 added');
 });
 
 test('checkout fails closed when the product has no configured price', async () => {
@@ -401,7 +416,7 @@ test('a base64-encoded body is verified against the decoded bytes', async () => 
 		headers: { 'stripe-signature': sign(payload) }
 	});
 	assert.equal(res.statusCode, 200);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), true);
+	assert.equal(await hasCredits(PRODUCT), true);
 });
 
 // === ATTACK 19-21: one webhook URL, several Stripe accounts ==================
@@ -415,7 +430,7 @@ test('attack: another product’s Stripe account cannot grant Cinder', async () 
 	// separate Stripe accounts are supposed to buy.
 	const res = await handlers.webhook(post(payload, sign(payload, { secret: OTHER_WEBHOOK_SECRET })));
 	assert.equal(res.statusCode, 200);
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('each product’s own account still grants its own product', async () => {
@@ -426,9 +441,9 @@ test('each product’s own account still grants its own product', async () => {
 
 	const payload = sessionEvent(nonce);
 	await handlers.webhook(post(payload, sign(payload, { secret: OTHER_WEBHOOK_SECRET })));
-	assert.equal(await isEntitled(doc, OTHER_PRODUCT, PAIRWISE), true);
+	assert.equal(await hasCredits(OTHER_PRODUCT), true);
 	// And the same person is NOT entitled to Cinder off the back of it.
-	assert.equal(await isEntitled(doc, PRODUCT, PAIRWISE), false);
+	assert.equal(await hasCredits(PRODUCT), false);
 });
 
 test('checkout uses the calling product’s own Stripe account key', async () => {

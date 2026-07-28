@@ -1,8 +1,8 @@
 # mattOS identity
 
 A portable identity layer whose first consumer is Cinder Pro. It exists to hold
-one fact about a person — that they bought something — and it is built so that
-holding that fact reveals nothing else.
+one fact about a person — how many prepaid large sends they have left — and it is
+built so that holding that fact reveals nothing else.
 
 ## What it stores, exactly
 
@@ -10,12 +10,16 @@ One DynamoDB item per (product, person):
 
 ```
 pk        "cinder#<base64 hmac>"
-entitled  true
+credits   7
 grantedAt "2026-07-27T00:00:00.000Z"
 ```
 
-That is the whole record. The line that writes it is `grantEntitlement` in
-`api/src/entitlement-store.mjs`. There is no other write path to this table.
+That is the whole record. `credits` is a counter rather than a flag because
+Cinder Pro is prepaid credits: a purchase adds a bundle, a large send spends one.
+Two lines write it, and only two — `addCredits`, whose only caller is the Stripe
+webhook, and `spendCredit`, whose only caller is the mint. `spendCredit` is a
+conditional `UpdateItem` that refuses to go below zero, so it can subtract and
+can never add.
 
 Cognito holds the account itself: an opaque subject, the federated link to Apple
 or Google, and the timestamps Cognito creates on its own. No email, no name, no
@@ -57,7 +61,7 @@ profile, and it prevents the products drifting into a shared one by accident.
 ## The mint — `POST /capability`
 
 The last place identity exists in the chain. It takes a Bearer ID token and
-`{ capability }`, verifies the token, reads the entitlement row, and returns a
+`{ capability }`, verifies the token, **spends one credit**, and returns a
 short-lived signed grant:
 
 ```
@@ -65,8 +69,17 @@ short-lived signed grant:
 ```
 
 Every refusal — no token, a forged token, an unconfigured product, an unknown
-capability name, no purchase — answers `200` with `{ "grant": null, "expiresIn":
-null }`. One answer, so the route is never an oracle for which of them happened.
+capability name, no credits left — answers `200` with `{ "grant": null,
+"expiresIn": null }`. One answer, so the route is never an oracle for which of
+them happened, and running out looks exactly like never having bought.
+
+The spend is atomic: N mints racing against a balance of M hand out exactly M
+grants and the balance never goes negative, proven in `api/test/credits.test.mjs`
+against DynamoDB Local. The balance itself never enters the grant — a rare
+remaining count is a fingerprint across otherwise unlinkable transfers — so it is
+readable only at `POST /entitlement`, by the signed-in person, about their own
+account. Why the charge lands here and not at create, claim, or finalize is in
+[Cinder Pro](pro-payments.md), "When a credit is consumed".
 
 The grant carries `cap`, `limits`, `exp`, and `nonce`, **and no subject**. That
 is enforced rather than intended: `api/src/capability-grant.mjs` refuses to
@@ -90,7 +103,7 @@ HMAC key and nothing else. The transfer API never calls this one. See
 - **A revoked Apple private relay** changes nothing. Cinder never asked for the
   relay address, so there is no address to stop forwarding. Revoking the app in
   Apple's settings breaks the sign-in itself, and the person simply cannot sign
-  in again — the entitlement row remains until deleted, unreachable but also
+  in again — the entitlement row and its credits remain until deleted, unreachable but also
   unreadable.
 - **A capability grant cannot be recalled either**, and for the same reason a
   stateless ID token cannot. Deleting an account or signing out closes the mint
@@ -181,7 +194,7 @@ accounts are not available — which is true, rather than a broken button.
 
 ```bash
 # Anonymous must be denied by the deployed function, not just by the unit test.
-curl -s -X POST "$IDENTITY_API/entitlement"                      # {"entitled":false}
+curl -s -X POST "$IDENTITY_API/entitlement"        # {"entitled":false,"credits":0}
 curl -s -X POST "$IDENTITY_API/entitlement" -H 'authorization: Bearer forged.token.here'
 ```
 

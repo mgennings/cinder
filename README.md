@@ -107,13 +107,20 @@ Cinder's docs are task-oriented — pick the one that matches what you want to d
 
 ## Testing
 
-113 tests across three layers, all green:
+229 tests across four layers, all green:
 
 ```bash
-pnpm vitest run                    # 51 unit tests: crypto, codec, links, shipped claims
-node --test api/test/*.mjs         # 52 API tests: burn, claim, race-safety, S3 error reading (needs DynamoDB Local)
-pnpm exec playwright test          # 10 end-to-end tests in a real browser
+pnpm vitest run                    # 66 unit tests: crypto, codec, links, shipped claims
+node --test api/test/*.mjs         # 146 API tests: burn, claim, race-safety, credits under contention,
+                                   #   the purchase path under attack, S3 error reading (needs DynamoDB Local)
+pnpm exec playwright test          # 15 e2e + 2 journey tests in a real browser
 ```
+
+The browser layers are two, not one, and the difference is the point: `tests/e2e`
+runs with the capability gate satisfied by a dev literal and proves how a
+transfer behaves; `tests/journey` runs against a real identity API and proves who
+may send. Both need DynamoDB Local on `:8000`, `scripts/dev-api.mjs` on `:4000`,
+and `scripts/dev-identity.mjs` on `:4100`, and Playwright starts none of them.
 
 The tests that matter most prove the security claims rather than the happy path:
 

@@ -87,7 +87,14 @@ Parameters:
     Description: Signing secret of Cinder's webhook endpoint on that account (whsec_…)
   CinderProPriceId:
     Type: String
-    Description: Stripe Price id for the one-time Cinder Pro unlock (price_…)
+    Description: Stripe Price id for the Cinder Pro credit bundle (price_…)
+  CinderProCredits:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    Description: >-
+      Large sends one purchase adds. Must agree with what CinderProPriceId
+      charges — this number is the product, the Price is only what it costs.
 
   # The HMAC key the identity API signs capability grants with and the transfer
   # API verifies them with. It is the ONLY thing the two APIs share, and sharing
@@ -765,9 +772,17 @@ Resources:
             Path: /entitlement
             Method: POST
 
-  # The mint. Reads the entitlement row and signs a grant; it cannot write one.
-  # Same GetItem-only policy as CheckEntitlementFn on purpose — the webhook
-  # remains the only role in the account that can grant an entitlement.
+  # The mint. Spends one credit and signs a grant.
+  #
+  # It needs UpdateItem, and that is a real widening worth stating plainly:
+  # before credits this role could only read, so the webhook was the only role in
+  # the account that could write the entitlement table at all. DynamoDB cannot
+  # constrain an IAM principal to a particular UpdateExpression, so the narrowing
+  # that remains is in the code — spendCredit only ever subtracts, under a
+  # condition that refuses to go below zero, and this handler never calls
+  # addCredits. What has NOT widened is the privacy boundary: this role still
+  # cannot read a note, cannot see a transfer, and writes nothing but a number on
+  # a row that is already its caller's.
   MintCapabilityFn:
     Type: AWS::Serverless::Function
     Properties:
@@ -783,7 +798,7 @@ Resources:
       Policies:
         - Statement:
             - Effect: Allow
-              Action: [dynamodb:GetItem]
+              Action: [dynamodb:UpdateItem]
               Resource: !GetAtt EntitlementTable.Arn
       Events:
         Mint:
@@ -857,10 +872,12 @@ Resources:
         - Statement:
             # PutItem is scoped to the table, not to a key prefix — DynamoDB has
             # no such condition for a simple primary key. What actually stops
-            # this function from granting an entitlement is that it never calls
-            # grantEntitlement; see the audit note in entitlement-store.mjs.
+            # this function from adding credits is that it never calls
+            # addCredits; see the audit note in entitlement-store.mjs. It writes
+            # pending rows and nothing else, and under credits it no longer reads
+            # the entitlement row at all: a top-up is never refused.
             - Effect: Allow
-              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Action: [dynamodb:PutItem]
               Resource: !GetAtt EntitlementTable.Arn
       Events:
         Start:
@@ -882,6 +899,9 @@ Resources:
         Variables:
           ENTITLEMENT_TABLE: !Ref EntitlementTable
           STRIPE_WEBHOOK_SECRETS: !Sub '{"cinder": "${CinderStripeWebhookSecret}"}'
+          # How many sends one settled payment adds. Read ONLY here, because this
+          # is the only function that credits anything.
+          PRODUCT_CREDITS: !Sub '{"cinder": ${CinderProCredits}}'
           # Present because the handler module is shared with the identity
           # routes and reads them at import. The webhook itself verifies no
           # token and derives no subject: it reads the pairwise value out of the
@@ -891,8 +911,12 @@ Resources:
           PRODUCT_PEPPERS: !Sub '{"cinder": "${CinderPepper}"}'
       Policies:
         - Statement:
+            # UpdateItem adds credits; DeleteItem is the exclusive claim on the
+            # pending row that keeps a duplicate delivery from adding them twice;
+            # PutItem puts that row BACK if the credit write then fails.
             - Effect: Allow
-              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem]
+              Action:
+                [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt EntitlementTable.Arn
       Events:
         Hook:

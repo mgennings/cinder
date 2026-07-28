@@ -1,20 +1,26 @@
 // The entitlement table. One row per (product, person), and the row is the
-// whole record: a pairwise subject and a boolean. No email, no name, no
-// provider identity, no sign-in history, no device, no IP.
+// whole record: a pairwise subject and a count. No email, no name, no provider
+// identity, no sign-in history, no device, no IP.
 //
 // THE ITEM, IN FULL — this is the complete list of what an account stores:
 //   pk        "cinder#<base64 hmac>"  — product tag + pairwise subject
-//   entitled  true
+//   credits   7                       — prepaid large sends remaining
 //   grantedAt "2026-07-27T00:00:00Z"  — day-resolution would be kinder, but a
 //                                       purchase dispute needs a timestamp and
 //                                       the copy on /account says it is stored
+//
+// It is a COUNTER, not a boolean, because Cinder Pro is prepaid credits: one
+// purchase adds a bundle, one large send spends one. `credits > 0` is the only
+// thing the rest of the stack ever asks, and the number itself never leaves the
+// identity API — see the note in capability-grant.mjs about a rare balance being
+// a fingerprint.
 //
 // It is a DIFFERENT TABLE from blip-notes on purpose. Notes carry no identity
 // at all, so there is nothing to join even for someone holding both — but two
 // tables also means two IAM policies, and the note functions have no read of
 // this one.
 
-import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 
 const TABLE = () => process.env.ENTITLEMENT_TABLE || 'mattos-entitlements';
 
@@ -23,37 +29,81 @@ const TABLE = () => process.env.ENTITLEMENT_TABLE || 'mattos-entitlements';
 // legible to an operator without it meaning anything about a person.
 const key = (product, pairwise) => `${product}#${pairwise}`;
 
-export async function isEntitled(doc, product, pairwise) {
+// What a person has left. Zero for a row that does not exist, which is the same
+// answer as a row spent down to nothing — running out and never having bought
+// are deliberately indistinguishable to everything downstream.
+export async function readCredits(doc, product, pairwise) {
 	const res = await doc.send(
 		new GetCommand({
 			TableName: TABLE(),
 			Key: { pk: key(product, pairwise) },
 			// The only attribute anyone is allowed to ask for.
-			ProjectionExpression: 'entitled'
+			ProjectionExpression: 'credits'
 		})
 	);
-	return res.Item?.entitled === true;
+	const credits = res.Item?.credits;
+	return Number.isSafeInteger(Number(credits)) && credits > 0 ? Number(credits) : 0;
+}
+
+// SPEND ONE, ATOMICALLY. True if a credit was actually taken.
+//
+// A read-then-write here would be a money bug wearing a race condition: two
+// mints in flight against a balance of one would both read 1, both write 0, and
+// both hand out a grant. So the check and the decrement are the SAME DynamoDB
+// call — the condition is evaluated on the item the update is about to modify,
+// under that partition's own lock, and the loser gets
+// ConditionalCheckFailedException instead of a negative balance.
+//
+// The condition is what makes the floor real. `credits >= :one` on a row with no
+// `credits` attribute does not match — a comparison against a missing attribute
+// is false, never true — so a person who never bought anything fails here too,
+// with no extra branch and no second read.
+export async function spendCredit(doc, product, pairwise) {
+	try {
+		await doc.send(
+			new UpdateCommand({
+				TableName: TABLE(),
+				Key: { pk: key(product, pairwise) },
+				UpdateExpression: 'SET credits = credits - :one',
+				ConditionExpression: 'attribute_exists(pk) AND credits >= :one',
+				ExpressionAttributeValues: { ':one': 1 }
+			})
+		);
+		return true;
+	} catch (e) {
+		if (e?.name === 'ConditionalCheckFailedException') return false;
+		// Anything else — throttling, a network fault, a wrong table name — must
+		// NOT read as "no credits left". Failing closed on an unknown error is
+		// right; doing it silently is how an outage becomes an invisible refusal
+		// aimed at the people who paid.
+		throw e;
+	}
 }
 
 // The seam the purchase lane writes through. Its ONLY caller is the Stripe
 // webhook in purchase.mjs, which reaches this line solely after a signature it
-// verified, a payment Stripe reported settled, and a pending row this server
-// minted itself. Nothing else in the stack may call it: a second caller is a
-// second way to become entitled, and there is only supposed to be one.
+// verified, a payment Stripe reported settled, and an EXCLUSIVE CLAIM on a
+// pending row this server minted itself. Nothing else in the stack may call it:
+// a second caller is a second way to get credits, and there is only supposed to
+// be one.
 //
-// A grant is a PUT of a fixed item, so it is idempotent by construction. Stripe
-// guarantees at-least-once delivery and retries until it sees a 2xx, so the same
-// event arriving five times, or the two settling events for one session arriving
-// out of order, all write the identical row. `grantedAt` moving is the only
-// visible effect, and it is not load-bearing for anything.
-export async function grantEntitlement(doc, product, pairwise) {
+// Adding is deliberately NOT idempotent — a top-up must accumulate, so the same
+// call twice adds twice. That moves the idempotency one step upstream, onto the
+// claim in purchase-store.mjs, where a duplicate Stripe delivery is stopped
+// before it ever reaches this line. Under a boolean that safety was free (a PUT
+// of a fixed item); under a counter it has to be designed, because a duplicate
+// delivery is now a money bug rather than a no-op.
+export async function addCredits(doc, product, pairwise, count) {
+	if (!Number.isSafeInteger(count) || count < 1) throw new Error('addCredits: bad count');
 	await doc.send(
-		new PutCommand({
+		new UpdateCommand({
 			TableName: TABLE(),
-			Item: {
-				pk: key(product, pairwise),
-				entitled: true,
-				grantedAt: new Date().toISOString()
+			Key: { pk: key(product, pairwise) },
+			UpdateExpression: 'SET credits = if_not_exists(credits, :zero) + :n, grantedAt = :now',
+			ExpressionAttributeValues: {
+				':zero': 0,
+				':n': count,
+				':now': new Date().toISOString()
 			}
 		})
 	);
