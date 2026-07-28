@@ -59,6 +59,43 @@ describe('the destination a sign-in is allowed to return to', () => {
 		}
 	});
 
+	/* THE PROPERTY, asserted directly instead of by example.
+
+	   This function has now been patched twice at the spelling that happened to
+	   be observed. The first miss was a tab. The second was dot-segment removal:
+	   `/.//evil.example` cleared every input check, and safePath then RETURNED
+	   `//evil.example`, which the caller's own sink re-resolved to a foreign
+	   host. Both were found by somebody trying one more spelling.
+
+	   So the invariant is stated once, and any spelling that violates it fails
+	   here whether or not it appears in the list below: whatever safePath hands
+	   back, resolved against this origin, must still be on this origin. */
+	it('never returns anything that resolves off this origin', () => {
+		const ORIGIN = 'https://cinder.ink';
+		const payloads = [
+			'/.//evil.example',
+			'/..//evil.example',
+			'/a/..//evil.example',
+			'/%2e//evil.example',
+			'/%2e%2e//evil.example',
+			'/././/evil.example',
+			'//evil.example',
+			'/pro',
+			'/account?a=1#b',
+			'/../etc/passwd'
+		];
+
+		for (const payload of payloads) {
+			const out = intendedPath(`?next=${encodeURIComponent(payload)}`);
+			if (out === null) continue;
+			// The value is used as an href and as a goto target, so the thing that
+			// must hold is about the RESULT, not about the input that produced it.
+			expect(new URL(out, ORIGIN).origin, `safePath returned ${JSON.stringify(out)} for ${payload}`).toBe(
+				ORIGIN
+			);
+		}
+	});
+
 	/* The guarantee that makes the blocklist above stop being load-bearing:
 	   anything that changes the origin when resolved is refused, whether or not
 	   anyone enumerated the character that did it. */

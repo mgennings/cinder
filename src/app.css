@@ -560,11 +560,23 @@ body::before {
 		);
 		pointer-events: none;
 	}
+	/* WRAPS, because `.record` clips and a clipped disclosure is a lie of
+	   omission. At 200% text the label (mono, nowrap, on purpose) and the value
+	   could not both fit, the row overflowed a container with `overflow: hidden`
+	   and no scroll path, and 173px of every value was simply gone — measured,
+	   on the account page, which is the surface that tells somebody what Cinder
+	   stores about them.
+
+	   Wrapping rather than scrolling: a horizontal scrollbar inside a card is a
+	   thing people miss, and this is not tabular data that needs its columns. It
+	   drops the value onto its own line and stays right-aligned, so the reading
+	   order is unchanged and nothing is hidden at any text size. */
 	.record-row {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: baseline;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 0.25rem 1rem;
 		padding: 0.625rem 0.875rem;
 		border-top: 1px solid var(--color-line);
 	}
@@ -578,7 +590,12 @@ body::before {
 		text-transform: uppercase;
 		/* Mist for the same measured reason as `.util` above. */
 		color: var(--color-mist);
-		white-space: nowrap;
+		/* NOT nowrap. It was, so the label would read as one clean instrument
+		   caption, and at 200% text "From Apple or Google" measured 307px inside
+		   a 293px row and clipped inside a container that hides overflow. An
+		   uppercase mono label that wraps onto two lines is slightly less
+		   handsome; a label a person cannot finish reading is not a label. */
+		text-wrap: balance;
 	}
 	/* The value carries the meaning, so it stays body-weight and readable.
 	   Status is a WORD first; the mark beside it is reinforcement, never the
@@ -587,6 +604,11 @@ body::before {
 		font-size: 0.8125rem;
 		color: var(--color-body);
 		text-align: right;
+		/* Lets the value shrink inside the flex row instead of forcing an
+		   overflow, and breaks a single long token (a filename, a hash) rather
+		   than letting it push the row wider than the card. */
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 	/* A value that IS data — a byte count, a filename, a piece count — is set in
 	   the instrument face rather than in prose type. Prose values stay

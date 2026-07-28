@@ -10,6 +10,11 @@
 // WHAT IS KEPT IN THE BROWSER, AND WHERE:
 //   sessionStorage  the refresh token and the current ID token
 //   sessionStorage  the PKCE verifier, deleted the moment the code is exchanged
+//   sessionStorage  the same-origin path to return to after signing in, which
+//                   is consumed on success and cleared on sign-out and delete
+// That list is the whole of it. It omitted the third key until a review read
+// the file against itself, which is the failure this kind of list exists to
+// prevent — so if a line of code ever writes a fourth, this list is the defect.
 // sessionStorage rather than localStorage: closing the tab ends the session,
 // which is the behavior someone using a self-destructing-notes product would
 // expect if they thought about it. Nothing about an account is written to a
@@ -105,7 +110,24 @@ const safePath = (value: string | null | undefined): string | null => {
 		const probe = 'https://cinder.invalid';
 		const resolved = new URL(value, probe);
 		if (resolved.origin !== probe) return null;
-		return resolved.pathname + resolved.search + resolved.hash;
+
+		const out = resolved.pathname + resolved.search + resolved.hash;
+
+		/* VALIDATE WHAT IS RETURNED, NOT WHAT WAS RECEIVED.
+
+		   The check above cleared the INPUT and this line used to hand back
+		   something else. URL dot-segment removal collapses `/.//evil.example`
+		   to the PATHNAME `//evil.example`: it resolved on this probe origin, so
+		   the origin check passed, and the caller then received a
+		   protocol-relative string that its own sink re-resolved to a foreign
+		   host. Four spellings did it. Reproduced in a browser.
+
+		   That is the second time this function was patched at the spelling that
+		   was observed rather than at the property that matters, so the property
+		   is now asserted directly: whatever comes out of here must still resolve
+		   onto this origin. If it does not, nothing is returned. */
+		if (new URL(out, probe).origin !== probe) return null;
+		return out;
 	} catch {
 		return null;
 	}
@@ -248,13 +270,36 @@ export function signInFailureMessage(reason: SignInFailure, detail?: string): st
 // device takes effect here: a revoked refresh token fails, and this clears.
 // Exported for src/lib/entitlement.ts, which needs the same token to mint a
 // capability grant. Exported rather than duplicated: there is one place in this
+/* EVERY network call in this file goes through here.
+
+   `completeSignIn` was given a try/catch because an uncaught throw there
+   aborted the caller's onMount before it rendered anything. That reasoning was
+   written down and then applied to exactly one of the five fetch sites. The
+   other four kept throwing, and `freshIdToken` is awaited inside `sessionState`
+   inside `AuthDoor`'s onMount — so with a live session and no network, /signin
+   and /account sat on "Checking this browser..." forever, no buttons, no
+   sentence. A phone losing signal is more common than either thing that was
+   actually fixed.
+
+   Returning null rather than rethrowing is deliberate: a caller cannot render a
+   page out of an exception, and every caller here already has a safe negative
+   to fall back on. What must never happen again is a transport failure deciding
+   whether a page renders at all. */
+async function reach(input: URL | string, init?: RequestInit): Promise<Response | null> {
+	try {
+		return await fetch(input, init);
+	} catch {
+		return null;
+	}
+}
+
 // browser that decides whether a session is still live, and a second copy of
 // that decision is a second thing to get wrong.
 export async function freshIdToken(): Promise<string | null> {
 	const tokens = readTokens();
 	if (!tokens) return null;
 
-	const res = await fetch(new URL('/oauth2/token', HOSTED_UI), {
+	const res = await reach(new URL('/oauth2/token', HOSTED_UI), {
 		method: 'POST',
 		headers: { 'content-type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams({
@@ -263,6 +308,10 @@ export async function freshIdToken(): Promise<string | null> {
 			refresh_token: tokens.refreshToken
 		})
 	});
+	// Unreachable is NOT refused. The tokens stay exactly as they are, because
+	// signing somebody out for losing signal would be the wrong answer and it
+	// would be unrecoverable: the refresh token is the only copy.
+	if (!res) return null;
 	if (!res.ok) {
 		// Revoked, expired, or deleted at the origin. Whatever the reason, this
 		// browser is no longer signed in and must stop believing it is.
@@ -311,11 +360,11 @@ export async function entitlement(): Promise<Entitlement> {
 	const idToken = await freshIdToken();
 	if (!idToken) return none;
 
-	const res = await fetch(`${API_BASE}/entitlement`, {
+	const res = await reach(`${API_BASE}/entitlement`, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${idToken}` }
 	});
-	if (!res.ok) return none;
+	if (!res || !res.ok) return none;
 
 	const body = (await res.json()) as { entitled?: boolean; credits?: number };
 	const credits = Number.isFinite(body.credits) ? Math.max(0, Math.trunc(body.credits!)) : 0;
@@ -339,11 +388,13 @@ export async function startCheckout(): Promise<string | null> {
 	const idToken = await freshIdToken();
 	if (!idToken) return null;
 
-	const res = await fetch(`${API_BASE}/purchase/checkout`, {
+	const res = await reach(`${API_BASE}/purchase/checkout`, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${idToken}` }
 	});
-	if (!res.ok) return null;
+	// Unreachable reads as a refusal here, which is the safe direction: the
+	// caller says nothing was charged, and nothing was.
+	if (!res || !res.ok) return null;
 	const body = (await res.json()) as { url?: string | null };
 	return typeof body.url === 'string' ? body.url : null;
 }
@@ -355,9 +406,15 @@ export async function signOut(): Promise<void> {
 	const tokens = readTokens();
 	sessionStorage.removeItem(TOKENS_KEY);
 	sessionStorage.removeItem(VERIFIER_KEY);
+	// Where this browser was headed before it signed in. Cleared here too,
+	// because "signed out" has to mean every key this file wrote is gone.
+	sessionStorage.removeItem(RETURN_KEY);
 	if (!tokens) return;
 
-	await fetch(new URL('/oauth2/revoke', HOSTED_UI), {
+	// Local storage is already cleared above, on purpose: this browser is signed
+	// out whether or not the origin can be reached to say so. A throw here used
+	// to escape into the caller.
+	await reach(new URL('/oauth2/revoke', HOSTED_UI), {
 		method: 'POST',
 		headers: { 'content-type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams({ client_id: CLIENT_ID, token: tokens.refreshToken })
@@ -372,14 +429,24 @@ export async function deleteAccount(): Promise<boolean> {
 	const idToken = await freshIdToken();
 	if (!idToken) return false;
 
-	const res = await fetch(`${API_BASE}/account/delete`, {
+	const res = await reach(`${API_BASE}/account/delete`, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${idToken}` }
 	});
+	// Unreachable is NOT deleted, and the local session is deliberately left
+	// alone. Clearing it here would tell somebody their account is gone while it
+	// is still there, on the one screen where being wrong is unrecoverable.
+	if (!res) return false;
+
 	const deleted = res.ok && ((await res.json()) as { deleted?: boolean }).deleted === true;
 	if (deleted) {
 		sessionStorage.removeItem(TOKENS_KEY);
 		sessionStorage.removeItem(VERIFIER_KEY);
+		// The destination this browser was going to return to after a sign-in is
+		// the third thing this file writes, and it was the one thing neither
+		// signOut nor deleteAccount removed. Two comments in this codebase call
+		// their list of stored values complete; this is what makes them true.
+		sessionStorage.removeItem(RETURN_KEY);
 	}
 	return deleted;
 }

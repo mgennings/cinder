@@ -157,7 +157,10 @@
 			<Button variant="ember" onclick={buy} disabled={working}>
 				{working ? 'Opening Stripe…' : `Pay ${PRICE} for ${PRO_CREDITS} sends`}
 			</Button>
-			<p class="mt-3 text-xs text-ghost">This opens Stripe. You can stop there and pay nothing.</p>
+			<!-- mist, not ghost. Ghost is placeholder weight and theme.md says so; at
+			     12px on the light floor beneath the error fill it measured 4.48:1,
+			     which is 0.02 under AA and still under. -->
+			<p class="mt-3 text-xs text-mist">This opens Stripe. You can stop there and pay nothing.</p>
 		</div>
 	{/if}
 

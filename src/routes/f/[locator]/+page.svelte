@@ -310,7 +310,7 @@
 
 <VaultPage>
 	{#snippet header()}
-		<Wordmark class="btn btn-ghost !min-h-0 border-0 bg-transparent px-2 py-1" />
+		<Wordmark class="btn btn-ghost border-0 bg-transparent px-2 py-1" />
 	{/snippet}
 
 	<Card as="section" class="p-6">
