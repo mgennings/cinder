@@ -36,6 +36,7 @@ const series = (id, label, unit, aggregation, count) => ({
   label,
   unit,
   aggregation,
+  summary: id === "duration" ? 48.2 : 84,
   points: timestamps.slice(0, count).map((at, index) => ({ at, value: id === "duration" ? 42 + index / 2 : index * 3 })),
 });
 const METRICS = {

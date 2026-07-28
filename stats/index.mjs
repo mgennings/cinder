@@ -356,6 +356,8 @@ export const metricQueries = (functionMap, period) => {
     { Id: "aggregate_errors", Expression: 'SUM(METRICS("errors_"))', Label: "Errors", ReturnData: true },
     { Id: "aggregate_throttles", Expression: 'SUM(METRICS("throttles_"))', Label: "Throttles", ReturnData: true },
     { Id: "aggregate_duration", Expression: 'SUM(METRICS("duration_sum_"))/SUM(METRICS("duration_count_"))', Label: "Duration", ReturnData: true },
+    { Id: "aggregate_duration_sum", Expression: 'SUM(METRICS("duration_sum_"))', Label: "Duration sum", ReturnData: true },
+    { Id: "aggregate_duration_count", Expression: 'SUM(METRICS("duration_count_"))', Label: "Duration count", ReturnData: true },
   ];
 };
 
@@ -373,6 +375,11 @@ const pointsFor = (result) => (result?.Timestamps ?? [])
   .filter((point) => Number.isFinite(point.value));
 
 
+const sumValues = (result) => (result?.Values ?? [])
+  .filter(Number.isFinite)
+  .reduce((sum, value) => sum + value, 0);
+
+
 export const readMetricWindow = async (
   window,
   functionMap,
@@ -386,12 +393,22 @@ export const readMetricWindow = async (
     MetricDataQueries: metricQueries(functionMap, window.periodSeconds),
   }));
   const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
+  const durationCount = sumValues(results.get("aggregate_duration_count"));
+  const summaries = {
+    invocations: sumValues(results.get("aggregate_invocations")),
+    errors: sumValues(results.get("aggregate_errors")),
+    throttles: sumValues(results.get("aggregate_throttles")),
+    duration: durationCount > 0
+      ? sumValues(results.get("aggregate_duration_sum")) / durationCount
+      : null,
+  };
   return {
     id: window.id,
     label: window.label,
     periodSeconds: window.periodSeconds,
     series: metricDefinitions.map((definition) => ({
       ...definition,
+      summary: summaries[definition.id],
       points: pointsFor(results.get(`aggregate_${definition.id}`)),
     })),
   };

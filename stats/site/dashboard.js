@@ -10,14 +10,6 @@ const formatValue = (series, value) => {
   return Math.round(value).toLocaleString()
 }
 
-const aggregateValue = (series) => {
-  if (!series.points.length) return null
-  if (series.aggregation === "average") {
-    return series.points.reduce((sum, point) => sum + point.value, 0) / series.points.length
-  }
-  return series.points.reduce((sum, point) => sum + point.value, 0)
-}
-
 const chart = (series) => {
   const figure = document.createElement("figure")
   const values = series.points.map((point) => point.value)
@@ -99,7 +91,7 @@ const render = () => {
     unit.textContent = series.aggregation
     heading.append(label, unit)
     const value = document.createElement("strong")
-    value.textContent = formatValue(series, aggregateValue(series))
+    value.textContent = formatValue(series, series.summary)
     const context = document.createElement("p")
     context.textContent = `${window.label} · ${series.unit}`
     card.append(heading, value, context, chart(series), table(series))
