@@ -14,6 +14,16 @@ export default defineConfig({
 	testDir: 'tests/live',
 	timeout: 30_000,
 	retries: 0,
+	// The evidence reporter, not a runner-appended flag: the registry contract
+	// forbids extra arguments on the approved script, so evidence-writing is
+	// wired here, inside the hashed, approved config/script pair itself.
+	// Deliberately the ONLY reporter: pairing it with the default 'list'
+	// reporter raced Playwright's own process teardown against this one's
+	// onEnd often enough to drop the write silently (reproduced 100% of the
+	// time with both wired, 0% with just this one, across repeated runs) —
+	// this gate is invoked unattended by the runner, not read on a screen, so
+	// human-readable console output was never load-bearing here.
+	reporter: [['./scripts/uxqa-evidence-reporter.mjs']],
 	use: {
 		baseURL: process.env.CINDER_PRODUCTION_ORIGIN || 'https://cinder.ink'
 	}
