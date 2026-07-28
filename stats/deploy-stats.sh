@@ -254,7 +254,7 @@ deploy_domain() {
   certificate_arn=$(certificate)
   ensure_domain "$api_id" "$certificate_arn"
 
-  printf '✓ https://%s deployed through an origin-authenticated HTTP API\n' "$DOMAIN"
+  printf '✓ https://%s deployed through an audience-authenticated HTTP API\n' "$DOMAIN"
 }
 
 case "${1:-all}" in
