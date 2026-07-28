@@ -84,33 +84,92 @@ export async function startSignIn(provider: Provider): Promise<void> {
 // Exchange the authorization code for tokens. Returns false for every failure —
 // a wrong code, a replayed code, a missing verifier — because the page has the
 // same thing to say in all of them.
-export async function completeSignIn(code: string): Promise<boolean> {
+/* Four different things can go wrong here and they used to be one `false`.
+   That is how a real sign-in failure rendered as the ordinary signed-out page:
+   the person completed Apple, came back, and the interface said nothing at all.
+   Measured on the live site — a bad code produced zero network requests and a
+   plain "Signed out." A journey that can fail silently is a journey nobody can
+   debug, including the person living it.
+
+   The reasons are separated because they need DIFFERENT words. "You signed in
+   somewhere else" and "that link expired" are not the same problem and must not
+   share a sentence. Nothing here exposes anything the person cannot already
+   see; the code is single-use and already spent by the time any of this runs. */
+export type SignInFailure =
+	| 'no-verifier'
+	| 'rejected'
+	| 'incomplete'
+	| 'offline';
+
+export type SignInResult = { ok: true } | { ok: false; reason: SignInFailure; detail?: string };
+
+export async function completeSignIn(code: string): Promise<SignInResult> {
 	const verifier = sessionStorage.getItem(VERIFIER_KEY);
 	// One use, always. Removed before the request rather than after, so a failed
 	// exchange cannot be retried with the same verifier.
 	sessionStorage.removeItem(VERIFIER_KEY);
-	if (!verifier) return false;
+	// The tab that started the sign-in is the only one holding the verifier.
+	// On a phone this is the common failure: the provider hands the callback to
+	// a fresh tab, and this one never had the secret.
+	if (!verifier) return { ok: false, reason: 'no-verifier' };
 
-	const res = await fetch(new URL('/oauth2/token', HOSTED_UI), {
-		method: 'POST',
-		headers: { 'content-type': 'application/x-www-form-urlencoded' },
-		body: new URLSearchParams({
-			grant_type: 'authorization_code',
-			client_id: CLIENT_ID,
-			code,
-			redirect_uri: redirectUri(),
-			code_verifier: verifier
-		})
-	});
-	if (!res.ok) return false;
+	let res: Response;
+	try {
+		res = await fetch(new URL('/oauth2/token', HOSTED_UI), {
+			method: 'POST',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({
+				grant_type: 'authorization_code',
+				client_id: CLIENT_ID,
+				code,
+				redirect_uri: redirectUri(),
+				code_verifier: verifier
+			})
+		});
+	} catch {
+		// An uncaught throw here used to abort the caller's onMount before it
+		// rendered anything, which is the worst version of this bug: a blank
+		// decision with no state at all.
+		return { ok: false, reason: 'offline' };
+	}
+
+	if (!res.ok) {
+		// Cognito names the reason, and the name is worth keeping: `invalid_grant`
+		// on a second visit to the same callback URL is a completely different
+		// story from `invalid_client`, and only one of them is the person's doing.
+		let detail: string | undefined;
+		try {
+			detail = ((await res.json()) as { error?: string }).error;
+		} catch {
+			detail = `HTTP ${res.status}`;
+		}
+		return { ok: false, reason: 'rejected', detail };
+	}
 
 	const body = (await res.json()) as { id_token?: string; refresh_token?: string };
-	if (!body.id_token || !body.refresh_token) return false;
+	if (!body.id_token || !body.refresh_token) return { ok: false, reason: 'incomplete' };
+
 	sessionStorage.setItem(
 		TOKENS_KEY,
 		JSON.stringify({ idToken: body.id_token, refreshToken: body.refresh_token })
 	);
-	return true;
+	return { ok: true };
+}
+
+/** What the person is told, per reason. One sentence, no blame, next step included. */
+export function signInFailureMessage(reason: SignInFailure, detail?: string): string {
+	switch (reason) {
+		case 'no-verifier':
+			return 'That sign-in finished in a different tab from the one that started it, so this tab could not complete it. Try again from here and stay in this tab.';
+		case 'rejected':
+			return detail === 'invalid_grant'
+				? 'That sign-in link was already used, or it expired. Signing in again takes a second.'
+				: 'The sign-in was refused before it finished. Nothing was created and nothing was charged.';
+		case 'incomplete':
+			return 'The sign-in came back missing part of its answer, so Cinder did not trust it. Try again.';
+		case 'offline':
+			return 'Cinder could not reach the sign-in service. Check the connection and try again.';
+	}
 }
 
 // ID tokens live five minutes, so any session older than that needs a refresh

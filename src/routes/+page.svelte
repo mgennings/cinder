@@ -471,6 +471,25 @@
 		<footer class="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-center text-xs">
 			<a href="/security" class="link-quiet">How private is this, really?</a>
 			<a href="/field-notes" class="link-quiet">Field notes</a>
+			<!--
+				The only way in to an account, and deliberately the quietest thing on
+				the page. Sending needs no account and never will, so this must not
+				read as a signup prompt on a product whose whole argument is that it
+				does not know who you are. But someone who HAS paid needs a way back
+				to their balance, and until this existed there was none: /account was
+				reachable only from one sentence inside /security.
+			-->
+			{#if identityConfigured()}
+				<a href={signedIn() ? '/account' : '/pro'} class="link-quiet">
+					{#if credits !== null}
+						{creditWord(credits)}
+					{:else if signedIn()}
+						Your account
+					{:else}
+						Cinder Pro
+					{/if}
+				</a>
+			{/if}
 		</footer>
 	</div>
 </main>

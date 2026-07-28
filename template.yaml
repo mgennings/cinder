@@ -413,41 +413,24 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${ClaimFileFn}'
       RetentionInDays: 14
 
-  # The note and upload paths were left on the default too. "Pinned in
-  # infrastructure code" has to mean every function, or the sentence is only
-  # true of the functions someone remembered.
-  CreateNoteLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/${CreateNoteFn}'
-      RetentionInDays: 14
-
-  ReadNoteLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/${ReadNoteFn}'
-      RetentionInDays: 14
-
-  CreateFileLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/${CreateFileFn}'
-      RetentionInDays: 14
-
-  FinalizeFileLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/${FinalizeFileFn}'
-      RetentionInDays: 14
-
+  # THESE FOUR ARE NOT DECLARED HERE YET, ON PURPOSE.
+  #
+  # /aws/lambda/blip-CreateNoteFn-*, ReadNoteFn, CreateFileFn, and
+  # FinalizeFileFn ALREADY EXIST in CloudWatch. Lambda created them the first
+  # time each function ran, and CloudFormation does not adopt a resource it did
+  # not create — it tries to create it, gets ResourceAlreadyExistsException,
+  # and rolls the whole stack update back. Verified 2026-07-27 against the live
+  # account: all four exist, all four already carry 14-day retention, and
+  # describe-stack-resources shows only ClaimFileLogGroup under management.
+  #
+  # ClaimFileLogGroup is the one that IS declared, and its lone DeletionPolicy:
+  # Retain is the fingerprint of someone hitting this once and working around it
+  # for a single group without writing it down.
+  #
+  # Bringing these four under management is a CloudFormation resource IMPORT,
+  # which is a separate deliberate operation, not something to discover during a
+  # release. Until that import runs, retention on these four is set but not
+  # pinned in code, and docs/pro-payments.md says so rather than pretending.
   # The denial has to be visible. Reserved concurrency sheds silently, and with
   # no alarm the first signal Matt gets is a monthly statement. This watches the
   # shed count only — a number, never a request, never an address.
@@ -694,6 +677,19 @@ Resources:
   # nothing else in this block.
   CinderAppClient:
     Type: AWS::Cognito::UserPoolClient
+    # WITHOUT THIS, THE FIRST DEPLOY FAILS AND ROLLS THE WHOLE STACK BACK.
+    #
+    # SupportedIdentityProviders below names SignInWithApple and Google as
+    # strings, and a string is not a reference, so CloudFormation sees no reason
+    # to build the providers first. It creates the client, Cognito answers "The
+    # provider SignInWithApple does not exist for User Pool …", and the update
+    # rolls back. Measured on 2026-07-28, exactly that message.
+    #
+    # This is the "two-pass Cognito deploy" .notes/GOTCHAS.md warns about. An
+    # explicit DependsOn is the fix, and it means one pass rather than two.
+    DependsOn:
+      - AppleProvider
+      - GoogleProvider
     Properties:
       ClientName: cinder
       UserPoolId: !Ref MattosUserPool

@@ -6,6 +6,7 @@
 	import {
 		startSignIn,
 		completeSignIn,
+		signInFailureMessage,
 		signOut,
 		deleteAccount,
 		entitlement,
@@ -23,6 +24,9 @@
 	// here, so a screen reader hears the outcome rather than inferring it from a
 	// button that quietly changed label.
 	let announcement = $state('');
+	// A sign-in that failed has to say so. Before this, every failure rendered as
+	// the ordinary signed-out page and the person was left to guess.
+	let signInError = $state('');
 
 	async function refresh() {
 		credits = (await entitlement()).credits;
@@ -44,10 +48,26 @@
 		// The OAuth callback lands on this same URL. Strip the code from the
 		// address bar before anything else — it is single-use, but this product
 		// does not leave credentials in browser history when it can help it.
-		const code = new URLSearchParams(location.search).get('code');
-		if (code) {
+		const params = new URLSearchParams(location.search);
+		const code = params.get('code');
+		// The provider can also refuse before a code is ever issued, and that
+		// arrives as ?error= instead. Reading only `code` made a refusal look
+		// exactly like an ordinary visit.
+		const providerError = params.get('error_description') ?? params.get('error');
+
+		if (code || providerError) {
 			history.replaceState(null, '', location.pathname);
-			await completeSignIn(code);
+		}
+
+		if (providerError) {
+			signInError = 'That sign-in did not complete. Nothing was created.';
+			announcement = signInError;
+		} else if (code) {
+			const result = await completeSignIn(code);
+			if (!result.ok) {
+				signInError = signInFailureMessage(result.reason, result.detail);
+				announcement = signInError;
+			}
 		}
 		await refresh();
 	});
@@ -153,6 +173,17 @@
 			<p class="mt-2 text-sm leading-relaxed text-mist">
 				Either door stores the same thing: one opaque number. Apple’s asks for the least.
 			</p>
+			<!-- A failed sign-in used to be indistinguishable from never having tried
+			     one. It says what happened now, in the same register as the rest of
+			     the product: what went wrong, and what to do next. -->
+			{#if signInError}
+				<p
+					role="alert"
+					class="mt-3 rounded-md border border-ember/40 bg-ember/5 px-4 py-3 text-sm leading-relaxed text-body"
+				>
+					{signInError}
+				</p>
+			{/if}
 			<div class="mt-4 flex flex-col gap-2 sm:flex-row">
 				<button class="btn btn-ember px-5" onclick={() => startSignIn('SignInWithApple')}>
 					Sign in with Apple
