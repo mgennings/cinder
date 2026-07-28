@@ -1,0 +1,16 @@
+{
+  "schema": "org.uxuiai.uxqa-surface.v1",
+  "evidenceSchema": "org.uxuiai.uxqa-evidence.v1",
+  "evidenceFile": ".remember/uxqa/evidence.json",
+  "coverage": {
+    "widths": [320, 375, 402, 440, 768, 1440, 1920, 2560],
+    "colorSchemes": ["light", "dark"],
+    "reducedMotion": true,
+    "forcedColors": true,
+    "engines": ["chromium"]
+  },
+  "nonMutating": {
+    "forbiddenMethods": ["POST", "PUT", "PATCH", "DELETE"],
+    "note": "tests/live/production-surface.spec.ts is the only Cinder production gate this registry may ever run unattended. It aborts and fails on any mutating request. tests/live/live.spec.ts (create -> reveal -> destroy) stays attended and out of the registry."
+  }
+}
