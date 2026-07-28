@@ -65,8 +65,9 @@
 		<div in:fade={{ duration: dur(200) }}>
 			<h1 class="text-2xl font-semibold text-body">Cinder Pro is active</h1>
 			<p class="mt-3 text-sm leading-relaxed text-mist">
-				Thank you. You have {creditWord(credits)} on this account — one sends one file over the
-				free size limit. Everything else about a transfer is exactly what it was.
+				Thank you. You have {creditWord(credits)} on this account — one buys about fifteen minutes
+				of sending past the free size limit, in the tab that asks. Everything else about a
+				transfer is exactly what it was.
 			</p>
 			<p class="mt-6"><a class="btn btn-ember" href="/">Send something</a></p>
 		</div>

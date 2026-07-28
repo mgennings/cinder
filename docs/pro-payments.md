@@ -1,6 +1,6 @@
 # Cinder Pro — the payment path
 
-**$4.94 buys 10 large sends.** One credit sends one file over 4 MiB. Stripe processes the purchase. There is no subscription, no renewal, and no plan — credits sit on the account until they are spent, and anything under 4 MiB stays free forever with no account at all.
+**$4.94 buys 10 large sends.** One credit buys about fifteen minutes of sending past 4 MiB, in the tab that asked for it, which in practice is one file and can be more. Stripe processes the purchase. There is no subscription, no renewal, and no plan — credits sit on the account until they are spent, and anything under 4 MiB stays free forever with no account at all.
 
 This document is the audit trail for the money side: what grants an entitlement, what each sentence on the pay point is standing on, what the fee actually costs, and how to run the whole thing in Stripe test mode.
 
@@ -297,7 +297,7 @@ Dashboard → toggle **Test mode** on, top right. Or with the CLI:
 stripe login                      # authorizes the CLI against the account
 stripe products create \
   --name="Cinder Pro" \
-  --description="10 large sends. One credit sends one file over 4 MiB."
+  --description="Ten prepaid large sends. One credit sends files past the free size limit, up to 256 MiB."
 
 stripe prices create \
   --product=prod_XXXX \

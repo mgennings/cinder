@@ -44,6 +44,7 @@ import {
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeEntitlementHandlers } from '../api/src/entitlement.mjs';
 import { makePurchaseHandlers } from '../api/src/purchase.mjs';
+import { createCheckoutSession } from '../api/src/stripe.mjs';
 
 const PORT = Number(process.env.DEV_IDENTITY_PORT || 4100);
 // 127.0.0.1 for the same reason everything else local is: `localhost` and
@@ -59,8 +60,27 @@ const PRODUCT = 'cinder';
 // over there. Two processes, one secret, no other coupling — which is the
 // production topology.
 const CAPABILITY_SECRET = process.env.CAPABILITY_SECRET || 'dev-capability-secret';
-const WEBHOOK_SECRET = 'whsec_dev_local_only';
-const STRIPE_KEY = 'sk_test_dev_local_only';
+
+// Two modes, and which one is running is printed at startup so it is never a
+// guess. DOUBLE is the default: a local stand-in for the hosted checkout page,
+// with every signature and status check done by the shipped handler for real.
+// LIVE-TEST points at Stripe's actual test mode, which is the only way to
+// exercise Stripe's own signatures, its retry behavior, and a real card.
+//
+// Set all three or none. A real key with a fake price fails at Stripe with a
+// message nobody expects, which is worse than not running at all.
+const REAL_STRIPE =
+	Boolean(process.env.STRIPE_SECRET_KEY) &&
+	Boolean(process.env.STRIPE_PRICE_ID) &&
+	Boolean(process.env.STRIPE_WEBHOOK_SECRET);
+
+const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_dev_local_only';
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || 'sk_test_dev_local_only';
+const PRICE_ID = process.env.STRIPE_PRICE_ID || 'price_dev_local_only';
+
+if (STRIPE_KEY.startsWith('sk_live_')) {
+	throw new Error('refusing to run the dev harness against a LIVE Stripe key');
+}
 
 process.env.ENTITLEMENT_TABLE = process.env.ENTITLEMENT_TABLE || 'mattos-entitlements';
 
@@ -104,6 +124,8 @@ const sessions = new Map(); // refresh token -> sub
 const deleted = new Set(); // subs whose "pool record" is gone
 
 const s256 = (v) => createHash('sha256').update(v, 'utf8').digest('base64url');
+
+const WEB_ORIGIN = process.env.DEV_WEB_ORIGIN || 'http://127.0.0.1:5179';
 
 // --- the Stripe double ------------------------------------------------------
 
@@ -158,9 +180,12 @@ const { checkout: startCheckout, webhook: purchaseWebhook } = makePurchaseHandle
 	identify: handlers.identify,
 	secretKeys: { [PRODUCT]: STRIPE_KEY },
 	webhookSecrets: { [PRODUCT]: WEBHOOK_SECRET },
-	prices: { [PRODUCT]: 'price_dev_local_only' },
-	urls: { [PRODUCT]: { success: 'http://127.0.0.1:5179/pro/done', cancel: 'http://127.0.0.1:5179/pro' } },
-	createSession
+	prices: { [PRODUCT]: PRICE_ID },
+	urls: { [PRODUCT]: { success: `${WEB_ORIGIN}/pro/done`, cancel: `${WEB_ORIGIN}/pro` } },
+	// In LIVE-TEST the shipped Stripe client runs, so the session is created by
+	// the same code production uses and the browser is sent to Stripe's own
+	// hosted page. The double is only ever the stand-in for that page.
+	createSession: REAL_STRIPE ? createCheckoutSession : createSession
 });
 
 // --- transport --------------------------------------------------------------
@@ -284,4 +309,8 @@ async function ensureTable() {
 }
 
 await ensureTable();
-server.listen(PORT, HOST, () => console.log(`dev-identity on ${ORIGIN}`));
+server.listen(PORT, HOST, () =>
+	console.log(
+		`dev-identity on ${ORIGIN}  stripe=${REAL_STRIPE ? `LIVE-TEST (${PRICE_ID})` : 'DOUBLE'}`
+	)
+);
