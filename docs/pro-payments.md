@@ -360,6 +360,20 @@ Copy that endpoint's signing secret into `StripeWebhookSecret` and deploy again.
 - [ ] The Stripe Price (`494`) and `CinderProCredits` (`10`) agree with each other and with `src/lib/pro.ts`.
 - [x] **The EULA describes credits.** uxuiai, v1.3 effective 2026-07-27. v1.2 added credits; v1.3 corrected what a credit buys, because a grant is a time-limited send permission rather than one transfer.
 
+## Deploying this stack against the live service
+
+`sam deploy` alone will FAIL and roll back. Four log groups in this template already exist in CloudWatch, created by Lambda when the note and file functions first ran, and CloudFormation does not adopt an existing resource. It tries to create it, gets `ResourceAlreadyExistsException`, marks the resource `CREATE_FAILED`, and rolls the update back. The live service keeps serving the current version, so this is a failed deploy rather than an outage, but it is a failure every time until it is handled.
+
+Verified 2026-07-27 against the live account rather than inferred: `/aws/lambda/blip-CreateNoteFn-87NBt6slZfJO`, `blip-ReadNoteFn-AMM6v3JxtHSe`, `blip-CreateFileFn-WCvEE6EZQEqZ`, and `blip-FinalizeFileFn-fBX4bOHbjRmB` all exist with 14-day retention already set, and `describe-stack-resources` shows only `ClaimFileLogGroup` under CloudFormation management. That asymmetry is the fingerprint of someone hitting this once and working around it for a single group without writing it down.
+
+The deploy is therefore two steps. A CloudFormation resource import brings those four groups under management first, which is why they carry `DeletionPolicy: Retain` — import requires it. The normal deploy runs second.
+
+`MintCapabilityLogs` and the other identity groups deliberately do NOT carry Retain. Their functions have never deployed, so Retain would leave an orphan group behind after a failed first attempt and recreate this exact trap on the retry.
+
+Read the changeset before executing anything. `sam deploy --no-execute-changeset` names every action CloudFormation intends and answers empirically what reading the template can only infer.
+
+Eleven parameters have no defaults and are absent from `samconfig.toml`: `AppleServicesId`, `AppleTeamId`, `AppleKeyId`, `ApplePrivateKey`, `GoogleClientId`, `GoogleClientSecret`, `CinderPepper`, `CinderStripeSecretKey`, `CinderStripeWebhookSecret`, `CinderProPriceId`, and `CinderCapabilitySecret`. Passing `--parameter-overrides` on the command line REPLACES the samconfig list rather than merging with it, so the invocation has to carry `CertificateArn` and the four domains as well. Both behaviors fail closed, which is the point, but it means the real deploy command has never been run.
+
 ## Where the seam is, and what a second product costs
 
 **Portable — a second mattOS product reuses these unchanged:**

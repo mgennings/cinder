@@ -45,7 +45,7 @@ test('the sender is told the piece count and the cost before sending', async ({ 
 		buffer: pattern(PART_BYTES + 1024)
 	});
 
-	await expect(page.getByText(/this goes in 2 pieces and costs 1 Cinder Pro credit/i)).toBeVisible();
+	await expect(page.getByText(/this goes in 2 pieces and costs up to 1 Cinder Pro credit/i)).toBeVisible();
 	await expect(page.getByText(/the whole transfer is permanently gone/i)).toBeVisible();
 	// The credit is spent whether or not the delivery survives, and that has to be
 	// on the screen BEFORE the sender commits — never implied as refundable.
@@ -181,7 +181,7 @@ test('an unentitled sender is refused before anything is stored', async ({ page 
 	});
 	await page.getByRole('button', { name: /create one-time link/i }).click();
 
-	await expect(page.getByRole('alert')).toContainText(/costs one Cinder Pro credit/i, {
+	await expect(page.getByRole('alert')).toContainText(/costs up to one Cinder Pro credit, which covers about fifteen minutes/i, {
 		timeout: 120_000
 	});
 	// And it says the promise is unchanged, because that is the actual product

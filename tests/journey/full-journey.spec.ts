@@ -48,7 +48,7 @@ async function attemptSend(page: Page): Promise<void> {
 	// The sender is told the shape AND the price before committing. 9 MiB over a
 	// 4 MiB part size is three pieces costing one credit, and the page says both
 	// at file selection — not after encrypting 9 MiB and refusing.
-	await expect(page.getByText(/this goes in 3 pieces and costs 1 Cinder Pro credit/i)).toBeVisible();
+	await expect(page.getByText(/this goes in 3 pieces and costs up to 1 Cinder Pro credit/i)).toBeVisible();
 	await page.getByRole('button', { name: /create one-time link/i }).click();
 }
 
@@ -63,7 +63,7 @@ test('refused anonymous, refused signed-in-unpaid, delivered after paying', asyn
 	await attemptSend(page);
 	// Anonymous, so the page has no balance to name and says what a large send
 	// costs rather than what this account has left.
-	await refusal(page, /costs one Cinder Pro credit/i);
+	await refusal(page, /costs up to one Cinder Pro credit, which covers about fifteen minutes/i);
 	// And the refusal says the promise is unchanged, because that is the actual
 	// product claim: Pro adds size, it does not buy a different guarantee.
 	await expect(page.getByRole('alert')).toContainText(/Pro adds size/i);

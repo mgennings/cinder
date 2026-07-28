@@ -153,9 +153,10 @@
 			<li>
 				a credit is spent when cinder gives your browser permission to send big, which happens
 				before your file is encrypted or uploaded — not when the link appears, and not when the
-				file arrives. that permission lasts about fifteen minutes, and anything else you start
-				inside that window costs nothing extra. cancel before the link appears and the credit is
-				still spent.
+				file arrives. that permission lasts about fifteen minutes and lives in the tab that
+				asked for it, so anything else you start there costs nothing extra, while a reload or a
+				second tab asks again and spends another. cancel before the link appears and the credit
+				is still spent.
 			</li>
 			<li>
 				if a delivery breaks partway, the pieces are destroyed and the credit is gone. cinder has

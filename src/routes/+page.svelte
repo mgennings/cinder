@@ -186,7 +186,7 @@
 				error =
 					credits === 0
 						? `That send needs one credit and this account has none left. ${PRO_PRICE} adds ${PRO_CREDITS} more. Anything under ${maxLabel} still sends free.`
-						: `Sending more than ${maxLabel} costs one Cinder Pro credit. Everything else about the transfer is identical — Pro adds size, it does not change the promise.`;
+						: `Sending more than ${maxLabel} costs up to one Cinder Pro credit, which covers about fifteen minutes of large sends. Everything else about the transfer is identical — Pro adds size, it does not change the promise.`;
 				needsPro = true;
 			} else if (e instanceof TransferTooLargeError) error = `That file is over the ${maxProLabel} limit.`;
 			else if (e instanceof FileTooLargeError) error = `That file is over the ${maxLabel} limit.`;
@@ -354,12 +354,14 @@
 								     The recipient is shown the same piece count before they press
 								     anything. -->
 								<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist">
-									Over {maxLabel}, so this goes in {parts} pieces and costs 1 Cinder Pro credit{credits ===
+									Over {maxLabel}, so this goes in {parts} pieces and costs up to 1 Cinder Pro credit{credits ===
 									null
 										? ''
 										: `, out of the ${creditWord(credits)} on this account`}. Each piece is deleted
-									before it is handed over, exactly as one file is. If any piece fails on the way to
-									your recipient, the whole transfer is permanently gone — there is no retry, and the
+									before it is handed over, exactly as one file is. Up to 1, because one credit buys
+									about fifteen minutes of permission to send big: anything else you start in that
+									window, in this tab, costs nothing more. If any piece fails on the way to your
+									recipient, the whole transfer is permanently gone — there is no retry, and the
 									credit is spent either way. Cinder cannot see which transfer failed, which is the
 									same reason it can never see who you sent it to.
 								</p>

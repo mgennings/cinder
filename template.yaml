@@ -148,6 +148,12 @@ Globals:
 Resources:
   NotesTable:
     Type: AWS::DynamoDB::Table
+    # Retain, because this table holds live ciphertext people are waiting to
+    # collect. A stack delete or any future property change that forces a
+    # replacement would otherwise destroy in-flight notes and files silently,
+    # and there is no email on file to tell anyone it happened.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: blip-notes
       BillingMode: PAY_PER_REQUEST
@@ -412,24 +418,32 @@ Resources:
   # true of the functions someone remembered.
   CreateNoteLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub '/aws/lambda/${CreateNoteFn}'
       RetentionInDays: 14
 
   ReadNoteLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub '/aws/lambda/${ReadNoteFn}'
       RetentionInDays: 14
 
   CreateFileLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub '/aws/lambda/${CreateFileFn}'
       RetentionInDays: 14
 
   FinalizeFileLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub '/aws/lambda/${FinalizeFileFn}'
       RetentionInDays: 14
@@ -736,6 +750,13 @@ Resources:
   # table to be joined in.
   EntitlementTable:
     Type: AWS::DynamoDB::Table
+    # Retain, and this one is worse than the notes table if it goes. Every row
+    # is something a person paid for, keyed by an HMAC of a subject, with no
+    # email attached. Destroy it and there is no way to identify who lost what,
+    # let alone restore it. GOTCHAS.md already records that; the policy is what
+    # makes the record enforceable.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: mattos-entitlements
       BillingMode: PAY_PER_REQUEST
@@ -972,6 +993,11 @@ Resources:
   # the accumulation this whole design refuses.
   MintCapabilityLogs:
     Type: AWS::Logs::LogGroup
+    # Deliberately NOT Retain, unlike the four note/file groups. Those four
+    # already exist in CloudWatch and have to be imported, which requires
+    # Retain. This function has never deployed, so Retain here would mean a
+    # failed first deploy leaves an orphan group behind that then collides on
+    # the retry — recreating the exact trap the other four are in.
     Properties:
       LogGroupName: !Sub '/aws/lambda/${MintCapabilityFn}'
       RetentionInDays: 3
