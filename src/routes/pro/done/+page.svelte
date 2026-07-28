@@ -17,6 +17,9 @@
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { entitlement, identityConfigured } from '$lib/auth';
 	import { creditWord } from '$lib/pro';
+	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
+	import Button from '$lib/ui/atoms/Button.svelte';
+	import LiveRegion from '$lib/ui/atoms/LiveRegion.svelte';
 
 	type State = 'waiting' | 'active' | 'slow';
 
@@ -53,8 +56,8 @@
 
 <svelte:head><title>Cinder Pro</title></svelte:head>
 
-<main class="bench mx-auto w-full max-w-2xl px-5 py-12">
-	<p aria-live="polite" class="sr-only">{announcement}</p>
+<BenchPage wordmark={false} pad="tight">
+	<LiveRegion message={announcement} />
 
 	{#if view === 'waiting'}
 		<h1 class="text-2xl font-semibold text-body">Confirming…</h1>
@@ -69,7 +72,7 @@
 				of sending past the free size limit, in the tab that asks. Everything else about a
 				transfer is exactly what it was.
 			</p>
-			<p class="mt-6"><a class="btn btn-ember" href="/">Send something</a></p>
+			<p class="mt-6"><Button variant="ember" href="/">Send something</Button></p>
 		</div>
 	{:else}
 		<div in:fade={{ duration: dur(200) }}>
@@ -82,7 +85,7 @@
 				account and it will be there. If it still is not, Stripe's receipt email is the record of
 				what happened, and it is the one Cinder does not have a copy of.
 			</p>
-			<p class="mt-6"><a class="btn btn-ghost" href="/account">Open your account</a></p>
+			<p class="mt-6"><Button href="/account">Open your account</Button></p>
 		</div>
 	{/if}
-</main>
+</BenchPage>

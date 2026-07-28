@@ -1,4 +1,8 @@
 <script lang="ts">
+	// THE RECEIVING ROUTE. It owns the delivery: what is claimed, in what order,
+	// what is destroyed on the way, and what each failure honestly means. None of
+	// that is renderable, and none of the rendering is decidable from here — so
+	// every surface below belongs to a component and every claim belongs here.
 	import { page } from '$app/state';
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
@@ -10,7 +14,16 @@
 		type DecryptedFile
 	} from '$lib/crypto/file-crypto';
 	import { parseFragmentKey, parseFragmentParts, derivePartLocator } from '$lib/link';
-	import { terrain } from '$lib/ui/terrain';
+	import { humanSize } from '$lib/ui/format';
+	import Card from '$lib/ui/atoms/Card.svelte';
+	import Button from '$lib/ui/atoms/Button.svelte';
+	import PulseDot from '$lib/ui/atoms/PulseDot.svelte';
+	import LiveRegion from '$lib/ui/atoms/LiveRegion.svelte';
+	import Wordmark from '$lib/ui/atoms/Wordmark.svelte';
+	import VaultPage from '$lib/ui/templates/VaultPage.svelte';
+	import RevealGate from '$lib/ui/organisms/RevealGate.svelte';
+	import TransferRecord from '$lib/ui/organisms/TransferRecord.svelte';
+	import OutcomePanel from '$lib/ui/organisms/OutcomePanel.svelte';
 
 	type View = 'gate' | 'delivered' | 'gone' | 'lost' | 'busy' | 'error';
 
@@ -65,20 +78,6 @@
 	$effect(() => {
 		if (view !== 'gate') headingEl?.focus();
 	});
-
-	function humanSize(bytes: number): string {
-		if (bytes < 1000) return `${bytes} bytes`;
-		if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(0)} KB`;
-		return `${(bytes / (1000 * 1000)).toFixed(1)} MB`;
-	}
-
-	// Truncating a filename from the right throws away the extension, which is
-	// the part that tells you what you just received. Keep both ends.
-	function middleTruncate(name: string, max = 34): string {
-		if (name.length <= max) return name;
-		const keepEnd = Math.min(12, Math.floor(max / 2));
-		return `${name.slice(0, max - keepEnd - 1)}…${name.slice(-keepEnd)}`;
-	}
 
 	// An inert download: a Blob the browser saves. Never a preview, never a
 	// server round trip, never anything that executes what was sent.
@@ -307,213 +306,99 @@
 
 <!-- Outside every branch, so it survives the view change that has something to
      announce. Atomic, so the whole sentence is read rather than a diff. -->
-<p aria-live="polite" aria-atomic="true" class="sr-only">{announcement}</p>
+<LiveRegion message={announcement} atomic />
 
-<main
-	{@attach terrain()}
-	class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16"
->
-	<div class="w-full max-w-lg">
-		<header class="mb-8 text-center">
-			<a href="/" class="btn btn-ghost !min-h-0 border-0 bg-transparent px-2 py-1 text-2xl font-bold tracking-tight">
-				Cinder<span class="text-ember">.</span>
-			</a>
-		</header>
+<VaultPage>
+	{#snippet header()}
+		<Wordmark class="btn btn-ghost !min-h-0 border-0 bg-transparent px-2 py-1" />
+	{/snippet}
 
-		<section class="card p-6">
-			{#if view === 'gate'}
-				<div>
-					<h1 class="text-center text-lg font-semibold">Someone left you a one-time file</h1>
+	<Card as="section" class="p-6">
+		{#if view === 'gate'}
+			<RevealGate
+				{partCount}
+				{needsPassphrase}
+				bind:passphrase
+				bind:passphraseElement={passphraseEl}
+				{errorMsg}
+				{busy}
+				{status}
+				{dur}
+				onreveal={reveal}
+			/>
+		{:else if view === 'delivered' && saved}
+			<div in:fade={{ duration: dur(400) }}>
+				<h1
+					bind:this={headingEl}
+					tabindex="-1"
+					class="mb-4 flex items-center gap-2 text-xs font-medium text-ember-ink outline-none"
+				>
+					<PulseDot />
+					Delivered. Copy it somewhere safe before you leave.
+				</h1>
 
-					{#if needsPassphrase}
-						<!-- The claim already happened. The pre-claim warning below is now
-						     false — "can begin" describes something that has begun — so it
-						     is replaced rather than left standing next to a passphrase box. -->
-						<p in:fade={{ duration: dur(200) }} class="mt-3 text-sm leading-relaxed text-mist">
-							{#if chunked}
-								Cinder has already destroyed the first of {partCount} pieces. That piece is held only
-								in this tab, and the rest will not be claimed until the passphrase opens it. If you
-								reload or close this page, the file is permanently unavailable.
-							{:else}
-								Cinder's stored copy is already deleted. The encrypted file is held only in this tab,
-								and it needs its passphrase to open. If you reload or close this page before it
-								saves, it is permanently unavailable.
-							{/if}
-						</p>
+				<TransferRecord name={saved.name} bytes={saved.bytes.length} {partCount} />
 
-						<div in:fade={{ duration: dur(200) }} class="mt-5">
-							<label for="pass" class="mb-2 block text-sm text-mist">Passphrase</label>
-							<input
-								id="pass"
-								bind:this={passphraseEl}
-								type="password"
-								autocomplete="off"
-								bind:value={passphrase}
-								onkeydown={(e) => e.key === 'Enter' && reveal()}
-								placeholder="Enter the passphrase"
-								class="field px-4 py-2.5 text-sm"
-							/>
-							{#if errorMsg}
-								<p role="alert" class="mt-2 text-sm text-ember-ink">{errorMsg}</p>
-							{/if}
-						</div>
-					{:else}
-						<!-- The approved warning. Every clause here is enforced by the
-						     backend; none of it is softened to make the button easier to
-						     press. The chunked version says the extra cost out loud BEFORE
-						     the button, because a file delivered in pieces can fail partway
-						     and nobody should learn that halfway through. -->
-						<p id="reveal-warning" class="mt-3 text-sm leading-relaxed text-mist">
-							{#if chunked}
-								This file arrives in {partCount} pieces. Cinder deletes each stored piece before it
-								releases that piece's bytes, one at a time. If any piece fails, every piece already
-								delivered is permanently destroyed and the file cannot be assembled — there is no
-								retry and no resume. Keep this tab open until it saves. Copies saved by the sender,
-								recipient, browser, operating system, or another service remain outside Cinder's
-								control.
-							{:else}
-								Exactly one server delivery can begin. Cinder deletes its encrypted stored copy before
-								releasing bytes. If that delivery fails, the file is permanently unavailable. Copies
-								saved by the sender, recipient, browser, operating system, or another service remain
-								outside Cinder's control.
-							{/if}
-						</p>
-					{/if}
-
-					<button
-						id="reveal"
-						onclick={reveal}
-						disabled={busy}
-						aria-describedby={needsPassphrase ? undefined : 'reveal-warning'}
-						class="btn btn-ember mt-6 w-full py-3 text-sm"
-					>
-						{#if busy}
-							<span class="pulse-dot inline-block h-2 w-2 rounded-full bg-black/70"></span>
-							{status || 'Working…'}
-						{:else if needsPassphrase}
-							Unlock and save
-						{:else if chunked}
-							Reveal and destroy all {partCount} stored pieces
-						{:else}
-							Reveal and destroy Cinder's stored copy
-						{/if}
-					</button>
-				</div>
-			{:else if view === 'delivered' && saved}
-				<div in:fade={{ duration: dur(400) }}>
-					<h1
-						bind:this={headingEl}
-						tabindex="-1"
-						class="mb-4 flex items-center gap-2 text-xs font-medium text-ember-ink outline-none"
-					>
-						<span class="pulse-dot inline-block h-2 w-2 rounded-full bg-ember"></span>
-						Delivered. Copy it somewhere safe before you leave.
-					</h1>
-
-					<!-- Every row below is a fact. Four are entailed by the bytes this
-					     page is holding — the server cannot return a body until the
-					     delete and the absence check have both succeeded. The fifth is
-					     entailed by the key never having left the fragment. -->
-					<div class="record">
-						<div class="record-row">
-							<span class="record-label">File</span>
-							<!-- Mono for the two rows that are measurements rather than
-							     statements. A filename and a byte count are what the machine
-							     read off the bytes in this tab; the rows below them are
-							     claims about what the server did, and a claim set in mono
-							     borrows an authority it should have to earn in words. -->
-							<span class="record-value record-data break-all" title={saved.name}
-								>{middleTruncate(saved.name)}</span
-							>
-						</div>
-						<div class="record-row">
-							<span class="record-label">Size</span>
-							<span class="record-value record-data">{humanSize(saved.bytes.length)}</span>
-						</div>
-						{#if chunked}
-							<div class="record-row">
-								<span class="record-label">Pieces</span>
-								<span class="record-value"><span class="record-mark"></span>{partCount} of {partCount} delivered</span>
-							</div>
-						{/if}
-						<div class="record-row">
-							<span class="record-label">Delivery</span>
-							<span class="record-value"><span class="record-mark"></span>Consumed</span>
-						</div>
-						<div class="record-row">
-							<span class="record-label">Stored {chunked ? 'pieces' : 'copy'}</span>
-							<span class="record-value"><span class="record-mark"></span>Deleted, absence verified</span>
-						</div>
-						<div class="record-row">
-							<span class="record-label">Decryption</span>
-							<span class="record-value"><span class="record-mark"></span>This device only</span>
-						</div>
-					</div>
-
-					<button onclick={() => saved && save(saved)} class="btn btn-ghost mt-5 w-full py-2.5 text-sm">
-						Save again
-					</button>
-					<p class="mt-3 text-center text-xs text-ghost">
-						Saving again uses the copy already in this tab. Closing it ends the transfer.
-					</p>
-				</div>
-			{:else if view === 'gone'}
-				<div in:fade={{ duration: dur(300) }} class="text-center">
-					<h1 bind:this={headingEl} tabindex="-1" class="text-lg font-semibold outline-none">
-						This transfer is gone
-					</h1>
-					<p class="mt-2 text-sm text-mist">
-						Cinder has no stored copy to return. That is all it can tell you.
-					</p>
-					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Send your own</a>
-				</div>
-			{:else if view === 'busy'}
-				<div in:fade={{ duration: dur(300) }} class="text-center">
-					<h1 bind:this={headingEl} tabindex="-1" class="text-lg font-semibold outline-none">
-						Cinder is busy right now
-					</h1>
-					<p class="mt-2 text-sm text-mist">
-						The delivery never started, so nothing was used up. This link still works. Wait a moment
-						and try again — you have not lost anything.
-					</p>
-					<button
-						onclick={() => {
-							view = 'gate';
-							errorMsg = '';
-						}}
-						class="btn btn-ember mt-6 w-full py-3 text-sm"
-					>
-						Try again
-					</button>
-				</div>
-			{:else if view === 'lost'}
-				<div in:fade={{ duration: dur(300) }} class="text-center">
-					<h1 bind:this={headingEl} tabindex="-1" class="text-lg font-semibold outline-none">
-						The delivery began but could not finish
-					</h1>
+				<Button onclick={() => saved && save(saved)} class="mt-5 w-full py-2.5 text-sm">
+					Save again
+				</Button>
+				<p class="mt-3 text-center text-xs text-ghost">
+					Saving again uses the copy already in this tab. Closing it ends the transfer.
+				</p>
+			</div>
+		{:else if view === 'gone'}
+			<div in:fade={{ duration: dur(300) }}>
+				<OutcomePanel title="This transfer is gone" bind:heading={headingEl}>
+					Cinder has no stored copy to return. That is all it can tell you.
+					{#snippet action()}
+						<Button href="/" class="mt-6 px-5 py-2.5 text-sm">Send your own</Button>
+					{/snippet}
+				</OutcomePanel>
+			</div>
+		{:else if view === 'busy'}
+			<div in:fade={{ duration: dur(300) }}>
+				<OutcomePanel title="Cinder is busy right now" bind:heading={headingEl}>
+					The delivery never started, so nothing was used up. This link still works. Wait a moment
+					and try again — you have not lost anything.
+					{#snippet action()}
+						<Button
+							variant="ember"
+							class="mt-6 w-full py-3 text-sm"
+							onclick={() => {
+								view = 'gate';
+								errorMsg = '';
+							}}
+						>
+							Try again
+						</Button>
+					{/snippet}
+				</OutcomePanel>
+			</div>
+		{:else if view === 'lost'}
+			<div in:fade={{ duration: dur(300) }}>
+				<OutcomePanel title="The delivery began but could not finish" bind:heading={headingEl}>
 					{#if chunked}
-						<p class="mt-2 text-sm text-mist">
-							Cinder handed over {consumed} of {partCount} pieces and destroyed each one as it went.
-							Those pieces are gone, and a file is not usable in pieces. This cannot be retried or
-							resumed — that is the cost of deleting before delivering. Ask the sender for a new link.
-						</p>
+						Cinder handed over {consumed} of {partCount} pieces and destroyed each one as it went.
+						Those pieces are gone, and a file is not usable in pieces. This cannot be retried or
+						resumed — that is the cost of deleting before delivering. Ask the sender for a new link.
 					{:else}
-						<p class="mt-2 text-sm text-mist">
-							Cinder's stored copy was already deleted when the transfer started, so there is nothing
-							left to send. This cannot be retried. Ask the sender for a new link.
-						</p>
+						Cinder's stored copy was already deleted when the transfer started, so there is nothing
+						left to send. This cannot be retried. Ask the sender for a new link.
 					{/if}
-					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Go to Cinder</a>
-				</div>
-			{:else}
-				<div in:fade={{ duration: dur(300) }} class="text-center">
-					<h1 bind:this={headingEl} tabindex="-1" class="text-lg font-semibold outline-none">
-						Couldn't open this file
-					</h1>
-					<p class="mt-2 text-sm text-mist">{errorMsg}</p>
-					<a href="/" class="btn btn-ghost mt-6 px-5 py-2.5 text-sm">Go to Cinder</a>
-				</div>
-			{/if}
-		</section>
-	</div>
-</main>
+					{#snippet action()}
+						<Button href="/" class="mt-6 px-5 py-2.5 text-sm">Go to Cinder</Button>
+					{/snippet}
+				</OutcomePanel>
+			</div>
+		{:else}
+			<div in:fade={{ duration: dur(300) }}>
+				<OutcomePanel title="Couldn't open this file" bind:heading={headingEl}>
+					{errorMsg}
+					{#snippet action()}
+						<Button href="/" class="mt-6 px-5 py-2.5 text-sm">Go to Cinder</Button>
+					{/snippet}
+				</OutcomePanel>
+			</div>
+		{/if}
+	</Card>
+</VaultPage>

@@ -3,7 +3,7 @@
 	// this page existing. Every other product trains people to expect a longer
 	// form on the sign-up side; here there is nothing extra to fill in, and
 	// somebody who does not know that will hunt for the form.
-	import AuthDoor from '$lib/ui/AuthDoor.svelte';
+	import AuthDoor from '$lib/ui/organisms/AuthDoor.svelte';
 </script>
 
 <svelte:head>

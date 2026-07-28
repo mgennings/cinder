@@ -1,4 +1,9 @@
 <script lang="ts">
+	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
+	import Button from '$lib/ui/atoms/Button.svelte';
+	import RuleHead from '$lib/ui/atoms/RuleHead.svelte';
+	import Card from '$lib/ui/atoms/Card.svelte';
+	import TruthList from '$lib/ui/organisms/TruthList.svelte';
 	type Row = { title: string; body: string };
 
 	const protects: Row[] = [
@@ -89,9 +94,7 @@
 	/>
 </svelte:head>
 
-<main class="bench mx-auto max-w-2xl px-5 py-16">
-	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
-
+<BenchPage>
 	<h1 class="mt-8 text-2xl font-bold">How private is this, really?</h1>
 	<p class="mt-3 leading-relaxed text-mist">
 		Cinder is zero-knowledge: your note is encrypted in your browser and the key travels only in the
@@ -100,38 +103,16 @@
 		picture.
 	</p>
 
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What Cinder protects</h2>
-	<div class="mt-4 space-y-4">
-		{#each protects as row (row.title)}
-			<div class="card p-4">
-				<h3 class="font-medium text-body">{row.title}</h3>
-				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
-			</div>
-		{/each}
-	</div>
+	<TruthList title="What Cinder protects" rows={protects} />
+	<TruthList title="Sending a file" rows={files} />
+	<TruthList title="What Cinder can't protect" rows={cannot} />
 
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">Sending a file</h2>
-	<div class="mt-4 space-y-4">
-		{#each files as row (row.title)}
-			<div class="card p-4">
-				<h3 class="font-medium text-body">{row.title}</h3>
-				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
-			</div>
-		{/each}
-	</div>
-
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What Cinder can't protect</h2>
-	<div class="mt-4 space-y-4">
-		{#each cannot as row (row.title)}
-			<div class="card p-4">
-				<h3 class="font-medium text-body">{row.title}</h3>
-				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
-			</div>
-		{/each}
-	</div>
-
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">Accounts</h2>
-	<div class="card mt-4 p-4">
+	<RuleHead class="mt-10">Accounts</RuleHead>
+	<!-- Not a TruthCard: this body carries a link, and a card whose body is a
+	     plain string cannot hold one. The exception is deliberate rather than an
+	     oversight — widening TruthCard to accept markup would let every other
+	     claim on this page grow arbitrary structure. -->
+	<Card class="mt-4 p-4">
 		<h3 class="font-medium text-body">Sending needs no account, and never will</h3>
 		<p class="mt-1 text-sm leading-relaxed text-mist">
 			Cinder Pro will add a sign-in so a purchase can be honored on more than one browser. It stores
@@ -139,7 +120,7 @@
 			email, no name, nothing joinable to a note or a transfer. The full account page states every
 			stored field: <a class="text-ember-ink underline" href="/account">what an account stores</a>.
 		</p>
-	</div>
+	</Card>
 
 	<p class="mt-10 text-sm text-ghost">
 		The short version: trust the link to a person, not the internet. Cinder removes our ability to read
@@ -147,7 +128,7 @@
 	</p>
 
 	<div class="mt-8 flex flex-wrap gap-3">
-		<a href="/" class="btn btn-ghost px-5 py-2.5 text-sm">Send something</a>
-		<a href="/field-notes" class="btn btn-ghost px-5 py-2.5 text-sm">Read a decision gate</a>
+		<Button href="/" class="px-5 py-2.5 text-sm">Send something</Button>
+		<Button href="/field-notes" class="px-5 py-2.5 text-sm">Read a decision gate</Button>
 	</div>
-</main>
+</BenchPage>

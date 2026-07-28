@@ -1,5 +1,5 @@
 <script lang="ts">
-	import AuthDoor from '$lib/ui/AuthDoor.svelte';
+	import AuthDoor from '$lib/ui/organisms/AuthDoor.svelte';
 </script>
 
 <svelte:head>

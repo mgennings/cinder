@@ -22,7 +22,14 @@
 		takeReturnTo,
 		peekReturnTo
 	} from '$lib/auth';
-	import SignInPanel from '$lib/ui/SignInPanel.svelte';
+	import SignInPanel from '$lib/ui/organisms/SignInPanel.svelte';
+	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
+	import Card from '$lib/ui/atoms/Card.svelte';
+	import Button from '$lib/ui/atoms/Button.svelte';
+	import RuleHead from '$lib/ui/atoms/RuleHead.svelte';
+	import LiveRegion from '$lib/ui/atoms/LiveRegion.svelte';
+	import StoredDataTable from '$lib/ui/organisms/StoredDataTable.svelte';
+	import TruthList from '$lib/ui/organisms/TruthList.svelte';
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 
 	type State = 'loading' | 'signed-out' | 'signed-in' | 'expired' | 'gone' | 'unavailable';
@@ -131,17 +138,6 @@
 		announcement = 'The account is deleted.';
 	}
 
-	// The complete list of what an account stores. If a line of code ever stores
-	// something that is not on this list, this list is the defect.
-	const stored = [
-		{ label: 'From Apple or Google', value: 'An opaque account number' },
-		{ label: 'Stored by Cinder', value: 'A one-way hash of that number' },
-		{ label: 'Alongside it', value: 'Sends remaining, and the date of the last purchase' },
-		{ label: 'Email address', value: 'Not requested, not stored' },
-		{ label: 'Name', value: 'Not requested, not stored' },
-		{ label: 'Notes and files', value: 'Never linked to any of this' }
-	];
-
 	const truths = [
 		{
 			title: 'An account cannot be attached to a note',
@@ -174,9 +170,7 @@
 	/>
 </svelte:head>
 
-<main class="bench mx-auto max-w-2xl px-5 py-16">
-	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
-
+<BenchPage>
 	<h1 class="mt-8 text-2xl font-bold">An account, and nothing else</h1>
 	<p class="mt-3 leading-relaxed text-mist">
 		Sending a note or a file needs no account, and it never will. This exists for one reason: so a
@@ -186,9 +180,9 @@
 
 	<!-- The announcement is the same information the buttons carry, said once,
 	     for anyone who is not looking at the buttons. -->
-	<p aria-live="polite" class="sr-only">{announcement}</p>
+	<LiveRegion message={announcement} />
 
-	<div class="card mt-8 p-5">
+	<Card class="mt-8 p-5">
 		{#if view === 'loading'}
 			<p class="text-sm text-mist">Checking this browser…</p>
 		{:else if view === 'unavailable'}
@@ -203,7 +197,7 @@
 				Any remaining credits and the account are both gone. Notes and transfers were never affected
 				by either.
 			</p>
-			<a href="/" class="btn btn-ghost mt-4 px-4">Back to Cinder</a>
+			<Button href="/" class="mt-4 px-4">Back to Cinder</Button>
 		{:else if view === 'signed-out' || view === 'expired'}
 			<h2 class="font-semibold">{view === 'expired' ? 'That session ended' : 'Sign in'}</h2>
 			<p class="mt-2 mb-4 text-sm leading-relaxed text-mist">
@@ -239,24 +233,24 @@
 				<!-- Always offered, never only at zero: a top-up is the model, and
 				     someone with two credits left who is about to send five files
 				     needs the button before they run out, not after. -->
-				<a class="btn btn-ember px-5" href="/pro">
+				<Button variant="ember" href="/pro" class="px-5">
 					{credits ? 'Add more credits' : 'Get Cinder Pro'}
-				</a>
-				<button class="btn btn-ghost px-5" onclick={handleSignOut}>Sign out</button>
+				</Button>
+				<Button class="px-5" onclick={handleSignOut}>Sign out</Button>
 				{#if confirmingDelete}
 					<!-- A second, deliberate press rather than a browser confirm dialog:
 					     the consequence is permanent and deserves a sentence, which a
 					     native dialog cannot style or a screen reader read in context. -->
-					<button class="btn btn-ember px-5" onclick={handleDelete}>
+					<Button variant="ember" class="px-5" onclick={handleDelete}>
 						Delete permanently
-					</button>
-					<button class="btn btn-ghost px-5" onclick={() => (confirmingDelete = false)}>
+					</Button>
+					<Button class="px-5" onclick={() => (confirmingDelete = false)}>
 						Keep my account
-					</button>
+					</Button>
 				{:else}
-					<button class="btn btn-ghost px-5" onclick={() => (confirmingDelete = true)}>
+					<Button class="px-5" onclick={() => (confirmingDelete = true)}>
 						Delete my account
-					</button>
+					</Button>
 				{/if}
 			</div>
 			{#if confirmingDelete}
@@ -266,31 +260,16 @@
 				</p>
 			{/if}
 		{/if}
-	</div>
+	</Card>
 
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What an account stores</h2>
-	<div class="record mt-4">
-		{#each stored as row (row.label)}
-			<div class="record-row">
-				<span class="record-label">{row.label}</span>
-				<span class="record-value">{row.value}</span>
-			</div>
-		{/each}
-	</div>
+	<RuleHead class="mt-10">What an account stores</RuleHead>
+	<StoredDataTable />
 
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What that means</h2>
-	<div class="mt-4 space-y-4">
-		{#each truths as row (row.title)}
-			<div class="card p-4">
-				<h3 class="font-medium text-body">{row.title}</h3>
-				<p class="mt-1 text-sm leading-relaxed text-mist">{row.body}</p>
-			</div>
-		{/each}
-	</div>
+	<TruthList title="What that means" rows={truths} />
 
 	<p class="mt-10 text-sm text-mist">
 		The rest of the threat model is on <a class="text-ember-ink underline" href="/security"
 			>the security page</a
 		>.
 	</p>
-</main>
+</BenchPage>

@@ -14,7 +14,7 @@
 	// says those. That line is what makes this file copyable to the next
 	// product without an edit.
 	import { startSignIn, type Provider } from '$lib/auth';
-	import ProviderButtons from './ProviderButtons.svelte';
+	import ProviderButtons from '../molecules/ProviderButtons.svelte';
 
 	let {
 		verb = 'Sign in',

@@ -72,9 +72,13 @@ describe('destruction claims', () => {
 	});
 
 	it('keeps the approved irreversible-reveal warning exactly as approved', () => {
-		const reveal = publicSurfaces['../routes/f/[locator]/+page.svelte'];
-		expect(reveal, 'the file reveal page must exist').toBeTruthy();
-		expect(flatten(reveal)).toContain(APPROVED_REVEAL_WARNING);
+		// Pinned to the component that renders the gate rather than to the route,
+		// because the warning now lives one level down. The guard is about the words
+		// reaching a person, not about which file holds them — but it still names ONE
+		// file, so deleting the warning cannot be hidden by moving it somewhere else.
+		const gate = publicSurfaces['./ui/organisms/RevealGate.svelte'];
+		expect(gate, 'the reveal gate must exist').toBeTruthy();
+		expect(flatten(gate)).toContain(APPROVED_REVEAL_WARNING);
 	});
 
 	it('names the delivery promise as an attempt, on every file surface', () => {

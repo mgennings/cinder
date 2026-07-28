@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
+	import Button from '../atoms/Button.svelte';
+	import TextInput from '../atoms/TextInput.svelte';
 
 	let { link }: { link: string } = $props();
 	let copied = $state(false);
@@ -13,15 +15,15 @@
 
 <div in:fade={{ duration: 300 }} class="flex flex-col gap-3">
 	<div class="flex items-stretch gap-2">
-		<input
+		<TextInput
 			readonly
 			value={link}
 			aria-label="Your one-time link"
-			class="field min-w-0 flex-1 truncate px-4 py-3 font-mono text-sm text-ember-soft"
+			class="min-w-0 flex-1 truncate px-4 py-3 font-mono text-sm text-ember-soft"
 		/>
-		<button onclick={copy} class="btn btn-ember shrink-0 px-4 py-3 text-sm">
+		<Button variant="ember" onclick={copy} class="shrink-0 px-4 py-3 text-sm">
 			{copied ? 'Copied' : 'Copy'}
-		</button>
+		</Button>
 	</div>
 
 	<p class="text-xs leading-relaxed text-ghost">

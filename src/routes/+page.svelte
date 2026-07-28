@@ -1,6 +1,9 @@
 <script lang="ts">
+	// THE SENDING ROUTE. It owns exactly one thing the UI layer must never own:
+	// the orchestration between this browser's crypto and the server that will
+	// hold the ciphertext. Every pixel below it belongs to a component.
 	import { onMount } from 'svelte';
-	import { fade, fly } from 'svelte/transition';
+	import { fly } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { encryptNote } from '$lib/crypto/note-crypto';
 	import {
@@ -24,17 +27,16 @@
 	import { buildLink, buildFileLink, buildTransferLink, derivePartLocator } from '$lib/link';
 	import { capabilityGrant, CAPABILITY_MULTIPART_TRANSFER } from '$lib/entitlement';
 	import { entitlement, signedIn, identityConfigured } from '$lib/auth';
-	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
-	import CopyLink from '$lib/ui/CopyLink.svelte';
-	import Merkaba from '$lib/ui/Merkaba.svelte';
-	import { terrain } from '$lib/ui/terrain';
+	import { PRO_PRICE, PRO_CREDITS } from '$lib/pro';
+	import Merkaba from '$lib/ui/atoms/Merkaba.svelte';
+	import Wordmark from '$lib/ui/atoms/Wordmark.svelte';
+	import VaultPage from '$lib/ui/templates/VaultPage.svelte';
+	import SendComposer, { type Phase } from '$lib/ui/organisms/SendComposer.svelte';
+	import LinkReadyPanel from '$lib/ui/organisms/LinkReadyPanel.svelte';
+	import SiteFooter from '$lib/ui/organisms/SiteFooter.svelte';
+	import { humanSize } from '$lib/ui/format';
 
-	type Mode = 'note' | 'file';
-	// The sender's journey, named by what is actually happening. Every one of
-	// these is a state a person can be looking at, so each gets real words.
-	type Phase = 'idle' | 'encrypting' | 'uploading' | 'finalizing';
-
-	let mode: Mode = $state('note');
+	let mode = $state('note');
 	let text = $state('');
 	let file: File | null = $state(null);
 	let passphrase = $state('');
@@ -62,41 +64,12 @@
 
 	let aborter: AbortController | null = null;
 
-	// After the link appears, focus has to land on it — otherwise a keyboard
-	// user is silently returned to the top of the document at the exact moment
-	// the thing they came for is on screen.
-	let readyHeading: HTMLElement | null = $state(null);
-	$effect(() => {
-		if (link) readyHeading?.focus();
-	});
-
 	// A Svelte transition is a WAAPI animation, which no CSS rule can stop —
 	// `prefers-reduced-motion` has to be honored here, at its source.
 	const dur = (ms: number) => (prefersReducedMotion.current ? 0 : ms);
 
 	const busy = $derived(phase !== 'idle');
 	const ready = $derived(mode === 'note' ? text.trim().length > 0 : file !== null);
-
-	const ttlOptions = [
-		{ value: '3600', label: '1 hour' },
-		{ value: '86400', label: '1 day' },
-		{ value: '604800', label: '7 days' }
-	];
-
-	const phaseLabel: Record<Phase, string> = {
-		idle: '',
-		encrypting: 'Encrypting on this device…',
-		finalizing: 'Verifying the stored copy…',
-		uploading: 'Uploading encrypted bytes…'
-	};
-
-	// Deliberately decimal MB, matching what a phone's file browser shows the
-	// person. Agreeing with their operating system beats being pedantic.
-	function humanSize(bytes: number): string {
-		if (bytes < 1000) return `${bytes} bytes`;
-		if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(0)} KB`;
-		return `${(bytes / (1000 * 1000)).toFixed(1)} MB`;
-	}
 
 	const maxLabel = `${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MiB`;
 	const maxProLabel = `${Math.round(MAX_TRANSFER_BYTES / (1024 * 1024))} MiB`;
@@ -275,221 +248,44 @@
 	/>
 </svelte:head>
 
-<main
-	{@attach terrain()}
-	class="vault-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-16"
->
-	<div class="relative w-full max-w-lg">
-		<header class="mb-8 text-center">
-			<!-- The merkaba as a crest: two counter-rotating tetrahedra = two-factor, made visible. -->
-			<div class="relative mx-auto mb-5 h-24 w-24">
-				<Merkaba size={96} />
-			</div>
-			<h1 class="text-3xl font-bold tracking-tight">
-				Cinder<span class="text-ember">.</span>
-			</h1>
-			<p class="mt-2 text-sm text-mist">
-				One retrieval from Cinder. Encrypted in your browser — we never see it.
-			</p>
-		</header>
+<VaultPage>
+	{#snippet header()}
+		<!-- The merkaba as a crest: two counter-rotating tetrahedra = two-factor, made visible. -->
+		<div class="relative mx-auto mb-5 h-24 w-24">
+			<Merkaba size={96} />
+		</div>
+		<Wordmark as="heading" />
+		<p class="mt-2 text-sm text-mist">
+			One retrieval from Cinder. Encrypted in your browser — we never see it.
+		</p>
+	{/snippet}
 
-		{#if link}
-			<section in:fly={{ y: 12, duration: dur(350) }} class="card p-6">
-				<h2
-					bind:this={readyHeading}
-					tabindex="-1"
-					class="mb-1 text-sm font-semibold text-ember-ink outline-none"
-				>
-					Your one-time link is ready
-				</h2>
-				<p class="mb-4 text-xs text-ghost">Opening is safe. Reveal removes Cinder's stored copy.</p>
-				<CopyLink {link} />
-				<button onclick={reset} class="link-quiet mt-5 text-xs">Send something else</button>
-			</section>
-		{:else}
-			<section class="card p-6">
-				<fieldset>
-					<legend class="sr-only">What are you sending?</legend>
-					<div class="seg">
-						<label class="seg-option">
-							<input type="radio" name="mode" value="note" bind:group={mode} disabled={busy} />
-							Note
-						</label>
-						<label class="seg-option">
-							<input type="radio" name="mode" value="file" bind:group={mode} disabled={busy} />
-							File
-						</label>
-					</div>
-				</fieldset>
+	{#if link}
+		<div in:fly={{ y: 12, duration: dur(350) }}>
+			<LinkReadyPanel {link} onreset={reset} />
+		</div>
+	{:else}
+		<SendComposer
+			bind:mode
+			bind:text
+			bind:passphrase
+			bind:usePassphrase
+			bind:ttl
+			{file}
+			{parts}
+			{credits}
+			{busy}
+			{phase}
+			{uploaded}
+			{ready}
+			{error}
+			{needsPro}
+			{dur}
+			onpick={pickFile}
+			oncreate={create}
+			oncancel={cancel}
+		/>
+	{/if}
 
-				{#if mode === 'note'}
-					<div class="mt-4">
-						<textarea
-							bind:value={text}
-							aria-label="Your secret note"
-							placeholder="Type your secret. It never leaves this device unencrypted."
-							rows="6"
-							class="field resize-none px-4 py-3 text-base leading-relaxed"
-						></textarea>
-					</div>
-				{:else}
-					<div class="mt-4">
-						<label for="file-input" class="mb-2 block text-sm text-mist">
-							Choose one file, up to {maxLabel} — or up to {maxProLabel} with Pro
-						</label>
-						<input
-							id="file-input"
-							type="file"
-							onchange={pickFile}
-							disabled={busy}
-							class="field cursor-pointer px-4 py-3 text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-ink-raised file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-body"
-						/>
-						{#if file}
-							<!-- Size first: right-truncation was eating it entirely on a long
-							     filename, leaving only a name the file input already shows. -->
-							<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs text-ghost">
-								{humanSize(file.size)} · <span class="break-all">{file.name}</span>
-							</p>
-							{#if parts > 1}
-								<!-- Said here, at the moment the file is chosen, rather than at the
-								     moment it fails — and the PRICE is said in the same breath as
-								     the piece count, before anything is encrypted. Encrypting 200 MB
-								     and then mentioning the cost is the failure mode this avoids.
-								     The recipient is shown the same piece count before they press
-								     anything. -->
-								<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist">
-									Over {maxLabel}, so this goes in {parts} pieces and costs up to 1 Cinder Pro credit{credits ===
-									null
-										? ''
-										: `, out of the ${creditWord(credits)} on this account`}. Each piece is deleted
-									before it is handed over, exactly as one file is. Up to 1, because one credit buys
-									about fifteen minutes of permission to send big: anything else you start in that
-									window, in this tab, costs nothing more. If any piece fails on the way to your
-									recipient, the whole transfer is permanently gone — there is no retry, and the
-									credit is spent either way. Cinder cannot see which transfer failed, which is the
-									same reason it can never see who you sent it to.
-								</p>
-								{#if credits === 0}
-									<!-- Zero is a state, not a fault. It says what still works before
-									     it says what to do about it. -->
-									<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist">
-										This account has no credits left. Nothing is broken — anything under {maxLabel} sends
-										free, with no account, the way it always has. {PRO_PRICE} adds {PRO_CREDITS} large
-										sends. <a class="underline underline-offset-2" href="/pro">Top up</a>.
-									</p>
-								{/if}
-							{/if}
-						{/if}
-					</div>
-				{/if}
-
-				<div class="mt-4 flex flex-wrap items-center gap-4">
-					<!-- A plain div, not a wrapping label: wrapping the select made its
-					     accessible name concatenate every option ("Expires after 1 hour1
-					     day7 days if unread"). flex-wrap because at 200% zoom on a 320px
-					     screen "if unread" was pushed 130px offscreen inside an
-					     overflow-hidden main — unreachable, and it is the qualifier that
-					     makes the sentence true. -->
-					<div class="flex flex-wrap items-center gap-2 text-sm text-mist">
-						<label for="ttl">Expires after</label>
-						<select
-							id="ttl"
-							aria-describedby="ttl-note"
-							bind:value={ttl}
-							disabled={busy}
-							class="field w-auto px-2 py-1.5 text-sm"
-						>
-							{#each ttlOptions as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-						<span id="ttl-note">if unread</span>
-					</div>
-
-					<!-- min-h-11 on the LABEL: the checkbox itself is 20px, but the
-					     label is the real hit area and it measured 20px tall. -->
-					<label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-mist">
-						<input type="checkbox" bind:checked={usePassphrase} disabled={busy} class="accent-ember" />
-						Add a passphrase
-					</label>
-				</div>
-
-				{#if usePassphrase}
-					<div in:fade={{ duration: dur(200) }} class="mt-3">
-						<input
-							type="password"
-							bind:value={passphrase}
-							disabled={busy}
-							aria-label="Passphrase" placeholder="Passphrase (needed to open, on top of the link)"
-							class="field px-4 py-2.5 text-sm"
-						/>
-						<p class="mt-1.5 text-xs text-ghost">
-							Two-factor: the reader needs both the link and this passphrase. Share the passphrase
-							separately.
-						</p>
-					</div>
-				{/if}
-
-				{#if error}
-					<p in:fade={{ duration: dur(200) }} role="alert" class="mt-3 text-sm text-ember-ink">
-						{error}
-						<!-- Being told a thing needs Pro, with no way to get Pro, is a dead
-						     end. The link goes to the pay point, where the price and what
-						     Stripe sees are stated before any button exists to press. -->
-						{#if needsPro}
-							<a class="underline underline-offset-2" href="/pro">See what Pro costs</a>.
-						{/if}
-					</p>
-				{/if}
-
-				{#if busy}
-					<div in:fade={{ duration: dur(150) }} class="mt-5">
-						<!-- One live region for the whole sequence, so a screen reader hears
-						     each phase once instead of a stream of percentage changes. -->
-						<p aria-live="polite" class="mb-2 text-xs text-mist">{phaseLabel[phase]}</p>
-						{#if phase === 'uploading'}
-							<progress class="progress" aria-label={phaseLabel[phase]} max="1" value={uploaded}
-							></progress>
-						{:else}
-							<!-- A separate element, not `value={undefined}`: that sets the
-							     property, which coerces to 0 and reads as "0 percent"
-							     under a label that says "verifying". -->
-							<progress class="progress" aria-label={phaseLabel[phase]}></progress>
-						{/if}
-						{#if phase === 'uploading'}
-							<button onclick={cancel} class="link-quiet mt-3 text-xs">Cancel</button>
-						{/if}
-					</div>
-				{:else}
-					<button onclick={create} disabled={!ready} class="btn btn-ember mt-5 w-full py-3 text-sm">
-						Create one-time link
-					</button>
-				{/if}
-			</section>
-		{/if}
-
-		<footer class="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-center text-xs">
-			<a href="/security" class="link-quiet">How private is this, really?</a>
-			<a href="/field-notes" class="link-quiet">Field notes</a>
-			<!--
-				The only way in to an account, and deliberately the quietest thing on
-				the page. Sending needs no account and never will, so this must not
-				read as a signup prompt on a product whose whole argument is that it
-				does not know who you are. But someone who HAS paid needs a way back
-				to their balance, and until this existed there was none: /account was
-				reachable only from one sentence inside /security.
-			-->
-			{#if identityConfigured()}
-				<a href={signedIn() ? '/account' : '/pro'} class="link-quiet">
-					{#if credits !== null}
-						{creditWord(credits)}
-					{:else if signedIn()}
-						Your account
-					{:else}
-						Cinder Pro
-					{/if}
-				</a>
-			{/if}
-		</footer>
-	</div>
-</main>
+	<SiteFooter {credits} />
+</VaultPage>

@@ -25,6 +25,10 @@
 		type SignInFailure
 	} from '$lib/auth';
 	import SignInPanel from './SignInPanel.svelte';
+	import Card from '../atoms/Card.svelte';
+	import Button from '../atoms/Button.svelte';
+	import Wordmark from '../atoms/Wordmark.svelte';
+	import LiveRegion from '../atoms/LiveRegion.svelte';
 
 	let {
 		title,
@@ -106,11 +110,11 @@
 </script>
 
 <main class="bench mx-auto flex min-h-dvh max-w-md flex-col justify-center px-5 py-16">
-	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
+	<Wordmark />
 
-	<p aria-live="polite" class="sr-only">{announcement}</p>
+	<LiveRegion message={announcement} />
 
-	<div class="card mt-8 p-6">
+	<Card class="mt-8 p-6">
 		{#if view === 'loading'}
 			<p class="text-sm text-mist">Checking this browser…</p>
 		{:else if view === 'unavailable'}
@@ -119,16 +123,16 @@
 				Cinder Pro has not launched here. Sending under the free size limit works exactly as it
 				always has, with no account at all.
 			</p>
-			<a href="/" class="btn btn-ghost mt-5 px-4">Back to Cinder</a>
+			<Button href="/" class="mt-5 px-4">Back to Cinder</Button>
 		{:else if view === 'signed-in'}
 			<h1 class="text-xl font-semibold">You are already signed in</h1>
 			<p class="mt-2 text-sm leading-relaxed text-mist">
 				Nothing to do here. This browser already holds a session.
 			</p>
 			<div class="mt-5 flex flex-col gap-2 sm:flex-row">
-				<a class="btn btn-ember px-5" href={next ?? '/account'}>Continue</a>
+				<Button variant="ember" class="px-5" href={next ?? '/account'}>Continue</Button>
 				{#if next}
-					<a class="btn btn-ghost px-5" href="/account">Your account</a>
+					<Button class="px-5" href="/account">Your account</Button>
 				{/if}
 			</div>
 		{:else}
@@ -148,7 +152,7 @@
 				{@render note()}
 			</div>
 		{/if}
-	</div>
+	</Card>
 
 	{#if view === 'ready' || view === 'expired'}
 		<p class="mt-6 text-center text-sm text-mist">

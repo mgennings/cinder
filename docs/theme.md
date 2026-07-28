@@ -8,6 +8,26 @@ small on purpose, and most "improvements" that ignore it make it worse.
 The whole thing lives in one file: [`src/app.css`](../src/app.css). Components
 compose a handful of classes from it and stay dumb.
 
+**The classes are not the API any more.** `src/lib/ui/` wraps every one of them
+in a component, arranged by level:
+
+| Level | Where | What lives there |
+| --- | --- | --- |
+| Atoms | `src/lib/ui/atoms/` | `Button`, `Card`, `TextInput`, `Select`, `Checkbox`, `FileInput`, `TextArea`, `ProgressBar`, `PulseDot`, `QuietLink`, `RuleHead`, `Alert`, `LiveRegion`, `Wordmark`, `Merkaba` |
+| Molecules | `src/lib/ui/molecules/` | `Record`, `RecordRow`, `SegmentedChoice`, `PhaseProgress`, `TruthCard`, `CopyLink`, `ProviderButtons` |
+| Organisms | `src/lib/ui/organisms/` | `SendComposer`, `RevealGate`, `TransferRecord`, `LinkReadyPanel`, `OutcomePanel`, `StoredDataTable`, `PaymentDisclosure`, `TruthList`, `SignInPanel`, `AuthDoor`, `SiteFooter` |
+| Templates | `src/lib/ui/templates/` | `VaultPage` (the signature surface), `BenchPage` (the reading surfaces) |
+
+Reach for the component, not the class. Writing `class="btn btn-ember"` by hand
+is how the 44px floor, the focus halo, and the disabled state drift apart on the
+one control a person has to press. A route that needs a surface `app.css` does
+not have yet adds the rule here first, then the atom that owns it.
+
+Organisms hold product copy; atoms and molecules never do. That line is what
+keeps a shipped sentence findable — every user-facing string in the sending and
+receiving journeys lives in exactly one organism, and `src/lib/claims.test.ts`
+pins the reveal warning to `organisms/RevealGate.svelte` by name.
+
 ## The thesis
 
 > Warm near-black surfaces, tasteful depth, earned glow, high trust. A haunted

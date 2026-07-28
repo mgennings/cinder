@@ -1,4 +1,11 @@
 <script lang="ts">
+	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
+	import Button from '$lib/ui/atoms/Button.svelte';
+	import Card from '$lib/ui/atoms/Card.svelte';
+	import RuleHead from '$lib/ui/atoms/RuleHead.svelte';
+	import Record from '$lib/ui/molecules/Record.svelte';
+	import RecordRow from '$lib/ui/molecules/RecordRow.svelte';
+	import TruthCard from '$lib/ui/molecules/TruthCard.svelte';
 	// House format, and it is not optional: plain words first, technical record
 	// second, on one page. The people most affected by a privacy decision are
 	// rarely the people who can read a config file, so they read first.
@@ -62,25 +69,20 @@
 	/>
 </svelte:head>
 
-<main class="bench mx-auto max-w-2xl px-5 py-16">
-	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
-
+<BenchPage>
 	<p class="util mt-8">
 		Field note 001 · Decision gate
 	</p>
 	<h1 class="mt-3 text-3xl font-bold tracking-tight">The vote to stay blind</h1>
 
-	<div class="record mt-7">
+	<Record class="mt-7">
 		{#each record as row (row.label)}
-			<div class="record-row">
-				<span class="record-label">{row.label}</span>
-				<span class="record-value">{row.value}</span>
-			</div>
+			<RecordRow label={row.label}>{row.value}</RecordRow>
 		{/each}
-	</div>
+	</Record>
 
 	<!-- ── Half one: for everybody ─────────────────────────────────────── -->
-	<h2 class="rule-head mt-12 text-lg font-semibold text-ember-ink">In plain words</h2>
+	<RuleHead class="mt-12">In plain words</RuleHead>
 
 	<div class="mt-4 space-y-4 text-[15px] leading-relaxed text-mist">
 		<p>
@@ -124,7 +126,7 @@
 		</p>
 	</div>
 
-	<div class="card mt-6 border-l-2 border-l-ember p-5">
+	<Card class="mt-6 border-l-2 border-l-ember p-5">
 		<h3 class="font-medium text-body">One more thing, and it is the uncomfortable part</h3>
 		<p class="mt-2 text-sm leading-relaxed text-mist">
 			While checking all this, we found that Cinder had been lying. When it was too busy to start, it
@@ -134,9 +136,9 @@
 			That is fixed, and it is written down here rather than quietly patched, because a tool that asks
 			you to trust it does not get to hide its own mistakes.
 		</p>
-	</div>
+	</Card>
 
-	<h2 class="rule-head mt-12 text-lg font-semibold text-ember-ink">Why this document is also the test</h2>
+	<RuleHead class="mt-12">Why this document is also the test</RuleHead>
 	<div class="mt-4 space-y-4 text-[15px] leading-relaxed text-mist">
 		<p>
 			The PDF of this note was sent through Cinder before it was published. Not a stand-in, not a
@@ -169,7 +171,7 @@
 
 	<!-- ── Half two: for engineers ─────────────────────────────────────── -->
 	<hr class="mt-12 border-line" />
-	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">The technical record</h2>
+	<RuleHead class="mt-10">The technical record</RuleHead>
 	<p class="mt-3 text-sm leading-relaxed text-ghost">
 		Measured against the live production system, not a local copy or a simulation.
 	</p>
@@ -186,14 +188,11 @@
 	</p>
 
 	<h3 class="mt-8 font-medium text-body">The rejected option, and what it retains</h3>
-	<div class="record mt-3">
+	<Record class="mt-3">
 		{#each retained as r (r.mechanism)}
-			<div class="record-row flex-col items-start gap-1">
-				<span class="record-label">{r.mechanism}</span>
-				<span class="record-value !text-left text-mist">{r.keeps}</span>
-			</div>
+			<RecordRow label={r.mechanism} stacked class="text-mist">{r.keeps}</RecordRow>
 		{/each}
-	</div>
+	</Record>
 
 	<h3 class="mt-8 font-medium text-body">The measurements that decided it</h3>
 	<pre class="field mt-3 overflow-x-auto px-4 py-3 font-mono text-[12px] leading-relaxed text-ember-ink">40 concurrent claims   → exactly 10 × 200, 30 × 503
@@ -215,10 +214,7 @@ during the flood       Throttles 286 · Invocations 27 · Errors 0
 	<h3 class="mt-8 font-medium text-body">Four claims that did not survive audit</h3>
 	<div class="mt-3 space-y-3">
 		{#each wrong as w (w.claim)}
-			<div class="card p-4">
-				<h4 class="text-sm font-medium text-body">{w.claim}</h4>
-				<p class="mt-1 text-sm leading-relaxed text-mist">{w.reality}</p>
-			</div>
+			<TruthCard level={4} title={w.claim} body={w.reality} />
 		{/each}
 	</div>
 
@@ -231,13 +227,13 @@ during the flood       Throttles 286 · Invocations 27 · Errors 0
 	</p>
 
 	<h3 class="mt-8 font-medium text-body">The transferable principle</h3>
-	<div class="record mt-3">
-		<div class="record-row"><span class="record-label">One</span><span class="record-value">A refusal is not a destruction</span></div>
-		<div class="record-row"><span class="record-label">Two</span><span class="record-value">Prefer guarantees whose shape makes failure impossible</span></div>
-		<div class="record-row"><span class="record-label">Three</span><span class="record-value">A control's data appetite is part of its price</span></div>
-		<div class="record-row"><span class="record-label">Four</span><span class="record-value">Audit the protection you just shipped</span></div>
-		<div class="record-row"><span class="record-label">Five</span><span class="record-value">Byte-identical is not the same as usable</span></div>
-	</div>
+	<Record class="mt-3">
+		<RecordRow label="One">A refusal is not a destruction</RecordRow>
+		<RecordRow label="Two">Prefer guarantees whose shape makes failure impossible</RecordRow>
+		<RecordRow label="Three">A control's data appetite is part of its price</RecordRow>
+		<RecordRow label="Four">Audit the protection you just shipped</RecordRow>
+		<RecordRow label="Five">Byte-identical is not the same as usable</RecordRow>
+	</Record>
 
 	<p class="mt-8 border-l-2 border-ember pl-4 text-sm leading-relaxed text-ghost">
 		Cinder is open source. The measurements, the corrections, and the code that makes these claims
@@ -245,7 +241,7 @@ during the flood       Throttles 286 · Invocations 27 · Errors 0
 	</p>
 
 	<div class="mt-10 flex flex-wrap gap-3">
-		<a href="/security" class="btn btn-ghost px-5 py-2.5 text-sm">How private is this, really?</a>
-		<a href="/" class="btn btn-ghost px-5 py-2.5 text-sm">Send something</a>
+		<Button href="/security" class="px-5 py-2.5 text-sm">How private is this, really?</Button>
+		<Button href="/" class="px-5 py-2.5 text-sm">Send something</Button>
 	</div>
-</main>
+</BenchPage>
