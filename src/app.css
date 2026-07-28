@@ -193,6 +193,36 @@ body {
 	text-rendering: optimizeLegibility;
 }
 
+/* NO ORPHANS. A single word stranded on its own last line is the most common
+   way careful copy stops looking careful, and on a phone it happens constantly
+   because the measure is narrow. `pretty` asks the browser to reflow the last
+   few lines to avoid a short final line; `balance` evens the lines of a short
+   block, which is what a heading wants and what a paragraph does not.
+   Deliberately split that way: `balance` on a long paragraph is capped by the
+   browser anyway (around six lines) and reads worse than `pretty` when it is
+   not.
+
+   Both degrade to ordinary wrapping where unsupported, so nothing here is a
+   dependency — the text simply looks the way it used to. */
+p,
+li,
+dd,
+figcaption,
+blockquote,
+.text-pretty {
+	text-wrap: pretty;
+}
+
+h1,
+h2,
+h3,
+h4,
+legend,
+caption,
+.text-balance {
+	text-wrap: balance;
+}
+
 /* Ember-tinted selection — a small, consistent tell that this is Cinder. */
 ::selection {
 	background: color-mix(in oklab, var(--color-ember) 30%, transparent);
