@@ -32,6 +32,18 @@ Parameters:
     Type: String
     Default: mattos-identity
     Description: Cognito hosted-UI domain prefix (must be globally unique in the region)
+  # The name a person actually reads on Google's and Apple's consent screens.
+  # Both providers show the domain the OAuth flow runs on, so the raw
+  # `mattos-identity.auth.us-east-1.amazoncognito.com` was the first thing
+  # anyone saw before handing over an identity. This is that defect's fix.
+  IdentityCustomDomain:
+    Type: String
+    Default: auth.cinder.ink
+    Description: Custom hosted-UI domain (parent domain must already resolve via an A record)
+  IdentityCustomDomainCertArn:
+    Type: String
+    Default: arn:aws:acm:us-east-1:553806908724:certificate/a703e418-e876-4f30-be20-2312ba89f07a
+    Description: ACM cert for IdentityCustomDomain — must be in us-east-1, Cognito attaches it to CloudFront
   AppleServicesId:
     Type: String
     Description: Apple Services ID, e.g. org.uxuiai.cinder.signin
@@ -632,6 +644,30 @@ Resources:
       Domain: !Ref IdentityDomainPrefix
       UserPoolId: !Ref MattosUserPool
 
+  # A pool may carry a prefix domain AND a custom domain at the same time —
+  # AWS: "You can set up a user pool with both a custom domain and a prefix
+  # domain that's owned by AWS." That is what makes the cutover safe: this
+  # resource ADDS auth.cinder.ink without taking the prefix domain away, so
+  # live sign-in keeps working while Apple and Google are re-pointed by hand.
+  # Retire the prefix domain only after both consoles name the custom one.
+  #
+  # ManagedLoginVersion 1 on purpose: the pool is UserPoolTier LITE and the
+  # prefix domain already serves the classic hosted UI. Version 2 (managed
+  # login) would make the two domains render differently for the same pool.
+  #
+  # Cognito does NOT create the DNS record. After this resource exists, point
+  # auth.cinder.ink at !GetAtt MattosUserPoolCustomDomain.CloudFrontDistribution
+  # with an A ALIAS in the cinder.ink zone (Z073855230DF25J9RR4B7). DNS for
+  # this stack lives outside it, as the four site aliases already do.
+  MattosUserPoolCustomDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref IdentityCustomDomain
+      UserPoolId: !Ref MattosUserPool
+      ManagedLoginVersion: 1
+      CustomDomainConfig:
+        CertificateArn: !Ref IdentityCustomDomainCertArn
+
   # Sign in with Apple is the first-class path, and it is first-class in the
   # only way that means anything: `authorize_scopes` is empty, so Cinder asks
   # Apple for no name and no email — not even the private relay address. The
@@ -1039,7 +1075,13 @@ Outputs:
     Value: !Sub 'https://${IdentityApi}.execute-api.${AWS::Region}.amazonaws.com'
   IdentityHostedUi:
     Description: Cognito hosted-UI origin (VITE_IDENTITY_HOSTED_UI)
+    Value: !Sub 'https://${IdentityCustomDomain}'
+  IdentityHostedUiPrefix:
+    Description: Legacy prefix hosted-UI origin, still serving during the cutover
     Value: !Sub 'https://${IdentityDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+  IdentityCustomDomainAliasTarget:
+    Description: CloudFront target for the auth.cinder.ink A ALIAS record
+    Value: !GetAtt MattosUserPoolCustomDomain.CloudFrontDistribution
   CinderClientId:
     Description: App client ID for Cinder (VITE_IDENTITY_CLIENT_ID)
     Value: !Ref CinderAppClient

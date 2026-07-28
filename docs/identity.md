@@ -135,12 +135,16 @@ In the [Apple Developer portal](https://developer.apple.com/account/resources):
    `org.uxuiai.cinder.signin` → template parameter `AppleServicesId`.
 3. Configure that Services ID → **Sign in with Apple**:
    - *Primary App ID*: the App ID from step 1.
-   - *Domains and Subdomains*: `mattos-identity.auth.us-east-1.amazoncognito.com`
-   - *Return URLs*: `https://mattos-identity.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`
+   - *Domains and Subdomains*: `auth.cinder.ink`
+   - *Return URLs*: `https://auth.cinder.ink/oauth2/idpresponse`
 
    Both values come from the `IdentityHostedUi` stack output. Apple rejects a
    domain it cannot verify, so the pool domain must exist first — deploy the
    stack once with placeholder Apple values, or create the domain by hand.
+
+   Apple accepts several domains and several return URLs at once. During the
+   cutover in section 6, the old `mattos-identity.auth.us-east-1.amazoncognito.com`
+   pair stays listed alongside these until the new one is proven.
 4. **Keys → +** — name `mattOS Sign in with Apple`, enable **Sign in with Apple**,
    configure it against the App ID from step 1, then **Download** the `.p8`.
    Apple lets you download it exactly once.
@@ -155,13 +159,33 @@ correctly shows nothing being shared.
 
 In the [Google Cloud console](https://console.cloud.google.com/apis/credentials):
 
-1. **OAuth consent screen** — External, app name `Cinder`, support email, and no
-   scopes beyond the non-sensitive `openid`. An app requesting only `openid` does
-   not require verification.
-2. **Credentials → Create credentials → OAuth client ID → Web application**:
-   - *Authorized JavaScript origins*: `https://mattos-identity.auth.us-east-1.amazoncognito.com`
-   - *Authorized redirect URIs*: `https://mattos-identity.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`
-3. The **Client ID** → `GoogleClientId`; the **Client secret** → `GoogleClientSecret`.
+1. **OAuth consent screen → Branding** — these are the fields that decide what a
+   person reads on the Google consent screen, and none of them is settable by
+   any API. There is no public Google Cloud API for consent-screen branding;
+   `gcloud`, the IAM API, and the OAuth2 API all expose the client, never the
+   brand. This step is console-only, every time.
+   - *App name*: `Cinder`
+   - *User support email*: Matt's address
+   - *App logo*: upload `static/brand/cinder-icon-512.png` — square, PNG, under
+     1 MB. Google downsamples it to 120×120, so the 512 is the right source.
+   - *Application home page*: `https://cinder.ink`
+   - *Privacy policy* and *Terms of service*: the cinder.ink pages
+   - *Authorized domains*: `cinder.ink`
+   - *Developer contact*: Matt's address
+
+   Uploading a logo puts the brand into Google's verification queue. The app
+   itself still needs no verification, because it requests only the
+   non-sensitive `openid` scope. Sign-in keeps working while the logo review is
+   pending; only the logo waits.
+2. **OAuth consent screen → Audience** — External.
+3. **Credentials → Create credentials → OAuth client ID → Web application**:
+   - *Authorized JavaScript origins*: `https://auth.cinder.ink`
+   - *Authorized redirect URIs*: `https://auth.cinder.ink/oauth2/idpresponse`
+
+   Google accepts several of each. During the cutover in section 6, the old
+   `mattos-identity.auth.us-east-1.amazoncognito.com` origin and redirect URI
+   stay listed alongside the new ones until the new one is proven.
+4. The **Client ID** → `GoogleClientId`; the **Client secret** → `GoogleClientSecret`.
 
 ### 3. The pepper
 
@@ -201,3 +225,96 @@ curl -s -X POST "$IDENTITY_API/entitlement" -H 'authorization: Bearer forged.tok
 Then sign in at `/account` and confirm in the Cognito console that the created
 user has **no** email, name, or phone attribute. If any attribute is populated,
 an `AttributeMapping` or a scope is wrong and the promise on `/account` is false.
+
+### 6. Cutover to auth.cinder.ink
+
+Google and Apple both show the domain the OAuth flow runs on. Before this
+cutover a person handing over an identity read
+`mattos-identity.auth.us-east-1.amazoncognito.com` on Google's consent screen,
+which is a trust defect on the one screen where trust is the whole product.
+
+The cutover is additive at every step, so live sign-in never stops. A user pool
+may carry a prefix domain and a custom domain simultaneously — AWS: "You can set
+up a user pool with both a custom domain and a prefix domain that's owned by
+AWS." Both serve `/oauth2/authorize` and `/oauth2/idpresponse` independently.
+Only the OIDC discovery endpoint differs, and Cinder does not use it.
+
+Already done, in AWS, verified:
+
+- ACM certificate for `auth.cinder.ink` in us-east-1, DNS-validated, `ISSUED`:
+  `arn:aws:acm:us-east-1:553806908724:certificate/a703e418-e876-4f30-be20-2312ba89f07a`
+  (the existing four-name cert does not cover an auth subdomain and ACM cannot
+  gain a SAN after issue, so this is a second certificate, not an edit).
+- Parent-domain precondition: `cinder.ink` has an A ALIAS to
+  `d1v6mxepibwneb.cloudfront.net` and resolves. Cognito refuses a custom domain
+  whose parent does not resolve, and an SOA record does not count.
+- `auth.cinder.ink` itself has no record yet, which is what Cognito requires.
+
+Run in this order. Do not reorder steps 2 and 3.
+
+1. **Deploy the stack.** `MattosUserPoolCustomDomain` is new; nothing else in the
+   identity block changes. This creates a CloudFront distribution and takes a
+   few minutes. The prefix domain is untouched and sign-in keeps working.
+
+2. **Point DNS at it.** Take `IdentityCustomDomainAliasTarget` from the stack
+   outputs and create the A ALIAS. `Z2FDTNDATAQYW2` is CloudFront's fixed
+   hosted-zone id, not a value to look up:
+
+   ```bash
+   ALIAS=$(aws cloudformation describe-stacks --stack-name blip --region us-east-1 \
+     --query "Stacks[0].Outputs[?OutputKey=='IdentityCustomDomainAliasTarget'].OutputValue" --output text)
+   aws route53 change-resource-record-sets --hosted-zone-id Z073855230DF25J9RR4B7 \
+     --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{
+       \"Name\":\"auth.cinder.ink.\",\"Type\":\"A\",
+       \"AliasTarget\":{\"HostedZoneId\":\"Z2FDTNDATAQYW2\",\"DNSName\":\"$ALIAS\",
+       \"EvaluateTargetHealth\":false}}}]}"
+   ```
+
+   A brand-new custom domain can take up to an hour to propagate. Wait for a
+   `302` before going further:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     "https://auth.cinder.ink/login?client_id=$CLIENT_ID&response_type=code&scope=openid&redirect_uri=https://cinder.ink/account"
+   ```
+
+3. **Add the new URLs in both provider consoles. Add, never replace.** The old
+   entries stay until step 6, and that is what makes this reversible.
+
+   Apple — [developer.apple.com/account/resources](https://developer.apple.com/account/resources)
+   → Identifiers → Services IDs → `org.uxuiai.cinder.signin` → Configure:
+   - *Domains and Subdomains*: add `auth.cinder.ink`
+   - *Return URLs*: add `https://auth.cinder.ink/oauth2/idpresponse`
+   - Save. Apple verifies the domain resolves, which is why step 2 comes first.
+
+   Google — [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials)
+   → the Cinder web OAuth client:
+   - *Authorized JavaScript origins*: add `https://auth.cinder.ink`
+   - *Authorized redirect URIs*: add `https://auth.cinder.ink/oauth2/idpresponse`
+   - Save. Google's change can take a few minutes to take effect.
+
+   Same visit, OAuth consent screen → Branding: set *App name* to `Cinder`,
+   upload `static/brand/cinder-icon-512.png`, and set *Authorized domains* to
+   `cinder.ink`. Console-only; see section 2.
+
+4. **Flip the front end.** `.env.production`:
+
+   ```
+   VITE_IDENTITY_HOSTED_UI=https://auth.cinder.ink
+   ```
+
+   Rebuild and deploy the site. `vite.config.ts` derives the connect-src CSP
+   entry from this value, so a stale build blocks the new origin.
+
+5. **Verify by signing in, with Google, on a phone.** The consent screen must
+   read "to continue to cinder.ink" rather than an amazoncognito.com host. Then
+   confirm the created user still has no email, name, or phone attribute.
+
+6. **Retire the prefix domain — later, and only after step 5 passes twice.**
+   Remove the old origin and redirect URI from Google, the old domain and return
+   URL from Apple, then delete `MattosUserPoolDomain` from the template. Until
+   then it is the rollback: point `VITE_IDENTITY_HOSTED_UI` back at the prefix
+   host, rebuild, and sign-in is exactly what it was tonight.
+
+**Rollback at any step before 6** is that one environment variable and a
+redeploy. Nothing above deletes anything.
