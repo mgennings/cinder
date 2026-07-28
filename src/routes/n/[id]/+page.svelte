@@ -4,6 +4,7 @@
 	import { burnNote, NoteGoneError } from '$lib/api';
 	import { decryptNote, type EncryptedPayload } from '$lib/crypto/note-crypto';
 	import { parseFragmentKey } from '$lib/link';
+	import { terrain } from '$lib/ui/terrain';
 
 	type View = 'gate' | 'revealed' | 'gone' | 'error';
 
@@ -67,7 +68,10 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<main class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16">
+<main
+	{@attach terrain()}
+	class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16"
+>
 	<div class="w-full max-w-lg">
 		<header class="mb-8 text-center">
 			<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>

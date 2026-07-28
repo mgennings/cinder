@@ -10,6 +10,7 @@
 		type DecryptedFile
 	} from '$lib/crypto/file-crypto';
 	import { parseFragmentKey, parseFragmentParts, derivePartLocator } from '$lib/link';
+	import { terrain } from '$lib/ui/terrain';
 
 	type View = 'gate' | 'delivered' | 'gone' | 'lost' | 'busy' | 'error';
 
@@ -308,7 +309,10 @@
      announce. Atomic, so the whole sentence is read rather than a diff. -->
 <p aria-live="polite" aria-atomic="true" class="sr-only">{announcement}</p>
 
-<main class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16">
+<main
+	{@attach terrain()}
+	class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16"
+>
 	<div class="w-full max-w-lg">
 		<header class="mb-8 text-center">
 			<a href="/" class="btn btn-ghost !min-h-0 border-0 bg-transparent px-2 py-1 text-2xl font-bold tracking-tight">
@@ -413,11 +417,18 @@
 					<div class="record">
 						<div class="record-row">
 							<span class="record-label">File</span>
-							<span class="record-value" title={saved.name}>{middleTruncate(saved.name)}</span>
+							<!-- Mono for the two rows that are measurements rather than
+							     statements. A filename and a byte count are what the machine
+							     read off the bytes in this tab; the rows below them are
+							     claims about what the server did, and a claim set in mono
+							     borrows an authority it should have to earn in words. -->
+							<span class="record-value record-data break-all" title={saved.name}
+								>{middleTruncate(saved.name)}</span
+							>
 						</div>
 						<div class="record-row">
 							<span class="record-label">Size</span>
-							<span class="record-value">{humanSize(saved.bytes.length)}</span>
+							<span class="record-value record-data">{humanSize(saved.bytes.length)}</span>
 						</div>
 						{#if chunked}
 							<div class="record-row">

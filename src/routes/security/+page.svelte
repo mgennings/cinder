@@ -89,7 +89,7 @@
 	/>
 </svelte:head>
 
-<main class="mx-auto max-w-2xl px-5 py-16">
+<main class="bench mx-auto max-w-2xl px-5 py-16">
 	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
 
 	<h1 class="mt-8 text-2xl font-bold">How private is this, really?</h1>
@@ -100,7 +100,7 @@
 		picture.
 	</p>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder protects</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What Cinder protects</h2>
 	<div class="mt-4 space-y-4">
 		{#each protects as row (row.title)}
 			<div class="card p-4">
@@ -110,7 +110,7 @@
 		{/each}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">Sending a file</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">Sending a file</h2>
 	<div class="mt-4 space-y-4">
 		{#each files as row (row.title)}
 			<div class="card p-4">
@@ -120,7 +120,7 @@
 		{/each}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What Cinder can't protect</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What Cinder can't protect</h2>
 	<div class="mt-4 space-y-4">
 		{#each cannot as row (row.title)}
 			<div class="card p-4">
@@ -130,7 +130,7 @@
 		{/each}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">Accounts</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">Accounts</h2>
 	<div class="card mt-4 p-4">
 		<h3 class="font-medium text-body">Sending needs no account, and never will</h3>
 		<p class="mt-1 text-sm leading-relaxed text-mist">

@@ -27,6 +27,7 @@
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 	import CopyLink from '$lib/ui/CopyLink.svelte';
 	import Merkaba from '$lib/ui/Merkaba.svelte';
+	import { terrain } from '$lib/ui/terrain';
 
 	type Mode = 'note' | 'file';
 	// The sender's journey, named by what is actually happening. Every one of
@@ -274,7 +275,10 @@
 	/>
 </svelte:head>
 
-<main class="vault-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-16">
+<main
+	{@attach terrain()}
+	class="vault-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-16"
+>
 	<div class="relative w-full max-w-lg">
 		<header class="mb-8 text-center">
 			<!-- The merkaba as a crest: two counter-rotating tetrahedra = two-factor, made visible. -->

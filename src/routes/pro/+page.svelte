@@ -97,7 +97,7 @@
 	/>
 </svelte:head>
 
-<main class="mx-auto w-full max-w-2xl px-5 py-12">
+<main class="bench mx-auto w-full max-w-2xl px-5 py-12">
 	<p aria-live="polite" class="sr-only">{announcement}</p>
 
 	<h1 class="text-2xl font-semibold text-body">Cinder Pro</h1>

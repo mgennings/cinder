@@ -118,7 +118,7 @@
 	/>
 </svelte:head>
 
-<main class="mx-auto max-w-2xl px-5 py-16">
+<main class="bench mx-auto max-w-2xl px-5 py-16">
 	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
 
 	<h1 class="mt-8 text-2xl font-bold">An account, and nothing else</h1>
@@ -211,7 +211,7 @@
 		{/if}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What an account stores</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What an account stores</h2>
 	<div class="record mt-4">
 		{#each stored as row (row.label)}
 			<div class="record-row">
@@ -221,7 +221,7 @@
 		{/each}
 	</div>
 
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">What that means</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">What that means</h2>
 	<div class="mt-4 space-y-4">
 		{#each truths as row (row.title)}
 			<div class="card p-4">

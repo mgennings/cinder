@@ -127,9 +127,67 @@
 	}
 }
 
-html,
-body {
+/* =====================================================================
+   SIGNAL TERRAIN — the instrument substrate.
+
+   Deliberately NOT in @theme, and that is the enforcement, not a style
+   choice: a token inside @theme becomes a Tailwind utility, and the moment
+   `text-grid` exists somebody paints words with it. These are plain custom
+   properties, so the grid can only ever be reached from a rule in this
+   file — which means it can only ever be geometry.
+
+   It is not a second accent. Ember is still the only accent and still the
+   only thing allowed to carry meaning. This is the cold room the fire sits
+   in: a surveyor's grid under the glow, the same category of thing as the
+   film grain above, one step more deliberate. It never touches text, never
+   marks status, and never outlines a control.
+   ===================================================================== */
+:root {
+	--signal-grid: rgba(186, 210, 226, 0.055); /* the ruling itself — ash-blue, barely there */
+	--signal-grid-strong: rgba(186, 210, 226, 0.085); /* every fifth line, so the grid has a scale */
+	/* The SAME ruling for surfaces that are masked or faded. A radial mask
+	   multiplies alpha down to nothing at the edges, so the terrain behind the
+	   hero, the bench at the top of a document, and the merkaba's bezel all need
+	   a stronger source to arrive at the strength the panels already have.
+	   Measured, not guessed: at panel alpha the hero grid rendered a delta of
+	   nine levels on the floor color and was invisible in a screenshot. */
+	--signal-terrain: rgba(186, 210, 226, 0.16);
+	--signal-terrain-strong: rgba(186, 210, 226, 0.26);
+	--grid-cell: 34px;
+}
+@media (prefers-color-scheme: light) {
+	:root {
+		/* A blueprint reads as ink on paper, not as a washed-out dark mode. */
+		--signal-grid: rgba(52, 76, 96, 0.055);
+		--signal-grid-strong: rgba(52, 76, 96, 0.09);
+		/* Lower than the dark values, and measured rather than matched: on paper
+		   the same alpha darkened the ground under the wordmark enough to take
+		   the 30px ember period to 2.81:1 against a 3:1 floor. */
+		--signal-terrain: rgba(52, 76, 96, 0.06);
+		--signal-terrain-strong: rgba(52, 76, 96, 0.1);
+	}
+}
+
+/* The floor color goes on `html` ALONE, and that is load-bearing.
+
+   `html`'s background propagates to the canvas, which paints beneath
+   everything. `body`'s background does not — it paints as an ordinary block
+   background, ABOVE any descendant at `z-index: -1`. Both the vault glow and
+   the signal terrain are `z-index: -1` pseudos, so with a background on `body`
+   they are only visible when something else happens to promote them onto their
+   own compositing layer — which the glow's drift animation did, invisibly, by
+   accident.
+
+   Which meant the glow disappeared entirely under `prefers-reduced-motion`,
+   because the rule that stops the drift also removes the transform that was
+   promoting it. Reduced motion is supposed to hold every form and drop every
+   movement; this dropped the form. Painting the floor on the canvas fixes the
+   glow and the terrain together, and stops the art from depending on whether a
+   compositor decided to promote a layer. */
+html {
 	background: var(--color-ink);
+}
+body {
 	color: var(--color-body);
 	-webkit-font-smoothing: antialiased;
 	text-rendering: optimizeLegibility;
@@ -167,6 +225,41 @@ body::before {
    every card, field, and button tells the same story.
    ===================================================================== */
 @layer components {
+	/* UTILITY LABEL — instrument typography. Mono, small, widely tracked, and
+	   quiet: the caption on a panel rather than a voice in the page. It marks
+	   something the machine knows (a section, a channel, a provenance line),
+	   never something a person is meant to read as prose. Extracted from the
+	   field-note eyebrow, which hand-rolled these five declarations. */
+	.util {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		/* Mist, not ghost. The accessibility contract in docs/theme.md says ghost
+		   is tertiary/placeholder weight and must not carry anything a user has
+		   to read, and a caption on a technical panel is read. Measured: ghost on
+		   the ruled record in light mode came to 4.34:1 against a 4.5 floor. */
+		color: var(--color-mist);
+	}
+
+	/* RULED HEADING — a section title with a hairline running out from it to
+	   the edge of the measure. It is how a technical document divides itself,
+	   and it costs zero words: the rule carries the structure that a subtitle
+	   would otherwise have to say. */
+	.rule-head {
+		display: flex;
+		align-items: center;
+		gap: 0.875rem;
+	}
+	.rule-head::after {
+		content: '';
+		flex: 1;
+		height: 1px;
+		/* Fades out rather than stopping, so it reads as a measurement running
+		   off the edge instead of a border someone forgot to finish. */
+		background: linear-gradient(90deg, var(--color-line-strong), transparent);
+	}
+
 	/* CARD — a surface lifted off the floor. The border is the hairline;
 	   the lift is the shadow + top catch-light. A hair of gradient across
 	   the fill keeps it from reading as one dead flat color. */
@@ -300,11 +393,33 @@ body::before {
 	   action; a panel that reports history has not earned it.
 	   ================================================================= */
 	.record {
+		position: relative;
 		border: 1px solid var(--color-line);
 		border-radius: var(--radius-field);
-		background: var(--color-ink);
+		/* The grid is the substrate the readout is printed on — the panel now
+		   looks like an instrument face rather than a recessed box. It sits at
+		   the same whisper strength as the film grain: felt, not seen. */
+		background:
+			repeating-linear-gradient(90deg, var(--signal-grid) 0 1px, transparent 1px var(--grid-cell)),
+			repeating-linear-gradient(180deg, var(--signal-grid) 0 1px, transparent 1px var(--grid-cell)),
+			var(--color-ink);
 		box-shadow: var(--shadow-inset);
 		overflow: hidden;
+	}
+	/* The gutter rule. A readout has a spine that the labels hang off; without
+	   it the two columns are just text that happens to be far apart. */
+	.record::before {
+		content: '';
+		position: absolute;
+		inset: 0 auto 0 0;
+		width: 2px;
+		background: linear-gradient(
+			180deg,
+			transparent,
+			color-mix(in oklab, var(--color-ember) 40%, transparent),
+			transparent
+		);
+		pointer-events: none;
 	}
 	.record-row {
 		display: flex;
@@ -322,7 +437,8 @@ body::before {
 		font-size: 0.6875rem;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: var(--color-ghost);
+		/* Mist for the same measured reason as `.util` above. */
+		color: var(--color-mist);
 		white-space: nowrap;
 	}
 	/* The value carries the meaning, so it stays body-weight and readable.
@@ -333,11 +449,25 @@ body::before {
 		color: var(--color-body);
 		text-align: right;
 	}
+	/* A value that IS data — a byte count, a filename, a piece count — is set in
+	   the instrument face rather than in prose type. Prose values stay
+	   body-weight, because a sentence rendered in mono reads as output when it
+	   is actually a claim. */
+	.record-data {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: 0.01em;
+	}
+	/* The status mark reads as a lamp on a panel because of the space around it,
+	   not because of a glow. A soft ember ring was tried and measured: it became
+	   the color ADJACENT to the lamp, which is what a 3:1 non-text ratio is
+	   measured against, and it took the light-mode mark from 3.33:1 to 2.48:1.
+	   Still reinforcement only — the WORD beside it carries the status. */
 	.record-mark {
 		display: inline-block;
 		width: 0.4375rem;
 		height: 0.4375rem;
-		margin-right: 0.4375rem;
+		margin-right: 0.5625rem;
 		border-radius: 999px;
 		background: var(--color-ember);
 		vertical-align: baseline;
@@ -404,11 +534,26 @@ body::before {
 		height: 0.25rem;
 		border: 0;
 		border-radius: 999px;
-		background: var(--color-line);
+		/* A ruled track. The ticks are evenly spaced geometry, not a scale with
+		   numbers attached — they give the fill something to travel against so
+		   progress is legible as distance covered, and they claim nothing. */
+		background:
+			repeating-linear-gradient(
+				90deg,
+				var(--signal-grid-strong) 0 1px,
+				transparent 1px calc(var(--grid-cell) / 4)
+			),
+			var(--color-line);
 		overflow: hidden;
 	}
 	.progress::-webkit-progress-bar {
-		background: var(--color-line);
+		background:
+			repeating-linear-gradient(
+				90deg,
+				var(--signal-grid-strong) 0 1px,
+				transparent 1px calc(var(--grid-cell) / 4)
+			),
+			var(--color-line);
 	}
 	.progress::-webkit-progress-value {
 		background: linear-gradient(90deg, var(--color-ember-deep), var(--color-ember));
@@ -464,6 +609,35 @@ body::before {
 	animation: vault-drift 22s var(--ease-glide) infinite alternate;
 }
 
+/* THE SIGNAL TERRAIN. A surveyor's grid under the ember wash, revealed only
+   where the glow already is — the mask is a radial fade, so the grid is
+   brightest at the core of the light and gone by the edges of the screen. The
+   room is lit by a fire; this is the floor you can just make out around it.
+
+   It is steerable. `--sx`/`--sy` are set by the `terrain` action on pointer
+   move (see src/lib/ui/terrain.ts) and default to 0, so a page with no script,
+   no pointer, or reduced motion renders the exact composed frame this rule
+   describes. There is no loop here and no canvas: the whole interaction is two
+   custom-property writes into a transform the compositor already owns. */
+.vault-glow::after {
+	content: '';
+	position: absolute;
+	inset: -10% -10% 0 -10%;
+	z-index: -1;
+	pointer-events: none;
+	background:
+		repeating-linear-gradient(90deg, var(--signal-terrain) 0 1px, transparent 1px var(--grid-cell)),
+		repeating-linear-gradient(180deg, var(--signal-terrain) 0 1px, transparent 1px var(--grid-cell)),
+		repeating-linear-gradient(
+			90deg,
+			var(--signal-terrain-strong) 0 1px,
+			transparent 1px calc(var(--grid-cell) * 5)
+		);
+	mask-image: radial-gradient(58% 46% at 50% 8%, #000 0%, transparent 72%);
+	transform: translate3d(calc(var(--sx, 0) * 14px), calc(var(--sy, 0) * 9px), 0);
+	transition: transform 420ms var(--ease-glide);
+}
+
 @keyframes vault-drift {
 	from {
 		transform: translate3d(-1.5%, 0, 0) scale(1);
@@ -473,6 +647,27 @@ body::before {
 		transform: translate3d(1.5%, -1.5%, 0) scale(1.06);
 		opacity: 1;
 	}
+}
+
+/* THE BENCH — the document pages (security, field notes, account, Pro). They
+   are long reading surfaces, so the terrain gets nowhere near the prose: it
+   holds the top of the page, where the title is, and is gone before the first
+   paragraph. A grid behind body copy is a legibility bug wearing art direction.
+   Static by design — nothing steers here, because nothing here is a signature. */
+.bench {
+	position: relative;
+}
+.bench::before {
+	content: '';
+	position: absolute;
+	inset: 0 0 auto 0;
+	height: 20rem;
+	z-index: -1;
+	pointer-events: none;
+	background:
+		repeating-linear-gradient(90deg, var(--signal-terrain) 0 1px, transparent 1px var(--grid-cell)),
+		repeating-linear-gradient(180deg, var(--signal-terrain) 0 1px, transparent 1px var(--grid-cell));
+	mask-image: linear-gradient(180deg, #000 0%, transparent 88%);
 }
 
 /* The burn: a note dissolving upward as it self-destructs. RESPONSE motion
@@ -541,7 +736,23 @@ body::before {
 	}
 	.record-mark {
 		background: CanvasText;
+		box-shadow: none;
 		forced-color-adjust: none;
+	}
+	/* The art may flatten; the information may not. A grid rendered over a
+	   forced palette is pure interference — it carries nothing, so it goes. */
+	.vault-glow::after,
+	.bench::before,
+	.record::before {
+		display: none;
+	}
+	.record,
+	.progress,
+	.progress::-webkit-progress-bar {
+		background-image: none;
+	}
+	.rule-head::after {
+		background: CanvasText;
 	}
 	/* Measured: the enabled primary button was 95.9% #000000 against a 100%
 	   #000000 card — 1.00:1, against a 3:1 requirement. Its gradient, shadow,
@@ -582,6 +793,13 @@ body::before {
 	.btn,
 	.btn-ember:hover,
 	.btn-ember:active {
+		transform: none;
+	}
+	/* The composed final frame of the terrain, and it stays there. The action
+	   already refuses to attach under reduced motion, so `--sx`/`--sy` are never
+	   written; this is the belt to that suspenders, for a preference flipped
+	   mid-session while a stale value is still on the element. */
+	.vault-glow::after {
 		transform: none;
 	}
 	*,

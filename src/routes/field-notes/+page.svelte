@@ -62,10 +62,10 @@
 	/>
 </svelte:head>
 
-<main class="mx-auto max-w-2xl px-5 py-16">
+<main class="bench mx-auto max-w-2xl px-5 py-16">
 	<a href="/" class="text-2xl font-bold tracking-tight">Cinder<span class="text-ember">.</span></a>
 
-	<p class="mt-8 font-mono text-[11px] uppercase tracking-[0.16em] text-ghost">
+	<p class="util mt-8">
 		Field note 001 · Decision gate
 	</p>
 	<h1 class="mt-3 text-3xl font-bold tracking-tight">The vote to stay blind</h1>
@@ -80,7 +80,7 @@
 	</div>
 
 	<!-- ── Half one: for everybody ─────────────────────────────────────── -->
-	<h2 class="mt-12 text-lg font-semibold text-ember-ink">In plain words</h2>
+	<h2 class="rule-head mt-12 text-lg font-semibold text-ember-ink">In plain words</h2>
 
 	<div class="mt-4 space-y-4 text-[15px] leading-relaxed text-mist">
 		<p>
@@ -136,7 +136,7 @@
 		</p>
 	</div>
 
-	<h2 class="mt-12 text-lg font-semibold text-ember-ink">Why this document is also the test</h2>
+	<h2 class="rule-head mt-12 text-lg font-semibold text-ember-ink">Why this document is also the test</h2>
 	<div class="mt-4 space-y-4 text-[15px] leading-relaxed text-mist">
 		<p>
 			The PDF of this note was sent through Cinder before it was published. Not a stand-in, not a
@@ -169,7 +169,7 @@
 
 	<!-- ── Half two: for engineers ─────────────────────────────────────── -->
 	<hr class="mt-12 border-line" />
-	<h2 class="mt-10 text-lg font-semibold text-ember-ink">The technical record</h2>
+	<h2 class="rule-head mt-10 text-lg font-semibold text-ember-ink">The technical record</h2>
 	<p class="mt-3 text-sm leading-relaxed text-ghost">
 		Measured against the live production system, not a local copy or a simulation.
 	</p>

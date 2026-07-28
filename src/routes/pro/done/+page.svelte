@@ -53,7 +53,7 @@
 
 <svelte:head><title>Cinder Pro</title></svelte:head>
 
-<main class="mx-auto w-full max-w-2xl px-5 py-12">
+<main class="bench mx-auto w-full max-w-2xl px-5 py-12">
 	<p aria-live="polite" class="sr-only">{announcement}</p>
 
 	{#if view === 'waiting'}
