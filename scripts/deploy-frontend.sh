@@ -11,7 +11,7 @@ echo "Building…"
 pnpm build
 
 echo "Syncing to s3://$BUCKET …"
-aws s3 sync build/ "s3://$BUCKET" --delete --region us-east-1
+aws s3 sync build/ "s3://$BUCKET" --delete --exclude '.DS_Store' --region us-east-1
 
 # Prerendered pages land as `security.html`, `field-notes.html`, etc., but
 # CloudFront requests the extensionless key. Without this, `/field-notes` 404s
