@@ -76,12 +76,17 @@ function fakeS3({ failKeys = {}, stickyDeleteKeys = new Set() } = {}) {
 // A gate that grants. The payments lane will supply the real one; this is what
 // its contract looks like from the transport's side, and nothing more.
 const proGate = {
-	async check({ grant, capability }) {
+	async check(req) {
 		// Asserting the shape here is the point: the gate must be handed a grant
 		// and a capability and NOTHING else. If someone ever starts passing the
 		// raw event so a provider can peek at a header, this is what notices.
-		assert.equal(capability, CAPABILITY.MULTIPART_TRANSFER);
-		assert.ok(grant === null || typeof grant === 'string');
+		//
+		// The KEY LIST is the assertion that matters, and destructuring the
+		// argument would have hidden the extra key it exists to catch. Checking
+		// the two values alone would pass on { grant, capability, event }.
+		assert.deepEqual(Object.keys(req).sort(), ['capability', 'grant']);
+		assert.equal(req.capability, CAPABILITY.MULTIPART_TRANSFER);
+		assert.ok(req.grant === null || typeof req.grant === 'string');
 		return { granted: true, limits: { maxParts: 64 } };
 	}
 };

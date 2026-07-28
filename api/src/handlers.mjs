@@ -21,6 +21,7 @@ import {
 	deriveChunkLocator
 } from './id.mjs';
 import { CAPABILITY, denyAll, checkCapability } from './capabilities.mjs';
+import { json } from './http.mjs';
 
 const MAX_CT = 100_000; // reject oversized ciphertext (chars)
 const MAX_TTL = 604_800; // 7 days
@@ -61,20 +62,6 @@ const uploadWindowFor = (partCount) =>
 // 64 × 4 MiB = 256 MiB, which also happens to clear the 200 MB that response
 // streaming would have bought at the cost of the structural guarantee.
 const MAX_PARTS = 64;
-
-// Every response this API produces is one-shot and secret-adjacent, so nothing
-// it returns should ever be written to a cache — including a burned note, whose
-// body IS the plaintext-bearing ciphertext.
-const json = (statusCode, obj) => ({
-	statusCode,
-	headers: {
-		'content-type': 'application/json',
-		'cache-control': 'no-store, private',
-		'x-content-type-options': 'nosniff',
-		'referrer-policy': 'no-referrer'
-	},
-	body: JSON.stringify(obj)
-});
 
 // Every unavailable file answers identically, whatever the real reason: never
 // existed, malformed locator, still uploading, expired, or already claimed.

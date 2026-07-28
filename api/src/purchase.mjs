@@ -49,6 +49,7 @@ import {
 	claimPendingPurchase
 } from './purchase-store.mjs';
 import { addCredits } from './entitlement-store.mjs';
+import { json } from './http.mjs';
 
 // How many large sends one purchase buys, when a product does not say. Ten, and
 // the price that goes with it lives in Stripe rather than here: the fixed 30¢ of
@@ -56,16 +57,7 @@ import { addCredits } from './entitlement-store.mjs';
 // difference between the fee eating a third of the money and eating a tenth.
 const DEFAULT_CREDITS_PER_PURCHASE = 10;
 
-const json = (statusCode, obj) => ({
-	statusCode,
-	headers: {
-		'content-type': 'application/json',
-		'cache-control': 'no-store, private',
-		'x-content-type-options': 'nosniff',
-		'referrer-policy': 'no-referrer'
-	},
-	body: JSON.stringify(obj)
-});
+const nowEpoch = () => Math.floor(Date.now() / 1000);
 
 /**
  * @param identify        the identity lane's verifier, from entitlement.mjs:
@@ -123,7 +115,7 @@ export function makePurchaseHandlers(
 			nonce,
 			product: who.product,
 			pairwise: who.pairwise,
-			nowEpoch: Math.floor(Date.now() / 1000)
+			nowEpoch: nowEpoch()
 		});
 
 		return json(200, {
@@ -183,7 +175,13 @@ export function makePurchaseHandlers(
 		const reference = purchaseReference(payload);
 		if (!reference) return json(200, { received: true });
 
-		const pending = await readPendingPurchase(doc, reference, Math.floor(Date.now() / 1000));
+		// One instant for the whole delivery. The read below and the claim further
+		// down both test the pending row's expiry, and reading the clock twice
+		// would let a row straddle the second boundary between them — legible on a
+		// read and unclaimable a moment later, for no reason a reader could see.
+		const at = nowEpoch();
+
+		const pending = await readPendingPurchase(doc, reference, at);
 		// A genuine, correctly signed, genuinely paid event for a session this
 		// server did not create — another product in the same Stripe account, a
 		// dashboard-created payment link, a replay after the row was cleared. It
@@ -209,7 +207,7 @@ export function makePurchaseHandlers(
 		// So the claim comes first and it is a conditional delete, which means two
 		// deliveries racing each other cannot both win. A duplicate finds nothing
 		// left to claim and adds nothing.
-		const claimed = await claimPendingPurchase(doc, reference, Math.floor(Date.now() / 1000));
+		const claimed = await claimPendingPurchase(doc, reference, at);
 		if (!claimed) return json(200, { received: true });
 
 		try {

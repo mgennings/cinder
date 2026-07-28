@@ -1,10 +1,14 @@
-// The mattOS identity API. Two routes, and between them they can say exactly
-// two things: "this caller has this many prepaid sends left for this product"
-// and "this account no longer exists."
+// The mattOS identity API. Three routes, and between them they can say exactly
+// three things: "this caller has this many prepaid sends left for this
+// product", "here is a grant that spends one of them", and "this account no
+// longer exists."
 //
 //   POST /entitlement    → { entitled: boolean, credits: number }
 //   POST /capability     → { grant: string|null, expiresIn: number|null }
 //   POST /account/delete → { deleted: boolean }
+//
+// The purchase routes (/purchase/checkout, /purchase/webhook) live on this same
+// API for the same reasons and are implemented in purchase.mjs.
 //
 // Deliberately a SEPARATE HTTP API from the note and file endpoints (see
 // template.yaml). Cinder's own API refuses the Authorization header at CORS,
@@ -21,22 +25,13 @@ import { randomBytes } from 'node:crypto';
 import { bearerToken, verifyIdToken, pairwiseSubject, parseMap } from './identity.mjs';
 import { readCredits, spendCredit, forgetEntitlement } from './entitlement-store.mjs';
 import { mintCapabilityGrant } from './capability-grant.mjs';
+import { json } from './http.mjs';
 
-// Both routes answer 200 with a negative body for every refusal: no token, a
-// forged token, an expired token, a token from another pool, a token for an
-// unconfigured client. A 401 here would distinguish "wrong token" from "no
+// Every route here answers 200 with a negative body for every refusal: no
+// token, a forged token, an expired token, a token from another pool, a token
+// for an unconfigured client. A 401 would distinguish "wrong token" from "no
 // entitlement", which is the beginning of an oracle and buys the caller nothing
 // they can act on.
-const json = (statusCode, obj) => ({
-	statusCode,
-	headers: {
-		'content-type': 'application/json',
-		'cache-control': 'no-store, private',
-		'x-content-type-options': 'nosniff',
-		'referrer-policy': 'no-referrer'
-	},
-	body: JSON.stringify(obj)
-});
 
 // How long a minted grant lives. Short because it is a bearer capability that
 // travels on an unauthenticated request: whoever holds the string may use it

@@ -83,15 +83,17 @@ export async function getFileGrant(doc, pk) {
 	const res = await doc.send(new GetCommand({ TableName: TABLE(), Key: { pk } }));
 	const item = res.Item;
 	if (!item || item.kind !== 'file') return null;
+	// Exactly the four fields finalize uses. `state` and `expiresAt` are
+	// deliberately NOT returned: the conditional write is the only thing allowed
+	// to decide anything about them, and a caller holding a stale copy of either
+	// is a caller one refactor away from deciding with it.
 	return {
-		state: item.state,
 		objectKey: item.objectKey,
 		// A hash, never the capability itself — finalize compares against this
 		// before it touches S3 so a wrong capability costs no extra round trip.
 		uploadCapabilityHash: item.uploadCapabilityHash,
 		ciphertextBytes: item.ciphertextBytes,
-		ciphertextSha256: item.ciphertextSha256,
-		expiresAt: item.expiresAt
+		ciphertextSha256: item.ciphertextSha256
 	};
 }
 

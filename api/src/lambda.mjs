@@ -28,8 +28,9 @@ const BUCKET = () => process.env.MEDIA_BUCKET;
 const s3 = {
 	// The upload is signed against this exact key, length, and checksum, so S3
 	// itself refuses a substituted object, a resized body, or corrupted bytes.
-	// `signableHeaders` is what forces those into the signature instead of
-	// letting the presigner hoist them into ignorable query parameters.
+	// `unhoistableHeaders` below is what forces the checksum into the signature
+	// instead of letting the presigner hoist it into an ignorable query
+	// parameter — see the note at the option itself.
 	async presignPut({ key, bytes, sha256, expiresIn }) {
 		const url = await getSignedUrl(
 			s3client,
