@@ -354,11 +354,11 @@ Copy that endpoint's signing secret into `StripeWebhookSecret` and deploy again.
 
 - [ ] Every parameter is `sk_test_` / a sandbox `price_`, and it belongs to **Cinder's own Stripe account**, not undertext's. **No live key has ever been in this repository, this stack, or this session.**
 - [ ] The statement descriptor on that account reads `CINDER.INK`.
-- [ ] `entitlement-provider.mjs` still exports `denyAll`, so nothing paid actually unlocks anything yet. That file belongs to the identity lane and is the last wire to connect.
+- [x] `entitlement-provider.mjs` exports the real gate, wired at `lambda.mjs:22,104`. It verifies a signed grant and denies on signature, expiry, capability mismatch, unknown payload key, or a missing secret.
 - [ ] The whole grant path has been run once against a real test-mode Stripe, not only against the suite.
 - [ ] Matt has decided whether $4.50 net per bundle — about 45¢ a send — is the number he wants.
 - [ ] The Stripe Price (`494`) and `CinderProCredits` (`10`) agree with each other and with `src/lib/pro.ts`.
-- [ ] **The EULA still describes a one-time unlock.** It is in the uxuiai repo, reissued as v1.1 effective 2026-07-27, and it has not been amended for credits. What it must say is in this lane's handoff.
+- [x] **The EULA describes credits.** uxuiai, v1.3 effective 2026-07-27. v1.2 added credits; v1.3 corrected what a credit buys, because a grant is a time-limited send permission rather than one transfer.
 
 ## Where the seam is, and what a second product costs
 

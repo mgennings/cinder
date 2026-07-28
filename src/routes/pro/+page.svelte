@@ -102,9 +102,9 @@
 
 	<h1 class="text-2xl font-semibold text-body">Cinder Pro</h1>
 	<p class="mt-3 text-base leading-relaxed text-mist">
-		{PRICE} for {PRO_CREDITS} large sends. One credit sends one file over {freeLabel}, up to the {maxProLabel}
-		ceiling. Not a subscription, not a plan, not a renewal — the credits sit there until you use
-		them, and anything under {freeLabel} stays free forever, with no account.
+		{PRICE} for {PRO_CREDITS} large sends, each one up to the {maxProLabel} ceiling. Not a subscription,
+		not a plan, not a renewal — the credits sit there until you use them, and anything under
+		{freeLabel} stays free forever, with no account.
 	</p>
 
 	<!-- The balance, stated before the button rather than after the purchase.
@@ -151,10 +151,16 @@
 				you.
 			</li>
 			<li>
-				a credit is spent when cinder hands you the link, not when the file arrives. if the
-				delivery breaks partway, the pieces are destroyed and the credit is gone — cinder has no
-				way to see which transfer failed, which is the same reason it can never see who you sent
-				it to. credits do not expire and they never come back.
+				a credit is spent when cinder gives your browser permission to send big, which happens
+				before your file is encrypted or uploaded — not when the link appears, and not when the
+				file arrives. that permission lasts about fifteen minutes, and anything else you start
+				inside that window costs nothing extra. cancel before the link appears and the credit is
+				still spent.
+			</li>
+			<li>
+				if a delivery breaks partway, the pieces are destroyed and the credit is gone. cinder has
+				no way to see which transfer failed, which is the same reason it can never see who you
+				sent it to. credits do not expire and they never come back.
 			</li>
 		</ul>
 		<p class="mt-4 text-xs leading-relaxed text-ghost">

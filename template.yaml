@@ -407,6 +407,33 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${ClaimFileFn}'
       RetentionInDays: 14
 
+  # The note and upload paths were left on the default too. "Pinned in
+  # infrastructure code" has to mean every function, or the sentence is only
+  # true of the functions someone remembered.
+  CreateNoteLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${CreateNoteFn}'
+      RetentionInDays: 14
+
+  ReadNoteLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ReadNoteFn}'
+      RetentionInDays: 14
+
+  CreateFileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${CreateFileFn}'
+      RetentionInDays: 14
+
+  FinalizeFileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${FinalizeFileFn}'
+      RetentionInDays: 14
+
   # The denial has to be visible. Reserved concurrency sheds silently, and with
   # no alarm the first signal Matt gets is a monthly statement. This watches the
   # shed count only — a number, never a request, never an address.
@@ -935,6 +962,18 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${CheckEntitlementFn}'
+      RetentionInDays: 3
+
+  # The one invoked at the moment of every paid send, and the one that was
+  # missed. Without this group its retention is Lambda's default, which is
+  # forever — while field note 001 publishes "log retention pinned in
+  # infrastructure code rather than left at the default of forever." Three days,
+  # matching its siblings: a timing record of who spent a credit when is exactly
+  # the accumulation this whole design refuses.
+  MintCapabilityLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${MintCapabilityFn}'
       RetentionInDays: 3
 
   DeleteAccountLogs:
