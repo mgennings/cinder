@@ -20,20 +20,15 @@
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
-	import {
-		startCheckout,
-		entitlement,
-		signedIn,
-		identityConfigured,
-		startSignIn
-	} from '$lib/auth';
+	import { startCheckout, entitlement, sessionState, identityConfigured } from '$lib/auth';
+	import SignInPanel from '$lib/ui/SignInPanel.svelte';
 	import { MAX_FILE_BYTES, MAX_TRANSFER_BYTES } from '$lib/crypto/file-crypto';
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 
 	// There is no 'owned' state any more, and its absence is the model: credits
 	// run down, so the buy button is never the wrong thing to show. What changes
 	// with a balance is the sentence next to it, not whether it exists.
-	type State = 'loading' | 'signed-out' | 'ready' | 'unavailable';
+	type State = 'loading' | 'signed-out' | 'expired' | 'ready' | 'unavailable';
 
 	let view = $state<State>('loading');
 	let credits = $state(0);
@@ -56,9 +51,17 @@
 			announcement = 'Cinder Pro is not available in this build.';
 			return;
 		}
-		if (!signedIn()) {
-			view = 'signed-out';
-			announcement = 'Sign in to buy Cinder Pro.';
+		// Asked of the origin, not of storage. A stale token in this tab used to
+		// render the buy button, and the purchase then failed at the server with
+		// one generic refusal — the wrong sentence for somebody whose session had
+		// simply run out while the tab sat open.
+		const session = await sessionState();
+		if (session !== 'live') {
+			view = session === 'expired' ? 'expired' : 'signed-out';
+			announcement =
+				session === 'expired'
+					? 'That session ended. Sign in again to buy Cinder Pro.'
+					: 'Sign in to buy Cinder Pro.';
 			return;
 		}
 		credits = (await entitlement()).credits;
@@ -177,18 +180,22 @@
 			Cinder Pro is not available in this build. Everything up to {freeLabel} works exactly as it
 			always has.
 		</p>
-	{:else if view === 'signed-out'}
-		<div in:fade={{ duration: dur(200) }} class="mt-8">
-			<p class="text-sm leading-relaxed text-mist">
-				Pro needs an account, because something has to remember you paid. Sending does not, and
-				never will — an account is only ever about the purchase.
+	{:else if view === 'signed-out' || view === 'expired'}
+		<div in:fade={{ duration: dur(200) }} class="mt-8 max-w-sm">
+			<p class="mb-4 text-sm leading-relaxed text-mist">
+				{#if view === 'expired'}
+					That session ended, so this browser cannot buy anything right now. Nothing was charged.
+					Signing in again puts you straight back on this page with whatever balance you had.
+				{:else}
+					Pro needs an account, because something has to remember you paid. Sending does not, and
+					never will — an account is only ever about the purchase.
+				{/if}
 			</p>
-			<div class="mt-4 flex flex-wrap gap-3">
-				<button class="btn btn-ghost" onclick={() => startSignIn('SignInWithApple')}>
-					Continue with Apple
-				</button>
-				<button class="btn btn-ghost" onclick={() => startSignIn('Google')}>Continue with Google</button>
-			</div>
+			<!-- returnTo is the whole point of this being a panel rather than a link
+			     to the door: somebody who signs in from the pay point comes back to
+			     the pay point, ready to buy, instead of landing on /account with the
+			     thing they wanted two clicks away. -->
+			<SignInPanel verb="Continue" returnTo="/pro" onstatus={(s) => (announcement = s)} />
 		</div>
 	{:else}
 		<div in:fade={{ duration: dur(200) }} class="mt-8">

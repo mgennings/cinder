@@ -2,20 +2,30 @@
 	// The account surface. It has to do three things and resist doing a fourth:
 	// sign in, say exactly what is stored, and delete it. There is no profile
 	// here, no settings, no history, because none of those exist to show.
+	//
+	// It is ALSO the OAuth callback, and that is not an accident of layout: the
+	// Cognito app client's CallbackURLs list exactly `/account` on each domain
+	// (template.yaml), so this is the one URL a provider is allowed to return to.
+	// The doors at /signin and /signup send people out; this catches them and
+	// forwards them on. Moving the callback anywhere else means editing that list
+	// and redeploying the pool, and a mismatch between the two is a production
+	// outage with an error page nobody can act on.
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import {
-		startSignIn,
 		completeSignIn,
-		signInFailureMessage,
 		signOut,
 		deleteAccount,
 		entitlement,
-		signedIn,
-		identityConfigured
+		sessionState,
+		identityConfigured,
+		takeReturnTo,
+		peekReturnTo
 	} from '$lib/auth';
+	import SignInPanel from '$lib/ui/SignInPanel.svelte';
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
 
-	type State = 'loading' | 'signed-out' | 'signed-in' | 'gone' | 'unavailable';
+	type State = 'loading' | 'signed-out' | 'signed-in' | 'expired' | 'gone' | 'unavailable';
 
 	let view = $state<State>('loading');
 	let credits = $state(0);
@@ -24,18 +34,36 @@
 	// here, so a screen reader hears the outcome rather than inferring it from a
 	// button that quietly changed label.
 	let announcement = $state('');
-	// A sign-in that failed has to say so. Before this, every failure rendered as
-	// the ordinary signed-out page and the person was left to guess.
-	let signInError = $state('');
 
 	async function refresh() {
-		credits = (await entitlement()).credits;
-		view = signedIn() ? 'signed-in' : 'signed-out';
-		announcement = credits
-			? `Signed in. ${creditWord(credits)} left.`
-			: view === 'signed-in'
-				? 'Signed in. No credits on this account.'
-				: 'Signed out.';
+		const session = await sessionState();
+		if (session === 'live') {
+			credits = (await entitlement()).credits;
+			view = 'signed-in';
+			announcement = credits
+				? `Signed in. ${creditWord(credits)} left.`
+				: 'Signed in. No credits on this account.';
+			return;
+		}
+		credits = 0;
+		// 'expired' is not 'signed-out'. Somebody whose session was revoked or ran
+		// out was looking at a balance a moment ago, and showing them the ordinary
+		// signed-out page makes that balance look like it was never there.
+		view = session === 'expired' ? 'expired' : 'signed-out';
+		announcement =
+			session === 'expired' ? 'That session ended. Sign in again to see your balance.' : 'Signed out.';
+	}
+
+	// A failed sign-in is sent back to the door rather than handled here. The
+	// person chose a door; the retry belongs on it, with whatever they were
+	// heading toward still attached. /signin is the single retry surface because
+	// the account attempt is identical either way, and it links to /signup.
+	function backToDoor(reason: string, detail?: string) {
+		const q = new URLSearchParams({ failed: reason });
+		if (detail) q.set('detail', detail);
+		const next = peekReturnTo();
+		if (next) q.set('next', next);
+		return goto(`/signin?${q}`, { replaceState: true });
 	}
 
 	onMount(async () => {
@@ -60,15 +88,23 @@
 		}
 
 		if (providerError) {
-			signInError = 'That sign-in did not complete. Nothing was created.';
-			announcement = signInError;
-		} else if (code) {
-			const result = await completeSignIn(code);
-			if (!result.ok) {
-				signInError = signInFailureMessage(result.reason, result.detail);
-				announcement = signInError;
-			}
+			// The provider's own words are not shown. Cognito forwards whatever
+			// Apple or Google said, and that string is written for a developer, not
+			// for the person who just pressed cancel.
+			return backToDoor('rejected');
 		}
+
+		if (code) {
+			const result = await completeSignIn(code);
+			if (!result.ok) return backToDoor(result.reason, result.detail);
+
+			// Signed in, and this is the moment the person gets sent where they were
+			// actually going. Consumed here so a later reload of /account does not
+			// bounce somebody who came back on purpose.
+			const next = takeReturnTo();
+			if (next) return goto(next, { replaceState: true });
+		}
+
 		await refresh();
 	});
 
@@ -168,30 +204,20 @@
 				by either.
 			</p>
 			<a href="/" class="btn btn-ghost mt-4 px-4">Back to Cinder</a>
-		{:else if view === 'signed-out'}
-			<h2 class="font-semibold">Sign in</h2>
-			<p class="mt-2 text-sm leading-relaxed text-mist">
-				Either door stores the same thing: one opaque number. Apple’s asks for the least.
+		{:else if view === 'signed-out' || view === 'expired'}
+			<h2 class="font-semibold">{view === 'expired' ? 'That session ended' : 'Sign in'}</h2>
+			<p class="mt-2 mb-4 text-sm leading-relaxed text-mist">
+				{#if view === 'expired'}
+					The session on this browser was revoked or ran out. Nothing was lost and nothing was
+					charged — signing in again brings the balance back.
+				{:else}
+					Either door stores the same thing: one opaque number. Apple’s asks for the least.
+				{/if}
 			</p>
-			<!-- A failed sign-in used to be indistinguishable from never having tried
-			     one. It says what happened now, in the same register as the rest of
-			     the product: what went wrong, and what to do next. -->
-			{#if signInError}
-				<p
-					role="alert"
-					class="mt-3 rounded-md border border-ember/40 bg-ember/5 px-4 py-3 text-sm leading-relaxed text-body"
-				>
-					{signInError}
-				</p>
-			{/if}
-			<div class="mt-4 flex flex-col gap-2 sm:flex-row">
-				<button class="btn btn-ember px-5" onclick={() => startSignIn('SignInWithApple')}>
-					Sign in with Apple
-				</button>
-				<button class="btn btn-ghost px-5" onclick={() => startSignIn('Google')}>
-					Sign in with Google
-				</button>
-			</div>
+			<!-- The same two buttons as /signin and /signup, from the same file. Three
+			     hand-rolled copies of this block had already drifted into three
+			     different labels and two different failure behaviors. -->
+			<SignInPanel onstatus={(s) => (announcement = s)} />
 		{:else}
 			<h2 class="font-semibold">
 				{credits ? `${creditWord(credits)} left` : 'Signed in'}

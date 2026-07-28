@@ -318,3 +318,140 @@ Run in this order. Do not reorder steps 2 and 3.
 
 **Rollback at any step before 6** is that one environment variable and a
 redeploy. Nothing above deletes anything.
+
+---
+
+# The web journey: doors, destinations, and every state
+
+## The surfaces
+
+| URL | What it is |
+| --- | --- |
+| `/signin` | A door. Also the single retry surface for any failed sign-in. |
+| `/signup` | The same door, worded for somebody who has never been here. |
+| `/account` | The account page **and** the OAuth callback. Both, on purpose. |
+| `/pro` | Signs in inline, because leaving the pay point to sign in loses the sale and the context. |
+
+`/signin` and `/signup` are both `src/lib/ui/AuthDoor.svelte` with different
+copy. Neither is indexable; they are steps in a journey, not pages with
+something to say.
+
+## The callback stays `/account`, and that is a deliberate constraint
+
+The Cognito app client lists exactly four `CallbackURLs`, each of them
+`…/account` (`template.yaml`). A provider will redirect to nothing else, so the
+doors send people out and `/account` catches them and forwards them on.
+
+**No `template.yaml` change was needed for any of this and none should be made
+for it.** Moving the callback to `/signin` would buy a marginally tidier URL bar
+during a redirect that lasts under a second, and it would cost a window where
+the deployed pool and the deployed site disagree — during which every sign-in
+fails at Cognito with an error page the person cannot act on and we cannot see.
+
+## Where the person comes back to
+
+`startSignIn(provider, returnTo)` writes a **same-origin path** to
+`sessionStorage` under `cinder.returnto`, and `/account` consumes it after a
+successful exchange. Somebody who pressed sign in on `/pro` lands back on `/pro`
+with the buy button, not on an account page they never asked for.
+
+- **Only a path.** Never an absolute URL, not even this site's own. `//host`,
+  `https://…`, `javascript:`, and `/\host` are all refused, in `safePath` in
+  `src/lib/auth.ts`, with `src/lib/auth.test.ts` pinning each one.
+- **Not the OAuth `state` parameter.** The PKCE verifier already lives in this
+  tab's `sessionStorage` and already binds the round trip to this tab; `state`
+  would be a second copy of a guarantee that is already made, and a second thing
+  to get wrong. If `sessionStorage` did not survive, the exchange would fail on
+  the missing verifier first.
+
+## Every state, and where it renders
+
+| State | Surface | What is said |
+| --- | --- | --- |
+| loading | all | "Checking this browser…" |
+| signed out | door, `/account`, `/pro` | the two buttons |
+| signed in | all | the balance, or "already signed in" on a door |
+| **sign-in failed** | `/signin` | the reason, per `signInFailureMessage` |
+| **provider refused** | `/signin` | "refused before it finished. Nothing was created." |
+| **session expired** | `/account`, `/pro`, doors | "That session ended" — never "Signed out" |
+| **offline** | wherever the button is | refused *before* leaving, naming the provider |
+| leaving | wherever the button is | buttons disabled, "Handing you over…" |
+| signing out | `/account` | announced, then "no longer holds a token" |
+| deleted | `/account` | the confirm step, then "The account is deleted" |
+| unavailable | all | accounts not configured in this build |
+
+The failure states are the ones that had no coverage, so they are the ones
+`tests/journey/auth-journey.spec.ts` is mostly about.
+
+**`sessionState()` is why 'expired' can exist at all.** `signedIn()` reads
+storage and only ever says "a token was written here once." `sessionState()`
+asks the origin. A refresh token revoked on another device, aged out, or
+belonging to a deleted account used to render as the ordinary signed-out page,
+so somebody who was looking at a balance a second earlier was shown the screen
+of somebody who never had one.
+
+## Email and password: the decision, and why
+
+**Not implemented, and it should not be.** Matt asked for it; this is the
+honest answer rather than a stall.
+
+The pool is built so that no address exists to store: no `Schema`, no
+`AutoVerifiedAttributes`, no `EmailConfiguration`, `authorize_scopes: ''` at
+Apple, `AttributeMapping: {username: sub}` at both providers, and
+`AllowAdminCreateUserOnly: true`. `/account` publishes "Email address — Not
+requested, not stored," and the uxuiai EULA v1.3 says the same. Adding
+email/password would make both of those sentences false the day it shipped, and
+a shipped string may not claim a privacy property the code no longer has.
+
+It would also need an address for the one thing a password always needs — reset
+— which is precisely the mailbox the pool refuses to have. A password with no
+reset path is worse than no password.
+
+**Passkeys (WebAuthn) are the right third door and they are still not a web-lane
+change.** Cognito supports them, they need no email, and they preserve every
+published claim. What they need first, all in `template.yaml`, all requiring a
+pool deploy Matt gates:
+
+1. `UserPoolTier: ESSENTIALS` — passkey sign-in is not on `LITE`.
+2. Managed login **branding version 2**. The classic hosted UI this flow uses
+   today does not offer a passkey step, so the domain's login experience
+   changes for Apple and Google too.
+3. `ExplicitAuthFlows` gains `ALLOW_USER_AUTH`, and the client needs
+   `AllowedOAuthScopes` to include `aws.cognito.signin.user.admin` for
+   `StartWebAuthnRegistration` — which today's template refuses **by name**,
+   because that scope lets a browser token read and write user attributes.
+4. Self-service sign-up, which `AllowAdminCreateUserOnly: true` currently
+   forbids, plus a generated username that is not derived from anything about
+   the person.
+
+Item 3 is the real cost: it trades a documented capability restriction for a
+convenience. It is a decision about the threat model, not about the sign-in
+page, and it belongs to whoever owns `template.yaml` and the deploy.
+
+**If email/password is ever added anyway**, two things must change in the same
+commit or the product starts lying:
+
+- the `stored` table in `src/routes/account/+page.svelte` becomes **per method**,
+  because "Email address — Not requested, not stored" would only remain true of
+  the Apple and Google doors; and
+- in the **uxuiai** repository (not this one), EULA v1.3's sentence stating that
+  no email address is requested or stored has to be scoped to the providers
+  rather than to the product. That is a legal-copy change in a repo this lane
+  does not touch, and it must land before the feature ships, not after.
+
+## What a second product copies, and what it configures
+
+The seam is deliberate: nothing in the two lower files knows the word "Cinder."
+
+| File | Second product |
+| --- | --- |
+| `src/lib/ui/ProviderButtons.svelte` | **Copy unchanged.** Brand marks, brand palettes, Apple-first ordering. |
+| `src/lib/ui/SignInPanel.svelte` | **Copy unchanged.** Offline refusal, leaving state, failure slot, `returnTo`. |
+| `src/lib/auth.ts` | **Copy, change four constants** — the storage key prefix and the three `VITE_IDENTITY_*` values. The PKCE flow, the failure taxonomy, `sessionState`, and `safePath` are product-neutral. |
+| `src/lib/ui/AuthDoor.svelte` | **Copy, replace the layout and the shell.** The state machine is the reusable part; `.card`, `.bench`, and the wordmark are Cinder's. |
+| `.btn-provider` / `.btn-apple` / `.btn-google` in `src/app.css` | **Copy unchanged.** The literal hex values are Apple's and Google's, not a theme. Only `--focus-ring`'s inner spacer references a local token. |
+| `/signin`, `/signup`, `/account`, `/pro` pages | **Rewrite.** All the copy, every claim, the stored-data table, the balance. |
+
+The rule that keeps the seam honest: a sentence about accounts, credits,
+privacy, or money lives in a **route**, never in `src/lib/ui/`. If a component
+in that directory ever needs a product-specific word, the word belongs in a prop.
