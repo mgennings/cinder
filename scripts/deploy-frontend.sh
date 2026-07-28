@@ -28,7 +28,9 @@ for f in build/*.html; do
 done
 
 echo "Invalidating CloudFront…"
-aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths '/*' \
-	--region us-east-1 --no-cli-pager --query 'Invalidation.Id' --output text
+INVALIDATION_ID="$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths '/*' \
+	--region us-east-1 --no-cli-pager --query 'Invalidation.Id' --output text)"
+aws cloudfront wait invalidation-completed --distribution-id "$DIST_ID" \
+	--id "$INVALIDATION_ID" --region us-east-1
 
-echo "Done → https://d1v6mxepibwneb.cloudfront.net"
+echo "Done → https://cinder.ink"
