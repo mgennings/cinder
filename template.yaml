@@ -570,7 +570,7 @@ Resources:
       Name: !Sub 'cinder-viewer-request-${AWS::AccountId}'
       AutoPublish: true
       FunctionConfig:
-        Comment: Keep the apex canonical and give note links a crawler-readable shell
+        Comment: Keep the apex canonical, give note links a crawler-readable shell, resolve extensionless routes
         Runtime: cloudfront-js-2.0
       FunctionCode: !Sub |
         function encodeQuery(query) {
@@ -603,6 +603,65 @@ Resources:
           }
 
           if (request.uri.indexOf('/n/') === 0) request.uri = '/note.html';
+
+          // Resolve an extensionless route to its prerendered .html key.
+          //
+          // WHY THIS EXISTS, because in six months only the code remains:
+          // every prerendered page lands in build/ as `security.html`,
+          // `pro/done.html`, and so on, while CloudFront asks for the
+          // extensionless key. That used to be papered over by publishing a
+          // SECOND, extensionless copy of every page to the bucket — keys that
+          // existed only in S3 and never in build/. `aws s3 sync --delete` in
+          // scripts/deploy-frontend.sh therefore deleted all of them on every
+          // single deploy, and a loop republished them afterward. Inside that
+          // window an origin miss became a 403, CustomErrorResponses below
+          // turned it into an HTTP 200 serving the empty /200.html shell, and
+          // the edge cached that for the 300s default. Any interrupted deploy
+          // froze the site in that state. Rewriting here deletes the whole
+          // class: no alias key exists, so --delete has nothing to remove.
+          //
+          // The guards, in the order they run:
+          //   `/`                   DefaultRootObject owns the root. Explicit
+          //                         rather than strictly necessary: the empty
+          //                         last segment below would also skip it, and
+          //                         if CloudFront substitutes the root object
+          //                         before this function runs the URI is
+          //                         /index.html and the dot rule skips it. All
+          //                         three paths agree, and the root is the one
+          //                         URL worth saying out loud.
+          //   `/.well-known/…`      These are extensionless BY DESIGN. Apple's
+          //                         apple-app-site-association carries no
+          //                         extension, so a .html rewrite would send
+          //                         universal links to the SPA shell. Keeps the
+          //                         future TWA assetlinks note below honest too.
+          //   a dot in the last segment
+          //                         Real assets: /app.js, /favicon.ico,
+          //                         /sitemap.xml, and the /note.html this
+          //                         function just produced one line above.
+          //                         The sibling `fobkit-clean-urls` function in
+          //                         this same account tests the WHOLE uri for a
+          //                         dot. Deliberately narrower here so a dotted
+          //                         parent directory cannot strand a nested
+          //                         extensionless route. Both are correct for
+          //                         today's key layout; do not "align" them by
+          //                         widening this one.
+          //
+          // ES5 only, same as the sibling functions: indexOf, charAt, slice —
+          // never startsWith, endsWith, or includes.
+          //
+          // A single trailing slash is dropped first so /field-notes/ reaches
+          // the same key as /field-notes instead of falling to the shell.
+          // A route with no prerendered page (/f/<locator>) misses either way
+          // and still lands on the SPA shell, exactly as it did before.
+          var uri = request.uri;
+
+          if (uri !== '/' && uri.indexOf('/.well-known/') !== 0) {
+            if (uri.charAt(uri.length - 1) === '/') uri = uri.slice(0, -1);
+
+            var lastSegment = uri.slice(uri.lastIndexOf('/') + 1);
+
+            if (lastSegment && lastSegment.indexOf('.') === -1) request.uri = uri + '.html';
+          }
 
           return request;
         }
