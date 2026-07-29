@@ -50,9 +50,14 @@ button:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visibl
   /* clamp()'s 3rem floor scales with text zoom; at 200% it can outgrow a
      narrow viewport faster than 12vw does, and without a break allowance an
      unbreakable word like "infrastructure." would rather overflow the page
-     than shrink below its own min-content. */
+     than shrink below its own min-content.
+     `anywhere` rather than `break-word` because only `anywhere` also lowers
+     the box's min-content width. The final two words are joined with U+00A0
+     so the line cannot break between them and strand one; that pair is a
+     single unbreakable run, and under `break-word` its full width became the
+     heading's minimum and pushed the 320px arrival page into overflow. */
   max-width: 10ch; margin: 1rem 0; color: var(--ink); font-size: clamp(3rem, 12vw, 8rem);
-  line-height: 0.86; letter-spacing: -0.075em; text-wrap: balance; overflow-wrap: break-word;
+  line-height: 0.86; letter-spacing: -0.075em; text-wrap: balance; overflow-wrap: anywhere;
 }
 .lead { max-width: 38rem; font-size: clamp(1rem, 3vw, 1.35rem); line-height: 1.55; text-wrap: pretty; }
 form { max-width: 32rem; margin-top: 3rem; }

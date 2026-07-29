@@ -55,6 +55,10 @@ const clampStateToWindow = () => {
   else if (anchor > live) state.end = new Date(live).toISOString()
 }
 
+// Joins words with U+00A0 so a laid-out line can never end on one stranded
+// word. The layout gate measures real line boxes and fails when it does.
+const NON_BREAKING = (text) => text.replaceAll(" ", "\u00A0")
+
 const formatValue = (series, value) => {
   if (!Number.isFinite(value)) return "no samples"
   if (series.unit === "milliseconds") return `${value.toFixed(value >= 100 ? 0 : 1)} ms`
@@ -159,14 +163,15 @@ const renderRange = (payload) => {
     const heading = document.createElement("div")
     heading.className = "metric-heading"
     const label = document.createElement("h2")
-    label.textContent = series.label
+    // Bind the card title so it can never strand its last word.
+    label.textContent = NON_BREAKING(series.label)
     const unit = document.createElement("span")
     unit.textContent = series.aggregation
     heading.append(label, unit)
     const value = document.createElement("strong")
     value.textContent = formatValue(series, series.summary)
     const context = document.createElement("p")
-    context.textContent = `${payload.range.label} · ${series.unit}`
+    context.textContent = `${payload.range.label} ${NON_BREAKING(`· ${series.unit}`)}`
     card.append(heading, value, context, chart(series), table(series))
     return card
   })

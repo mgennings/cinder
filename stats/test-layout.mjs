@@ -215,7 +215,67 @@ const assertLayout = async (page, label) => {
   assert.ok(result.scrollWidth <= result.viewport, `${label}: ${result.scrollWidth}px content exceeds ${result.viewport}px viewport`);
   assert.deepEqual(result.clipped, [], `${label}: visible text leaves the viewport`);
   assert.deepEqual(result.smallTargets, [], `${label}: interactive target is smaller than 48px`);
+  assert.deepEqual(await orphanedBlocks(page), [], `${label}: a heading or paragraph ends on a single stranded word`);
 };
+
+
+// A heading or paragraph whose final laid-out line carries one stranded word is
+// a defect, and it has been caught by eye more than once. Measure it instead:
+// walk each block's words with a Range, group them by the top of the line box
+// they actually landed in, and flag any block that wrapped and ended alone.
+// Reading the source string could never see this -- the same words orphan at
+// one width and read fine at another.
+// The prescribed fix is a non-breaking space binding the final two words, so a
+// unit containing one is deliberately NOT a stranded single word -- it renders
+// as two words that simply cannot be split. Splitting on whitespace EXCEPT
+// U+00A0 makes the measurement agree with the fix.
+// Scope: headings, card titles, captions, and paragraphs -- exactly what the
+// rule governs. A <summary> is an interactive disclosure control, not a
+// heading, and neither is an all-caps mono `.eyebrow` kicker. Forcing either
+// one unbreakable measurably overflowed the page at 200% text on a 320px
+// screen -- 399px and then 331px of content in a 320px viewport -- which is a
+// worse defect than the orphan it would have fixed.
+const ORPHAN_SELECTOR = "h1, h2, h3, caption, .hero p:not(.eyebrow), .arrival-copy p:not(.eyebrow), .metric-card p, .lead";
+const orphanedBlocks = async (page, selector = ORPHAN_SELECTOR) => page.evaluate((blockSelector) => {
+  const stranded = [];
+  for (const block of document.querySelectorAll(blockSelector)) {
+    const style = getComputedStyle(block);
+    if (style.visibility === "hidden" || style.display === "none") continue;
+    // Only blocks laid out as one continuous run of inline content: a block
+    // child would start its own line box and make "the last line" ambiguous.
+    if ([...block.children].some((child) => !getComputedStyle(child).display.startsWith("inline"))) continue;
+
+    const words = [];
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.nodeValue;
+      for (const match of text.matchAll(/[^\s\u00A0]+(?:\u00A0[^\s\u00A0]+)*/g)) {
+        const range = document.createRange();
+        range.setStart(node, match.index);
+        range.setEnd(node, match.index + match[0].length);
+        const rects = [...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0);
+        if (!rects.length) continue;
+        // A word that itself wrapped spans two line boxes; the LAST rect is
+        // the line it ends on, which is the line that matters here.
+        words.push({ text: match[0], top: Math.round(rects[rects.length - 1].top) });
+      }
+    }
+    if (words.length < 2) continue;
+
+    const lines = [];
+    for (const word of words) {
+      const line = lines.at(-1);
+      if (line && line.top === word.top) line.words.push(word.text);
+      else lines.push({ top: word.top, words: [word.text] });
+    }
+    if (lines.length < 2) continue;
+    const last = lines.at(-1).words;
+    if (last.length === 1 && !last[0].includes("\u00A0")) {
+      stranded.push(`${block.tagName.toLowerCase()}: "${block.textContent.trim().slice(0, 60)}" ends alone on "${last[0]}"`);
+    }
+  }
+  return stranded;
+}, selector);
 
 
 const colorContrast = async (page) => page.evaluate(() => {

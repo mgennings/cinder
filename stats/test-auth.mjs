@@ -116,14 +116,14 @@ assert.match(loginSource, /window\.location\.replace\("\/"\)/);
 
 const anonymousRoot = await pageReply({}, "/", async () => { throw new Error("authority must stay cold"); });
 assert.equal(anonymousRoot.statusCode, 200);
-assert.match(anonymousRoot.body, /the vault stays closed/);
+assert.match(anonymousRoot.body, /the vault stays&nbsp;closed/);
 const privateRoot = await pageReply(
   { cookies: [`__Host-cinder_stats=${cookieToken(sharedReply)}`] },
   "/",
   async () => surface,
 );
 assert.equal(privateRoot.statusCode, 200);
-assert.match(privateRoot.body, /only the infrastructure/);
+assert.match(privateRoot.body, /only infrastructure, never/);
 for (const legacyPath of ["/welcome.html", "/dashboard.html"]) {
   const legacyReply = await pageReply({}, legacyPath, async () => { throw new Error("legacy redirects must stay cold"); });
   assert.equal(legacyReply.statusCode, 307);
