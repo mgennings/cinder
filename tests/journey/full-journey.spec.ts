@@ -160,10 +160,10 @@ test('refused anonymous, refused signed-in-unpaid, delivered after paying', asyn
 	);
 
 	// It burned. A second reader gets the generic gone state and cannot tell that
-	// any part of this transfer ever existed.
+	// any part of this transfer ever existed. Arrival detects that state directly;
+	// there is no remaining destructive action to offer.
 	const reader2 = await context.newPage();
 	await reader2.goto(link);
-	await reader2.getByRole('button', { name: /destroy all 3 stored pieces/i }).click();
 	await expect(reader2.getByRole('heading', { name: /this transfer is gone/i })).toBeVisible({
 		timeout: 60_000
 	});
