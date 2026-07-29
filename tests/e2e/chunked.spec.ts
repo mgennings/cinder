@@ -79,7 +79,8 @@ test('the recipient is told the piece count before anything is claimed', async (
 
 test('a two-part file round-trips byte for byte and claims each part exactly once', async ({
 	page,
-	context
+	context,
+	browser
 }) => {
 	const bytes = pattern(PART_BYTES + 500_000);
 	const link = await sendFile(page, bytes, 'ledger-big.bin');
@@ -115,14 +116,24 @@ test('a two-part file round-trips byte for byte and claims each part exactly onc
 	await expect(reader.getByText(/2 of 2 delivered/i)).toBeVisible();
 	await expect(reader.getByText(/Deleted, absence verified/i)).toBeVisible();
 
-	// Every part is spent. A second reader gets the generic gone state, and must
-	// not be able to tell that some parts of this transfer ever existed.
-	const reader2 = await context.newPage();
+	// Every part is spent. A stranger holding only the link gets the generic gone
+	// state, and must not be able to tell that some parts of this transfer ever
+	// existed.
+	//
+	// A stranger is a different BROWSER, not another tab. `context.newPage()`
+	// shares the sender's localStorage, which since the sender-status feature
+	// holds a status capability for this locator — so that tab answers "gone"
+	// from /files/status on arrival and never renders the gate at all. That is
+	// correct product behavior and blip.spec.ts asserts it; it is simply not the
+	// question this assertion is asking.
+	const strangerBrowser = await browser.newContext();
+	const reader2 = await strangerBrowser.newPage();
 	await reader2.goto(link);
 	await reader2.getByRole('button', { name: /destroy all 2 stored pieces/i }).click();
 	await expect(reader2.getByRole('heading', { name: /this transfer is gone/i })).toBeVisible({
 		timeout: 30_000
 	});
+	await strangerBrowser.close();
 });
 
 test('a piece failing partway states the permanent loss and offers no retry', async ({
