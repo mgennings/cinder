@@ -9,6 +9,13 @@ Cinder encrypts notes and files in the browser with AES-256-GCM. The decryption 
 - [Home](https://cinder.ink/): Create a one-time note or file transfer and get a shareable link.
 - [Security & threat model](https://cinder.ink/security): An honest account of what Cinder protects and what it cannot.
 
+## Field notes
+
+Decision gates, written down after the fact, in enough detail that someone outside this repo can use them.
+
+- [Field notes index](https://cinder.ink/field-notes): Every decision gate Cinder has published, oldest first.
+- [Field Note 001 — The Vote To Stay Blind](https://cinder.ink/field-notes/001): Why Cinder rejected IP-based rate limiting and chose to stay blind to who is asking, even though that means it can be knocked offline by a flood of traffic.
+
 ## Documentation
 
 - [Architecture](https://github.com/mgennings/cinder/blob/main/docs/architecture.md): How the system fits together.
