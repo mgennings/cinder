@@ -322,8 +322,10 @@ describe('extensionless routes resolve to their prerendered .html key', () => {
 // on a branch that is not merging. A comment nobody runs is not a guard.
 // ---------------------------------------------------------------------------
 
-/** `export const trailingSlash = 'always'`, or a `trailingSlash: 'ignore'` config key. */
-const TRAILING_SLASH_ASSIGNMENT = /trailingSlash\s*[:=]\s*['"]([a-z]+)['"]/g;
+/** `export const trailingSlash: TrailingSlash = 'always'`, or a `trailingSlash: 'ignore'` config key. */
+const TRAILING_SLASH_ASSIGNMENT = /trailingSlash(?:\s*:\s*\w+)?\s*[:=]\s*['"]([a-z]+)['"]/g;
+
+const TRAILING_SLASH_SOURCE = /(^|\/)\+(?:(page|layout)(\.server)?|server)\.(js|ts)$/;
 
 const TRAILING_SLASH_FAILURE = [
 	'trailingSlash is set to something other than "never".',
@@ -339,13 +341,13 @@ const TRAILING_SLASH_FAILURE = [
 
 /**
  * Every file SvelteKit reads the `trailingSlash` page option from, plus the kit
- * config block. Only `+page`/`+layout` modules and their `.server` twins may
- * export it — see @sveltejs/kit src/utils/exports.js.
+ * config block. `+page`/`+layout` modules, their `.server` twins, and
+ * `+server` modules may export it — see @sveltejs/kit src/utils/exports.js.
  */
 function trailingSlashSources(): { path: string; text: string }[] {
 	const routeFiles = readdirSync(join(REPO_ROOT, 'src/routes'), { recursive: true })
 		.map((entry) => `src/routes/${entry}`)
-		.filter((path) => /(^|\/)\+(page|layout)(\.server)?\.(js|ts)$/.test(path));
+		.filter((path) => TRAILING_SLASH_SOURCE.test(path));
 
 	return ['vite.config.ts', ...routeFiles].map((path) => ({
 		path,
@@ -354,6 +356,13 @@ function trailingSlashSources(): { path: string; text: string }[] {
 }
 
 describe('the flat prerender layout the rewrite depends on', () => {
+	it('recognizes every supported declaration shape', () => {
+		expect([...`export const trailingSlash: TrailingSlash = 'always'`.matchAll(TRAILING_SLASH_ASSIGNMENT)][0]?.[1]).toBe(
+			'always'
+		);
+		expect(TRAILING_SLASH_SOURCE.test('src/routes/api/+server.ts')).toBe(true);
+	});
+
 	it('has trailingSlash unset, or set to "never", everywhere SvelteKit reads it', () => {
 		const sources = trailingSlashSources();
 
