@@ -17,6 +17,14 @@ Fix the SVG or this script; never hand-edit a PNG.
 Why the site icons are regenerated here: the shipped favicon/apple-touch/PWA
 icons were screen captures of the AMBIENT Merkaba.svelte mid-rotation, so they
 arrived clipped and off-center. They are the mark now.
+
+The social cards had the SAME defect, on the highest-visibility surface Cinder
+has. og.png's figure was a mid-rotation capture too: 8.3% vertical-mirror
+overlap against the real mark's 99.8%, torn across 1,139 of its 1,200 columns
+at y=400, with 90.8% of its ink in the middle third so a 4:5 platform crop threw
+away 47.4% of it. og-note.png was a stock phone mockup on a cyan and violet wave
+field -- not Cinder's palette, not first-party, no source, 687KB. Both are
+generated here now.
 """
 
 import subprocess
@@ -26,7 +34,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "static" / "brand"
 STATIC = ROOT / "static"
-INTER = Path.home() / "Library" / "Fonts" / "Inter_24pt-SemiBold.ttf"
+FONTS = Path.home() / "Library" / "Fonts"
+INTER = FONTS / "Inter_24pt-SemiBold.ttf"
+INTER_REGULAR = FONTS / "Inter_24pt-Regular.ttf"
 
 APPLY = "--apply" in sys.argv
 
@@ -102,6 +112,46 @@ def to_light(svg: str) -> str:
     return body.replace("<title>Cinder</title>", "<title>Cinder</title>" + note, 1)
 
 
+_FONT_CACHE: dict[Path, object] = {}
+
+
+def _load(path: Path):
+    """TTFont is slow to construct and every card re-reads the same two files."""
+    if path not in _FONT_CACHE:
+        from fontTools.ttLib import TTFont
+
+        _FONT_CACHE[path] = TTFont(path)
+    return _FONT_CACHE[path]
+
+
+def outline(path: Path, text: str, track_em: float = 0.0):
+    """Convert `text` to SVG path data, in the font's own units.
+
+    Returns (paths, advance, metrics) where paths is a list of (x, d) in font
+    units, advance is the run's width in font units with no trailing letter-space,
+    and metrics carries unitsPerEm and capHeight so the caller can scale.
+
+    Outlining is why nothing downstream needs Inter installed: the glyphs ship as
+    geometry, not as a font reference.
+    """
+    from fontTools.pens.svgPathPen import SVGPathPen
+
+    font = _load(path)
+    glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
+    upm, hmtx = font["head"].unitsPerEm, font["hmtx"]
+
+    track = track_em * upm
+    x, paths = 0.0, []
+    for ch in text:
+        name = cmap[ord(ch)]
+        pen = SVGPathPen(glyphs)
+        glyphs[name].draw(pen)
+        if d := pen.getCommands():
+            paths.append((x, d))
+        x += hmtx[name][0] + track
+    return paths, x - track, (upm, font["OS/2"].sCapHeight)
+
+
 def wordmark(mark_svg: str) -> str:
     """The 'Cinder' lockup, glyphs converted to paths so the SVG is portable.
 
@@ -109,24 +159,8 @@ def wordmark(mark_svg: str) -> str:
     A second copy of those coordinates is a copy that drifts, and the stroke
     weight already had to be changed in two places once.
     """
-    from fontTools.pens.svgPathPen import SVGPathPen
-    from fontTools.ttLib import TTFont
-
-    font = TTFont(INTER)
-    glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
-    upm, hmtx = font["head"].unitsPerEm, font["hmtx"]
-    cap = font["OS/2"].sCapHeight
-
-    track = -0.005 * upm  # a hair tight, so six letters read as one word
-    x, paths = 0.0, []
-    for ch in "Cinder":
-        name = cmap[ord(ch)]
-        pen = SVGPathPen(glyphs)
-        glyphs[name].draw(pen)
-        if d := pen.getCommands():
-            paths.append((x, d))
-        x += hmtx[name][0] + track
-    advance = x - track  # the trailing letter-space is not part of the word
+    # a hair tight, so six letters read as one word
+    paths, advance, (upm, cap) = outline(INTER, "Cinder", track_em=-0.005)
 
     # Cap height 26 units against a 64-unit mark: the word sits inside the mark's
     # optical height instead of matching its full extent, which is what stops a
@@ -162,6 +196,288 @@ def wordmark(mark_svg: str) -> str:
   </g>
 </svg>
 """
+
+
+# ---------------------------------------------------------------- social cards
+
+# Read from src/app.css @theme. Cinder has exactly ONE electric channel; a card
+# that introduces a second color is a card for a different product.
+GROUND = "#0d0b0a"       # --color-ink, the vault floor
+GRID = "#2a231e"         # --color-line
+BODY = "#f1ece4"         # --color-body, warm paper-white
+MIST = "#a69d93"         # --color-mist
+EMBER = "#ff6b4a"        # --color-ember
+EMBER_SOFT = "#ff8f73"   # --color-ember-soft
+EMBER_DEEP = "#d94a2a"   # --color-ember-deep
+
+CARD_W, CARD_H = 1200, 630  # 1.91:1, the open-graph canvas
+
+# Platforms crop toward square: 1:1 keeps the centered 630x630, 4:5 keeps
+# 504x630. Everything that carries MEANING lives inside the NARROWEST of those,
+# so a crop removes art and never information. Only the terrain is allowed
+# outside. The card this replaced kept 52.6% of its ink at 4:5 because its figure
+# ran 866px wide.
+#
+# The live width is DERIVED from the 4:5 crop rather than picked. The spec this
+# came from asked for two things that cannot both be true -- "the 630 square with
+# a 45px inner margin", which is 540px, and "a 4:5 crop retains 100% of the type
+# and the mark", which is 504px. 504 satisfies both: it leaves 63px of margin
+# inside the 630 square, more than the 45 that was asked for.
+SAFE = CARD_H
+LIVE_W = round(CARD_H * 4 / 5)
+LIVE_X = (CARD_W - LIVE_W) // 2
+LIVE_Y, LIVE_H = 45, CARD_H - 90
+
+# Set against the widths platforms actually render an unfurl: Slack near 360
+# CSS px, Twitter's summary_large_image near 500, a message-client thumbnail as
+# low as 300. At 300 the scale factor is 0.25, so a 40px floor still renders at
+# 10px. NOTHING on the card may be smaller than 40.
+MIN_TYPE_PX = 40
+# 62, not the 64 the spec named: at 64 the reader headline's "someone left you"
+# measures 506px against the 504px live width and greedy wrap breaks it as
+# "someone left / you a note", splitting the verb phrase. 62 is the largest size
+# that keeps the natural break, and it is still 22px above the legibility floor.
+EYEBROW_PX, HEADLINE_PX, SUPPORT_PX = 40, 62, 40
+HEADLINE_LEADING = 1.12  # never 0.86: at that value Cinder's own headline lines
+                         # touch, measured at 0px of painted ink between them
+MARK_PX = 260
+TRACE_Y = CARD_H // 2  # the ember trace's row; the one deliberately asymmetric
+                       # element on the lit cards, where it runs right only
+
+# The eyebrow is specified as --font-mono, but that token is a system stack
+# (ui-monospace, SFMono-Regular, ...) with no file in this repo, and a card must
+# outline its type. Inter SemiBold uppercase at 0.16em reads as the same
+# technical kicker and keeps the card's font dependency to the one family the
+# script already needs.
+EYEBROW_TRACK, HEADLINE_TRACK, SUPPORT_TRACK = 0.16, -0.01, 0.0
+
+# The card's entire text surface. Frozen literals, three keys, read at build
+# time only. No note, envelope, filename, MIME string, or runtime value can
+# reach a pixel here, because nothing renders a card at request time. Every line
+# is a fact this repository can prove.
+CARDS = {
+    "primary": {
+        "file": "og.png",
+        "eyebrow": "ONE-TIME LINK",
+        "headline": "a note or a file, retrieved once",
+        "support": "we never see the key",
+        "lit": False,
+    },
+    "note": {
+        "file": "og-note.png",
+        "eyebrow": "ONE-TIME NOTE",
+        "headline": "someone left you a note",
+        "support": "one reveal, then it is gone",
+        "lit": True,
+    },
+    "file": {
+        "file": "og-file.png",
+        "eyebrow": "ONE-TIME FILE",
+        "headline": "someone left you a file",
+        "support": "one delivery, then it is gone",
+        "lit": True,
+    },
+}
+
+
+def wrap(font: Path, text: str, size: int, track_em: float, limit: float, max_lines: int = 2):
+    """Greedy wrap to at most `max_lines` lines that each fit `limit` px.
+
+    Also refuses to strand the last word alone: a final line of one word is the
+    orphan defect this repo measures for on every other surface, and a card is
+    the one surface nobody can reflow after the fact.
+    """
+    words, lines, current = text.split(" "), [], ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and measure(font, candidate, size, track_em) > limit:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    lines.append(current)
+
+    if len(lines) > max_lines:
+        raise SystemExit(f"card copy needs {len(lines)} lines at {size}px: {text!r}")
+    if len(lines) > 1 and len(lines[-1].split(" ")) == 1:
+        raise SystemExit(f"card copy strands its last word: {text!r} -> {lines}")
+    return lines
+
+
+def measure(font: Path, text: str, size: int, track_em: float) -> float:
+    _, advance, (upm, _) = outline(font, text, track_em)
+    return advance * size / upm
+
+
+def fit(font: Path, text: str, size: int, track_em: float, limit: float, role: str) -> str:
+    """Fail the build when a single line outgrows the crop-safe live area.
+
+    This guard is the whole reason the card copy reads the way it does. The plan
+    this card set came from specified `ENCRYPTED IN YOUR BROWSER` at 40px with
+    0.16em tracking, which measures 772px against a 540px live area -- it did not
+    even fit the 630px square, so a 1:1 crop would have sheared the eyebrow on
+    both ends. Two support lines were over too. None of that is visible by
+    reading the copy table; it only shows up against the font's real advances.
+    A guard that runs beats a rule someone remembers.
+    """
+    width = measure(font, text, size, track_em)
+    if width > limit:
+        raise SystemExit(
+            f"card {role} is {width:.0f}px against a {limit:.0f}px live area: {text!r}\n"
+            f"Shorten the copy. Shrinking the type is not available -- {MIN_TYPE_PX}px is the "
+            f"floor that keeps this legible in a 300px unfurl thumbnail."
+        )
+    return text
+
+
+def line_svg(font: Path, text: str, size: int, track_em: float, cx: float, baseline: float, fill: str) -> str:
+    """One centered line of outlined text, as a filled <g>."""
+    paths, advance, (upm, _) = outline(font, text, track_em)
+    scale = size / upm
+    left = cx - advance * scale / 2
+    body = "\n      ".join(
+        f'<path transform="translate({left + px * scale:.3f} {baseline:.3f}) '
+        f'scale({scale:.6f} {-scale:.6f})" d="{d}"/>'
+        for px, d in paths
+    )
+    return f'<g fill="{fill}">\n      {body}\n    </g>'
+
+
+def cap_px(font: Path, size: int) -> float:
+    _, _, (upm, cap) = outline(font, "H", 0.0)
+    return cap * size / upm
+
+
+def layout(kind: str):
+    """The card's vertical stack, in one place.
+
+    Returns (eyebrow_cap, support_cap, headline_cap, headline_lines, leading,
+    mark_top). Heights come from the font's own cap height rather than the em
+    box, so what gets centered is the optical block rather than a box with
+    uneven air in it.
+
+    Exposed rather than inlined so a test can measure the figure at the exact
+    coordinates the card puts it, instead of guessing a band. Guessing is how a
+    symmetry assertion ends up sampling empty ground and passing on a card whose
+    figure is not the mark at all.
+    """
+    card = CARDS[kind]
+    eyebrow_cap, support_cap = cap_px(INTER, EYEBROW_PX), cap_px(INTER_REGULAR, SUPPORT_PX)
+    headline_cap = cap_px(INTER, HEADLINE_PX)
+    lines = wrap(INTER, card["headline"], HEADLINE_PX, HEADLINE_TRACK, LIVE_W)
+    leading = HEADLINE_PX * HEADLINE_LEADING
+
+    stack = MARK_PX + 30 + eyebrow_cap + 22 + (headline_cap + (len(lines) - 1) * leading) + 22 + support_cap
+    return eyebrow_cap, support_cap, headline_cap, lines, leading, LIVE_Y + (LIVE_H - stack) / 2
+
+
+def mark_box(kind: str) -> tuple[int, int, int]:
+    """(x, y, size) of the mark on the rendered card, in pixels."""
+    return round(CARD_W / 2 - MARK_PX / 2), round(layout(kind)[5]), MARK_PX
+
+
+def social_card(kind: str, mark_svg: str, plate: bool = False) -> str:
+    """Compose one 1200x630 card as a self-contained SVG string.
+
+    Takes a key from CARDS and the mark source. Reads no argv, no environment,
+    no network, and no file the caller did not already hand it.
+
+    `plate` renders the identical card with the mark and every glyph omitted, so
+    a test can find meaningful ink by difference against it. That is the only
+    method that sees ink over a gradient, which is exactly what this card has
+    behind its type. It is a measurement surface, never a shipped file.
+    """
+    if kind not in CARDS:
+        raise ValueError(f"unknown card kind {kind!r}; expected one of {sorted(CARDS)}")
+    card = CARDS[kind]
+    cx = CARD_W / 2
+
+    # Terrain. Full width, behind everything, decorative only -- the one thing a
+    # crop is allowed to eat. 60px pitch so the grid still reads at a 300px
+    # thumbnail instead of turning into a gray wash.
+    grid = "".join(
+        f'<path d="M{x} 0V{CARD_H}"/>' for x in range(0, CARD_W + 1, 60)
+    ) + "".join(f'<path d="M0 {y}H{CARD_W}"/>' for y in range(0, CARD_H + 1, 60))
+
+    # The ember trace. At rest it runs both directions from the core; lit, it
+    # runs to the right edge only, so the note and file cards read as the same
+    # instrument showing a different state rather than a different picture.
+    trace = (
+        f'<path d="M{cx} {TRACE_Y}H{CARD_W}" stroke="{EMBER_DEEP}" stroke-width="2"/>'
+        if card["lit"]
+        else f'<path d="M0 {TRACE_Y}H{CARD_W}" stroke="{EMBER_DEEP}" stroke-width="2" opacity="0.55"/>'
+    )
+
+    eyebrow_cap, support_cap, headline_cap, lines, leading, y = layout(kind)
+
+    mark_scale = MARK_PX / 64
+    # Lifted verbatim, exactly the way wordmark() lifts it. The 24 degree offset
+    # is load-bearing (see cinder-mark.svg); redrawing it here would draw a
+    # different mark for a different organization.
+    art = mark_svg[mark_svg.index('  <g fill="none"') : mark_svg.rindex("</svg>")].rstrip()
+    # "Lit" is additive -- a halo behind the untouched source, never an edit to it.
+    # A radial falloff rather than a flat disc: a hard-edged circle at 30% reads
+    # as a brown blob sitting inside the triangles, not as the core giving light.
+    halo = (
+        f'<circle cx="32" cy="32" r="16" fill="url(#lit)"/>'
+        if card["lit"]
+        else ""
+    )
+    mark = (
+        f'<g transform="translate({cx - MARK_PX / 2} {y}) scale({mark_scale})">'
+        f"{halo}\n{art}\n  </g>"
+    )
+
+    y += MARK_PX + 30 + eyebrow_cap
+    eyebrow = line_svg(
+        INTER,
+        fit(INTER, card["eyebrow"].upper(), EYEBROW_PX, EYEBROW_TRACK, LIVE_W, f"{kind} eyebrow"),
+        EYEBROW_PX, EYEBROW_TRACK, cx, y, MIST,
+    )
+    y += 22 + headline_cap
+    headline = "\n    ".join(
+        line_svg(INTER, line, HEADLINE_PX, HEADLINE_TRACK, cx, y + index * leading, BODY)
+        for index, line in enumerate(lines)
+    )
+    y += (len(lines) - 1) * leading + 22 + support_cap
+    support = line_svg(
+        INTER_REGULAR,
+        fit(INTER_REGULAR, card["support"], SUPPORT_PX, SUPPORT_TRACK, LIVE_W, f"{kind} support"),
+        SUPPORT_PX, SUPPORT_TRACK, cx, y, MIST,
+    )
+
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {CARD_W} {CARD_H}" width="{CARD_W}" height="{CARD_H}">
+  <!-- GENERATED by scripts/build-brand.py. Edit the script, never this PNG. -->
+  <rect width="{CARD_W}" height="{CARD_H}" fill="{GROUND}"/>
+  <radialGradient id="core" cx="50%" cy="{(LIVE_Y + MARK_PX) / CARD_H * 100:.1f}%" r="42%">
+    <stop offset="0" stop-color="{EMBER}" stop-opacity="0.13"/>
+    <stop offset="1" stop-color="{EMBER}" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="lit">
+    <stop offset="0.2" stop-color="{EMBER_SOFT}" stop-opacity="0.55"/>
+    <stop offset="1" stop-color="{EMBER}" stop-opacity="0"/>
+  </radialGradient>
+  <g stroke="{GRID}" stroke-width="1" fill="none">{grid}</g>
+  <rect width="{CARD_W}" height="{CARD_H}" fill="url(#core)"/>
+  <g fill="none">{trace}</g>
+  {"" if plate else mark}
+  <g>
+    {"" if plate else eyebrow}
+    {"" if plate else headline}
+    {"" if plate else support}
+  </g>
+</svg>
+"""
+
+
+def render_cards(mark_svg: str) -> None:
+    for kind, card in CARDS.items():
+        svg = social_card(kind, mark_svg)
+        png = subprocess.run(
+            ["rsvg-convert", "-w", str(CARD_W), "-h", str(CARD_H), "-b", GROUND],
+            input=svg.encode(), check=True, capture_output=True,
+        ).stdout
+        write(STATIC / card["file"], png)
 
 
 def main() -> None:
@@ -215,6 +531,9 @@ def main() -> None:
     # sliced off on any launcher that rounds the icon.
     print("maskable icon:")
     render(dark, 512, STATIC / "icon-maskable-512.png", bg=INK, inset=0.20)
+
+    print("social cards (1200x630, everything meaningful inside the 630 square):")
+    render_cards(mark_svg)
 
 
 if __name__ == "__main__":

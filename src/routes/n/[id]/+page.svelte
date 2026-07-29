@@ -80,7 +80,10 @@
 	<meta property="og:image" content="https://cinder.ink/og-note.png" />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="A Cinder one-time note shown on a phone against an encrypted signal landscape" />
+	<meta
+		property="og:image:alt"
+		content="The Cinder mark, its ember core lit, over the words: one-time note, someone left you a note, one reveal, then it is gone"
+	/>
 	<meta name="twitter:title" content="Someone left you a one-time note · Cinder" />
 	<meta name="twitter:image" content="https://cinder.ink/og-note.png" />
 </svelte:head>
