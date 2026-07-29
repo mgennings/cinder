@@ -63,10 +63,9 @@ _IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 # The note's metadata block is four `**Key:** value` lines right after the
 # H1, immediately before the first "---". This is not YAML front matter —
 # there is none in this house style — it is the same hand-rolled key list
-# render.py:77 already parses for its own <div class="meta"> rows. Restated
-# here rather than imported, because render.py is a different task's
-# surface and this module must never reach into it; if that key list ever
-# changes, both places have to change on purpose.
+# render.py's to_html() matches for its own <div class="meta"> rows. META_KEYS
+# lives HERE, canonically — render.py imports it from this module rather than
+# keeping its own copy, so the key list only ever changes in one place.
 META_KEYS = ("Decision gate", "Date", "Verdict", "Vote")
 
 
@@ -126,8 +125,10 @@ def parse_note(path) -> Note:
     """Read a field note's markdown source and return its parsed Note.
 
     `path` accepts a str or a pathlib.Path. The note number comes from the
-    filename (e.g. "001-the-vote-to-stay-blind.md" -> "001"), mirroring the
-    same slug convention render.py:193 already uses.
+    filename (e.g. "001-the-vote-to-stay-blind.md" -> "001"). This is the
+    sole place that slug convention is defined — render.py has no filename
+    parsing of its own; it takes `note.number` from the Note this function
+    returns.
     """
     path = pathlib.Path(path)
     text = path.read_text(encoding="utf-8")
