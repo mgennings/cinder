@@ -16,7 +16,11 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 20rem; background: var(--ground); }
+/* px, not rem: this floors the page at the smallest supported device width.
+   A rem-based floor scales with 200% text zoom (20rem -> 640px) and forces
+   the whole page wider than the real 320px viewport -- caught by test-layout's
+   200% text pass, not by anything that reads the stylesheet in isolation. */
+html { min-width: 320px; background: var(--ground); }
 body { min-height: 100svh; margin: 0; color: var(--muted); background: var(--ground); font-family: var(--sans); }
 body::before {
   position: fixed; inset: 0; pointer-events: none; content: "";
@@ -43,8 +47,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visibl
 }
 .arrival-copy { padding: clamp(2rem, 8vw, 6rem) clamp(1rem, 7vw, 5rem); }
 .arrival-copy h1, .hero h1 {
+  /* clamp()'s 3rem floor scales with text zoom; at 200% it can outgrow a
+     narrow viewport faster than 12vw does, and without a break allowance an
+     unbreakable word like "infrastructure." would rather overflow the page
+     than shrink below its own min-content. */
   max-width: 10ch; margin: 1rem 0; color: var(--ink); font-size: clamp(3rem, 12vw, 8rem);
-  line-height: 0.86; letter-spacing: -0.075em; text-wrap: balance;
+  line-height: 0.86; letter-spacing: -0.075em; text-wrap: balance; overflow-wrap: break-word;
 }
 .lead { max-width: 38rem; font-size: clamp(1rem, 3vw, 1.35rem); line-height: 1.55; text-wrap: pretty; }
 form { max-width: 32rem; margin-top: 3rem; }
@@ -69,17 +77,30 @@ button:disabled { opacity: 0.65; cursor: wait; }
 .masthead > a { color: var(--ink); font: 800 0.9rem var(--mono); letter-spacing: 0.08em; text-decoration: none; }
 .masthead > a span { color: var(--muted); }
 .masthead nav { display: flex; align-items: center; gap: 0.5rem; }
+/* The 1fr grid track below defaults its automatic minimum to the switcher's
+   min-content, which can outgrow the row at large text zoom and push #logout
+   off-screen. min-width:0 lets the track -- and the switcher summary inside
+   it -- actually shrink and wrap instead. */
+.masthead nav > div { min-width: 0; }
 .quiet-button { background: transparent; color: var(--ink); border-color: var(--line); }
 .dashboard-shell { position: relative; width: min(82rem, 100%); margin: 0 auto; padding: clamp(3rem, 8vw, 7rem) 1rem; }
 .hero { max-width: 62rem; }
 .hero p:not(.eyebrow) { max-width: 46rem; font-size: clamp(1rem, 2.4vw, 1.35rem); line-height: 1.55; text-wrap: pretty; }
-.window-control { display: inline-grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.25rem; margin-block: 3rem 1rem; padding: 0.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--panel); }
-.window-control button { min-width: 7.5rem; border-color: transparent; background: transparent; color: var(--muted); }
-.window-control button[aria-pressed="true"] { border-color: var(--ember-fill); background: var(--ember-fill); color: #160905; }
+.control-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr)); gap: 0.25rem; padding: 0.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--panel); }
+.control-row button { min-width: 0; border-color: transparent; background: transparent; color: var(--muted); }
+.control-row button[aria-pressed="true"] { border-color: var(--ember-fill); background: var(--ember-fill); color: #160905; }
+.window-control { margin-block: 3rem 1rem; }
+.hour-navigator { margin-block: 0 2rem; }
+/* touch-action: pan-y leaves vertical page scroll to the browser and reserves
+   the horizontal axis for the one-hour-per-gesture swipe in dashboard.js. */
+.explorer-shell { touch-action: pan-y; }
 .metric-grid { display: grid; gap: 0.75rem; min-height: 20rem; }
 .metric-card { min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); border-radius: 0.75rem; }
-.metric-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
-.metric-heading h2 { margin: 0; color: var(--ink); font-size: 1rem; }
+/* flex-wrap plus min-width:0 on the label: a flex item's default min-width:auto
+   refuses to shrink below its own unwrapped content, so a long label next to
+   the aggregation word can push this row past the card at large text zoom. */
+.metric-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1rem; }
+.metric-heading h2 { min-width: 0; margin: 0; color: var(--ink); font-size: 1rem; }
 .metric-heading span { color: var(--muted); font: 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; }
 .metric-card > strong { display: block; margin-block: 1.5rem 0.25rem; color: var(--ember); font-size: clamp(2rem, 7vw, 4rem); line-height: 0.95; overflow-wrap: anywhere; }
 .metric-card > p { margin: 0; color: var(--muted); font: 0.72rem/1.5 var(--mono); }
@@ -88,6 +109,10 @@ svg { display: block; width: 100%; height: auto; max-height: 12rem; overflow: vi
 .chart-baseline { stroke: var(--line); stroke-width: 2; }
 .chart-line { fill: none; stroke: var(--ember-fill); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .data-table summary { color: var(--ink); font: 0.75rem var(--mono); }
+/* An auto-layout table's minimum content width can exceed its 100% target
+   (long UTC timestamps at large text zoom). Scroll the table in its own box
+   rather than let it force the whole page wider -- never clip it either. */
+.data-table { overflow-x: auto; }
 .data-table table { width: 100%; margin-top: 0.75rem; border-collapse: collapse; font: 0.72rem/1.4 var(--mono); }
 .data-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .data-table th, .data-table td { padding: 0.65rem 0; border-bottom: 1px solid var(--line); text-align: left; }
@@ -131,14 +156,16 @@ svg { display: block; width: 100%; height: auto; max-height: 12rem; overflow: vi
   .masthead nav { display: grid; grid-template-columns: 1fr auto; }
   .switcher, .switcher summary { width: 100%; }
   .switcher ul { left: 0; right: auto; }
-  .window-control { width: 100%; }
-  .window-control button { min-width: 0; }
+  .control-row { width: 100%; }
 }
 
 @media (forced-colors: active) {
   * { forced-color-adjust: auto; }
   .chart-line { stroke: LinkText; }
   .chart-baseline { stroke: CanvasText; }
+  /* The selected range/anchor state must survive forced colors on its own
+     terms, not by inheriting the ember palette forced-colors strips away. */
+  .control-row button[aria-pressed="true"] { background: Highlight; color: HighlightText; border-color: Highlight; }
 }
 
 @media (prefers-reduced-motion: reduce) {

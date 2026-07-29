@@ -22,17 +22,27 @@
         <p class="eyebrow">AWS/LAMBDA / EXACT CINDER FUNCTIONS</p>
         <h1 id="title">only the infrastructure.</h1>
         <p>
-          Invocations, errors, throttles, and duration are aggregated across
-          Cinder's exact Lambda function set. No logs or application data are read.
+          Invocations, errors, error rate, throttles, throttle rate, and
+          duration are aggregated across Cinder's exact Lambda function set,
+          read from the authenticated origin. No logs or application data are
+          read.
         </p>
       </section>
 
-      <div class="window-control" role="group" aria-label="metric window">
+      <div class="window-control control-row" role="group" aria-label="metric window">
+        <button type="button" data-window="1h" aria-pressed="false">1 hour</button>
+        <button type="button" data-window="4h" aria-pressed="false">4 hours</button>
         <button type="button" data-window="24h" aria-pressed="true">24 hours</button>
         <button type="button" data-window="7d" aria-pressed="false">7 days</button>
       </div>
 
-      <section id="metric-grid" class="metric-grid" aria-label="aggregate Lambda metrics" aria-busy="true"></section>
+      <div id="hour-navigator" class="hour-navigator control-row" role="group" aria-label="hour navigation">
+        <button id="nav-previous" type="button">Previous hour</button>
+        <button id="nav-live" type="button" aria-pressed="true">Live</button>
+        <button id="nav-next" type="button" disabled>Next hour</button>
+      </div>
+
+      <section id="metric-grid" class="metric-grid explorer-shell" aria-label="aggregate Lambda metrics" aria-busy="true"></section>
 
       <footer class="proof-line">
         <p><strong id="scope">11 exact functions</strong> · <span id="checked-at">checking origin</span></p>
