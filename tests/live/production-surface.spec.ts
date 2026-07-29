@@ -12,10 +12,10 @@ const FORBIDDEN_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 // Quick mode (default): the plan's declared smoke widths, 375 and 1440.
 // Deep mode (CINDER_UXQA_MODE=deep): the complete declared matrix from the
-// manifest at .remember/uxqa/manifest.json.
-const DEEP = process.env.CINDER_UXQA_MODE === 'deep';
-const WIDTHS = DEEP ? [320, 375, 402, 440, 768, 1440, 1920, 2560] : [375, 1440];
-const COLOR_SCHEMES: Array<'light' | 'dark'> = DEEP ? ['light', 'dark'] : ['light'];
+// manifest at .uxqa.json. Both come from scripts/uxqa-matrix.mjs, which the
+// evidence reporter reads too, so the reported matrix cannot drift from the
+// one this file actually loops over.
+import { COLOR_SCHEMES, WIDTHS } from '../../scripts/uxqa-matrix.mjs';
 
 function guardNonMutating(page: import('@playwright/test').Page, blocked: string[]) {
 	return page.route('**/*', (route) => {
