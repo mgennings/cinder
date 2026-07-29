@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { COLOR_SCHEMES, DEEP, WIDTHS } from './uxqa-matrix.mjs';
 
 function git(args) {
 	try {
@@ -31,7 +32,6 @@ export default class UxqaEvidenceReporter {
 		const failed = this.results.filter((r) => r.status === 'failed' || r.status === 'timedOut').length;
 		const skipped = this.results.filter((r) => r.status === 'skipped' || r.status === 'interrupted').length;
 		const durationMs = this.results.reduce((sum, r) => sum + r.durationMs, 0);
-		const deep = process.env.CINDER_UXQA_MODE === 'deep';
 
 		const evidence = {
 			schema: 'org.uxuiai.uxqa-evidence.v1',
@@ -39,9 +39,12 @@ export default class UxqaEvidenceReporter {
 			deployedRevision: 'unknown', // Cinder's deployed Lambda revision is not yet discoverable from here
 			environment: 'production',
 			origin: process.env.CINDER_PRODUCTION_ORIGIN || 'https://cinder.ink',
-			mode: deep ? 'deep' : 'quick',
-			widths: deep ? [320, 375, 402, 440, 768, 1440, 1920, 2560] : [375, 1440],
-			colorSchemes: deep ? ['light', 'dark'] : ['light'],
+			mode: DEEP ? 'deep' : 'quick',
+			// The same arrays tests/live/production-surface.spec.ts loops over,
+			// from the same module, so the reported matrix cannot claim a width
+			// the run never opened.
+			widths: WIDTHS,
+			colorSchemes: COLOR_SCHEMES,
 			accessibilityModes: [],
 			routeCount: 1,
 			engine: 'chromium',
