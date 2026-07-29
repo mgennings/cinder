@@ -35,6 +35,9 @@ aws s3 sync build/ "s3://$BUCKET" --delete --exclude '.DS_Store' --region us-eas
 # `200.html` is skipped only at the ROOT: it is the SPA fallback CloudFront
 # serves for every miss (template.yaml CustomErrorResponses), not a route. A
 # nested `200.html` would be a real page and must still get its alias.
+#
+# This loop is covered by scripts/test-deploy-aliases.sh. Run it after
+# touching the skip guards or the key derivation.
 echo "Publishing extensionless aliases for prerendered pages…"
 
 # find's exit status disappears once its output feeds a process substitution:
@@ -57,6 +60,11 @@ while IFS= read -r -d '' f; do
 	echo "  /$key"
 done < "$HTML_LIST"
 
+# Load-bearing, not cosmetic: the `--delete` sync above just removed every
+# alias key this loop republished (they exist only in the bucket, never in
+# build/), and CloudFront's default 300s error-caching TTL means any origin
+# miss during that window gets cached as the 200 SPA shell. This invalidation
+# is what clears that cached miss; skipping it to save time reopens the bug.
 echo "Invalidating CloudFront…"
 INVALIDATION_ID="$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths '/*' \
 	--region us-east-1 --no-cli-pager --query 'Invalidation.Id' --output text)"
