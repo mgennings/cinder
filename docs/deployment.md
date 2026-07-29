@@ -29,7 +29,7 @@ This guide provisions your own copy of Cinder on AWS: the API, the database, and
 | API Gateway HTTP API | Fronts the service Lambdas with CORS |
 | S3 bucket | Holds the static site (private, served only via CloudFront) |
 | CloudFront distribution | HTTPS delivery with SPA fallback |
-| IAM roles | Least-privilege: create can only `PutItem`, read can only `DeleteItem` |
+| IAM roles | Least privilege per function across storage, identity, and payment boundaries |
 
 ## Deploy the backend
 

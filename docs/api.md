@@ -1,6 +1,6 @@
 # API reference
 
-Cinder's API is six endpoints — two for notes, four for files. This document is the exact contract. All request and response bodies are JSON. The base URL for the reference deployment is `https://tlfcdvq445.execute-api.us-east-1.amazonaws.com`; your own deployment's URL comes from the SAM stack output (see [Deployment](deployment.md)).
+Cinder's API is seven endpoints: two for notes and five for files. This document is the exact contract. All request and response bodies are JSON. The base URL for the reference deployment is `https://tlfcdvq445.execute-api.us-east-1.amazonaws.com`; your own deployment's URL comes from the SAM stack output (see [Deployment](deployment.md)).
 
 > **Note:** The API only ever sees ciphertext. It never receives the decryption key — that stays in the URL fragment on the client. Everything here operates on already-encrypted data.
 
@@ -73,7 +73,7 @@ curl -X POST https://tlfcdvq445.execute-api.us-east-1.amazonaws.com/notes/<id>/b
 
 ## File transfer
 
-Four endpoints, and they are deliberately shaped so that no single one of them is enough to do harm. All capabilities travel in request **bodies**, never in a path or query string, so nothing sensitive can end up in an access log if logging is ever switched on. The one exception is the presigned upload URL, which necessarily carries its signature in an S3 query string; it is scoped to a single key, a single length, and a single checksum, and it expires in five minutes.
+Five endpoints, and they are deliberately shaped so that no single one of them is enough to do harm. All capabilities travel in request **bodies**, never in a path or query string, so nothing sensitive can end up in an access log if logging is ever switched on. The one exception is the presigned upload URL, which necessarily carries its signature in an S3 query string; it is scoped to a single key, a single length, and a single checksum, and it expires in five minutes.
 
 ### Reserve a transfer
 
