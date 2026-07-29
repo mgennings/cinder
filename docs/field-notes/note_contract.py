@@ -206,7 +206,7 @@ def validate(note: Note) -> list[str]:
         violations.append("house format: missing 'The technical record' half")
     if plain_at is not None and technical_at is not None and plain_at > technical_at:
         violations.append(
-            "house format: 'The technical record' appears before 'In plain words' — "
+            "house format: 'The technical record' appears before 'In plain words'; "
             "the plain-words half must come first"
         )
 
@@ -250,7 +250,7 @@ def validate(note: Note) -> list[str]:
         if "\u00a0" in line:
             violations.append(
                 f"typography: line {line_number} contains a literal non-breaking space "
-                f"(U+00A0) — it is invisible and can vanish in transit, remove it: {line.strip()!r}"
+                f"(U+00A0); it is invisible and can vanish in transit, remove it: {line.strip()!r}"
             )
 
     # Rule 5 — prose is one unbroken line per paragraph in the source; the

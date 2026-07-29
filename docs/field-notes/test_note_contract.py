@@ -211,7 +211,7 @@ def test_rejects_literal_nbsp():
         "A plain paragraph.\n\n"
         "---\n\n"
         "## The technical record\n\n"
-        "A technical paragraph with a hidden non-breaking space in it.\n"
+        "A technical paragraph with a hidden non-breaking\u00a0space in it.\n"
     )
     violations = validate(_parse(text))
     assert any("non-breaking space" in v for v in violations), violations
