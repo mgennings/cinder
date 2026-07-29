@@ -217,10 +217,21 @@ assert.match(navigationSource, /\["signals", "products", "places"\]/);
 // and read the rendered group headings back out, so the render order itself
 // is what the test proves rather than a string match on the source.
 {
+  // The live ten-destination taxonomy's exact 3/4/3 shape, deliberately fed in
+  // scrambled order. Counting per group as well as reading the headings means
+  // a renderer that emits all three headings but files a product under Places
+  // cannot pass.
   const shuffledFixture = [
-    { id: "place-one", group: "places", label: "place", href: "https://mgennings.com/" },
-    { id: "product-one", group: "products", label: "product", href: "https://stats.cinder.ink/" },
-    { id: "signal-one", group: "signals", label: "signal", href: "https://stats.uxuiai.org/" },
+    { id: "place-one", group: "places", label: "place one", href: "https://mgennings.com/" },
+    { id: "product-one", group: "products", label: "product one", href: "https://stats.undertext.org/" },
+    { id: "signal-one", group: "signals", label: "signal one", href: "https://stats.uxuiai.org/" },
+    { id: "place-two", group: "places", label: "place two", href: "https://undertext.org/" },
+    { id: "product-two", group: "products", label: "product two", href: "https://stats.airbridgehealth.com/" },
+    { id: "signal-two", group: "signals", label: "signal two", href: "https://stats.ux-ui.ai/" },
+    { id: "place-three", group: "places", label: "place three", href: "https://mattbook.dev/" },
+    { id: "product-three", group: "products", label: "product three", href: "https://stats.cinder.ink/" },
+    { id: "signal-three", group: "signals", label: "signal three", href: "https://stats.metamatt.io/" },
+    { id: "product-four", group: "products", label: "product four", href: "https://holyinstant.app/" },
   ];
   const dom = new JSDOM(`<!doctype html><body><div id="private-navigation"></div></body>`, {
     url: "https://stats.cinder.ink/",
@@ -238,6 +249,38 @@ assert.match(navigationSource, /\["signals", "products", "places"\]/);
   }
   const renderedGroups = [...dom.window.document.querySelectorAll("li.group")].map((li) => li.textContent);
   assert.deepEqual(renderedGroups, ["signals", "products", "places"]);
+
+  // Walk the rendered <ul> in document order and bucket each link under the
+  // heading that precedes it. Reading headings alone proves the labels exist;
+  // this proves the destinations landed beneath the right one.
+  const membership = new Map();
+  let currentGroup = null;
+  for (const item of dom.window.document.querySelectorAll(".switcher ul > li")) {
+    if (item.classList.contains("group")) {
+      currentGroup = item.textContent;
+      membership.set(currentGroup, []);
+      continue;
+    }
+    membership.get(currentGroup).push(item.querySelector("a"));
+  }
+  assert.deepEqual(
+    [...membership].map(([group, links]) => [group, links.length]),
+    [["signals", 3], ["products", 4], ["places", 3]],
+  );
+  assert.deepEqual(
+    membership.get("products").map((link) => link.textContent),
+    ["product one", "product two", "product three", "product four"],
+  );
+
+  // Every href renders byte-for-byte as delivered. A handoff appended to the
+  // link itself -- rather than assigned at click time -- would show up here as
+  // an extra hash or query the fixture never contained.
+  const byLabel = new Map(shuffledFixture.map((destination) => [destination.label, destination.href]));
+  for (const link of dom.window.document.querySelectorAll(".switcher a")) {
+    assert.equal(link.getAttribute("href"), byLabel.get(link.textContent), link.textContent);
+  }
+  assert.equal(dom.window.document.querySelectorAll(".switcher a").length, 10);
+
   dom.window.close();
 }
 

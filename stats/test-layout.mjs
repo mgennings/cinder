@@ -22,14 +22,21 @@ const ASSETS = new Map([
   ["/navigation.js", ["site/navigation.js", "application/javascript; charset=utf-8"]],
   ["/dashboard.js", ["site/dashboard.js", "application/javascript; charset=utf-8"]],
 ]);
+// The live taxonomy's exact shape: ten destinations across three groups, 3/4/3.
+// Hosts stay generic on purpose -- this fixture proves rendering, and the real
+// private inventory is asserted absent from every site asset in test-auth.mjs.
+const NAVIGATION_GROUP_COUNTS = [["signals", 3], ["products", 4], ["places", 3]];
 const NAVIGATION = {
-  destinations: Array.from({ length: 9 }, (_, index) => ({
-    id: `destination-${index}`,
-    group: index < 6 ? "signals" : "places",
-    label: `private destination ${index + 1}`,
-    href: `https://private-${index + 1}.example/`,
-  })),
+  destinations: NAVIGATION_GROUP_COUNTS.flatMap(([group, count]) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `${group}-${index + 1}`,
+      group,
+      label: `private ${group} ${index + 1}`,
+      href: `https://private-${group}-${index + 1}.example/`,
+    })),
+  ),
 };
+const NAVIGATION_TOTAL = NAVIGATION.destinations.length;
 
 // One fixed instant used only to render "checked ..." style text in the
 // mock's live payloads. Never compared against the browser's real clock.
@@ -79,6 +86,10 @@ let navigationAllowed = true;
 let sessionValid = true;     // false simulates an expired session: /api/metrics AND / both deny
 let metricsAvailable = true; // false simulates a 503 with the session intact
 let metricsDelayMs = 0;      // artificial per-response latency for race/logout-mid-fetch coverage
+// Per-window latency, so an EARLIER request can be made to answer LAST. Without
+// it every stale response is simply aborted and out-of-order delivery is never
+// actually exercised.
+let metricsDelayByWindow = null;
 
 
 const server = createServer(async (request, response) => {
@@ -137,7 +148,8 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(rangePayload(windowId, end ? "fixed" : "live", end)));
     };
-    if (metricsDelayMs > 0) return void setTimeout(send, metricsDelayMs);
+    const delay = metricsDelayByWindow?.get(windowId) ?? metricsDelayMs;
+    if (delay > 0) return void setTimeout(send, delay);
     return send();
   }
   const asset = ASSETS.get(path);
@@ -308,7 +320,25 @@ try {
       await page.locator(".data-table summary").first().click();
       await page.locator(".switcher summary").click();
       await assertLayout(page, `${label} dashboard`);
-      assert.equal(await page.locator(".switcher a").count(), 9, `${label}: nine private destinations did not render`);
+      assert.equal(
+        await page.locator(".switcher a").count(),
+        NAVIGATION_TOTAL,
+        `${label}: ${NAVIGATION_TOTAL} private destinations did not render`,
+      );
+
+      // Group headings in canonical order, with the right destinations under
+      // each. A renderer that emitted every link but dropped the Products
+      // heading, or listed the groups in another order, passes the count above
+      // and fails here.
+      const groupShape = await page.locator(".switcher ul").evaluate((list) => {
+        const shape = [];
+        for (const item of list.children) {
+          if (item.classList.contains("group")) shape.push([item.textContent, 0]);
+          else if (shape.length) shape[shape.length - 1][1] += 1;
+        }
+        return shape;
+      });
+      assert.deepEqual(groupShape, NAVIGATION_GROUP_COUNTS, `${label}: private navigation group shape`);
       assert.equal(await page.locator("body").evaluate((element) => getComputedStyle(element).animationName), "none");
       await page.locator(".switcher summary").click();
 
@@ -383,17 +413,29 @@ try {
       await page.mouse.up();
     };
 
+    // `page.url()` is Playwright's CACHED main-frame URL. `history.replaceState`
+    // reaches it asynchronously, so a no-op assertion written against it can
+    // read the same stale string before and after a gesture and compare a value
+    // to itself -- passing whether or not the gesture was correctly ignored.
+    // Every assertion below reads `location.href` inside the page instead, and
+    // any assertion proving a NEGATIVE settles the event loop first.
+    const currentEnd = () => page.evaluate(() => new URL(location.href).searchParams.get("end"));
+    const settledEnd = async () => {
+      await page.waitForTimeout(50);
+      return currentEnd();
+    };
+
     // Swiping left while live has nothing to move to; the URL stays live.
     await drag(-100, 0);
-    assert.equal(new URL(page.url()).searchParams.has("end"), false, "swiping left while live must stay a no-op");
+    assert.equal(await settledEnd(), null, "swiping left while live must stay a no-op");
 
     // Swiping right moves exactly one hour into the past per gesture, twice.
     await drag(100, 0);
     await page.waitForFunction(() => new URL(location.href).searchParams.has("end"));
-    const anchor1 = new URL(page.url()).searchParams.get("end");
+    const anchor1 = await currentEnd();
     await drag(100, 0);
     await page.waitForFunction((previous) => new URL(location.href).searchParams.get("end") !== previous, anchor1);
-    const anchor2 = new URL(page.url()).searchParams.get("end");
+    const anchor2 = await currentEnd();
     assert.equal(
       new Date(anchor1).getTime() - new Date(anchor2).getTime(),
       3_600_000,
@@ -403,13 +445,27 @@ try {
     // Swiping left moves forward exactly one hour, back to anchor1.
     await drag(-100, 0);
     await page.waitForFunction((previous) => new URL(location.href).searchParams.get("end") !== previous, anchor2);
-    assert.equal(new URL(page.url()).searchParams.get("end"), anchor1, "swiping left must move forward exactly one hour");
+    assert.equal(await currentEnd(), anchor1, "swiping left must move forward exactly one hour");
 
     // A vertical-first drag must never move the hour, even past the 48px
     // horizontal threshold, because the axis already locked to vertical.
-    const beforeVerticalDrag = new URL(page.url()).searchParams.get("end");
+    const beforeVerticalDrag = await currentEnd();
     await drag(60, 160);
-    assert.equal(new URL(page.url()).searchParams.get("end"), beforeVerticalDrag, "a vertical-first drag must not move the hour");
+    assert.equal(await settledEnd(), beforeVerticalDrag, "a vertical-first drag must not move the hour");
+
+    // -- the 48-pixel horizontal threshold, one pixel either side of it. The
+    // short drag still passes the 6-pixel axis lock, so this proves the
+    // threshold itself rather than the lock.
+    const beforeShortDrag = await currentEnd();
+    await drag(47, 0);
+    assert.equal(await settledEnd(), beforeShortDrag, "a 47px horizontal drag is below the threshold and must not move the hour");
+    await drag(48, 0);
+    await page.waitForFunction((previous) => new URL(location.href).searchParams.get("end") !== previous, beforeShortDrag);
+    assert.equal(
+      new Date(beforeShortDrag).getTime() - new Date(await currentEnd()).getTime(),
+      3_600_000,
+      "a 48px horizontal drag is exactly at the threshold and must move one hour",
+    );
 
     // -- rapid alternating selection: the last click's request must win,
     // even though its two predecessors were still in flight when it fired.
@@ -424,6 +480,27 @@ try {
     assert.equal(await page.locator('[data-window="24h"]').getAttribute("aria-pressed"), "true");
     assert.equal(await page.locator('[data-window="1h"]').getAttribute("aria-pressed"), "false");
     assert.match(await page.locator(".metric-card").first().locator("p").textContent(), /last 24 hours/, "the last selection must win the race, never a stale earlier response");
+
+    // -- out-of-order delivery: the FIRST request answers LAST. The client
+    // defends this twice over -- it aborts the superseded controller AND
+    // re-checks `controller === activeRequest` before rendering -- so removing
+    // either mechanism alone leaves this green. Removing both turns it red,
+    // which is the property worth pinning: a late earlier response can never
+    // repaint the surface.
+    metricsDelayByWindow = new Map([["7d", 400], ["4h", 200], ["1h", 0]]);
+    await page.evaluate(() => {
+      document.querySelector('[data-window="7d"]').click();
+      document.querySelector('[data-window="4h"]').click();
+      document.querySelector('[data-window="1h"]').click();
+    });
+    await page.waitForTimeout(700);
+    metricsDelayByWindow = null;
+    assert.equal(await page.locator('[data-window="1h"]').getAttribute("aria-pressed"), "true");
+    assert.match(
+      await page.locator(".metric-card").first().locator("p").textContent(),
+      /last hour/,
+      "a late-arriving earlier response must never repaint over the last selection",
+    );
 
     // -- malformed deep link: garbage window/end fall back to 24h/live -----
     await page.goto(`${origin}/?window=99h&end=garbage`, { waitUntil: "networkidle" });

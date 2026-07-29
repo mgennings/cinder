@@ -99,6 +99,11 @@ assert.equal(document.source, "AWS/Lambda");
 assert.deepEqual(document.scope, { product: "Cinder", functionCount: 11 });
 assert.deepEqual(document.windows.map((window) => window.id), ["24h", "7d"]);
 assert.deepEqual(document.windows.map((window) => window.periodSeconds), [3_600, 21_600]);
+// Pinned as literals, never read back off METRIC_WINDOWS. The StartTime check
+// below derives its expectation from `window.seconds`, so on its own it would
+// happily agree with a source that had quietly redefined "24 hours."
+assert.deepEqual(METRIC_WINDOWS.map((window) => window.seconds), [86_400, 604_800]);
+assert.deepEqual(METRIC_WINDOWS.map((window) => window.periodSeconds), [3_600, 21_600]);
 assert.deepEqual(document.windows[0].series.map((series) => series.label), ["Invocations", "Errors", "Throttles", "Duration"]);
 assert.equal(document.windows[0].series[0].points.length, 24);
 assert.equal(document.windows[1].series[0].points.length, 28);
@@ -188,10 +193,26 @@ const rejected = [
   "window=4h&end=2026-07-28T18:30:00.000Z",                                 // non-hour timestamp
   "window=4h&end=2026-07-28T18:00:05.000Z",                                 // seconds drift
   "window=4h&end=not-a-date",                                               // invalid date
-  "window=4h&end=2026-02-30T10:00:00.000Z",                                 // invalid calendar date (Feb 30)
   "window=1h&end=2026-07-28T19:00:00.000Z",                                 // future anchor (now=18:30)
+  "window=4h&end=",                                                         // end key present, value missing
+  "window=4h&end=2026-07-28T18:00:00.500Z",                                 // millisecond drift
+  "window=4h&end=2026-07-28T18:00:00.000z",                                 // lowercase zone designator
+  "window=%001h",                                                           // encoded NUL in the window value
+  "window=4h&end=%0A2026-07-28T18:00:00.000Z",                              // encoded newline before the anchor
+  "window=4h&end=2026-07-28T18:00:00.000Z%00",                              // encoded NUL after the anchor
+  "window=4h%20",                                                           // trailing encoded space
+  "window=4h&end=2026-07-28T18:00:00.000Z%0A",                              // encoded newline after the anchor
+  `window=4h&end=${"9".repeat(50_000)}`,                                    // enormous anchor value
+  `window=4h&${"pad=x&".repeat(20_000)}end=nope`,                           // enormous query string
 ];
-for (const query of rejected) assert.equal(parseRangeRequest(query, midHour), null, query);
+for (const query of rejected) assert.equal(parseRangeRequest(query, midHour), null, query.slice(0, 60));
+
+// An enormous query string carrying a WELL-FORMED window must still parse
+// normally rather than time out or be rejected for its size alone.
+{
+  const padded = `${"pad=x&".repeat(20_000)}window=4h`;
+  assert.equal(parseRangeRequest(padded, midHour).window.id, "4h");
+}
 
 // An anchor absolutely too old, independent of window (400h > 336h).
 {
@@ -211,6 +232,63 @@ for (const query of rejected) assert.equal(parseRangeRequest(query, midHour), nu
 {
   const shallow = new Date(onTheHour.getTime() - 200 * 3_600_000).toISOString();
   assert.equal(parseRangeRequest(`window=7d&end=${shallow}`, onTheHour), null);
+}
+
+// An overflowing calendar date is NOT a parse error in V8: `new Date` silently
+// rolls Feb 29 of a non-leap year forward to Mar 1 and Feb 30 to Mar 2, so the
+// anchor would come back valid and simply point at an hour nobody asked for.
+// Only the ISO round-trip comparison catches it. `now` deliberately sits days
+// away from the rolled date, because with a distant `now` the lookback ceiling
+// rejects these first and the round-trip check is never exercised at all.
+{
+  const shortlyAfter = new Date("2026-03-05T00:00:00.000Z");
+  for (const overflowing of ["2026-02-29T10:00:00.000Z", "2026-02-30T10:00:00.000Z", "2026-04-31T10:00:00.000Z"]) {
+    assert.equal(parseRangeRequest(`window=4h&end=${overflowing}`, shortlyAfter), null, overflowing);
+  }
+  // The same shape with a real date is accepted, so the block above is
+  // rejecting the overflow rather than the whole neighborhood.
+  assert.equal(parseRangeRequest("window=4h&end=2026-03-01T10:00:00.000Z", shortlyAfter).legacy, false);
+}
+
+// --- calendar edges: the parser is pure UTC, so none of these may drift ----
+
+// A real leap day is an ordinary hour. Anchoring on 2028-02-29T23:00Z with a
+// 24h window puts the START on 2028-02-28T23:00Z -- crossing a leap-day
+// boundary, not skipping it.
+{
+  const afterLeapDay = new Date("2028-03-01T00:00:00.000Z");
+  const parsed = parseRangeRequest("window=24h&end=2028-02-29T23:00:00.000Z", afterLeapDay);
+  assert.equal(parsed.legacy, false);
+  assert.equal(
+    new Date(parsed.end.getTime() - parsed.window.seconds * 1000).toISOString(),
+    "2028-02-28T23:00:00.000Z",
+  );
+}
+
+// US spring-forward: 2026-03-08T08:00Z is the instant 2am CST becomes 3am CDT.
+// UTC has no such discontinuity, and the anchored start must be exactly four
+// hours earlier regardless of the viewer's local rules.
+{
+  const afterTransition = new Date("2026-03-08T12:00:00.000Z");
+  const parsed = parseRangeRequest("window=4h&end=2026-03-08T08:00:00.000Z", afterTransition);
+  assert.equal(
+    new Date(parsed.end.getTime() - parsed.window.seconds * 1000).toISOString(),
+    "2026-03-08T04:00:00.000Z",
+  );
+}
+
+// A valid end whose start crosses a day, a month, and a year boundary.
+for (const [query, now, expectedStart] of [
+  ["window=4h&end=2026-07-29T02:00:00.000Z", "2026-07-29T05:00:00.000Z", "2026-07-28T22:00:00.000Z"],
+  ["window=24h&end=2026-08-01T00:00:00.000Z", "2026-08-01T06:00:00.000Z", "2026-07-31T00:00:00.000Z"],
+  ["window=7d&end=2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", "2025-12-25T00:00:00.000Z"],
+]) {
+  const parsed = parseRangeRequest(query, new Date(now));
+  assert.equal(
+    new Date(parsed.end.getTime() - parsed.window.seconds * 1000).toISOString(),
+    expectedStart,
+    query,
+  );
 }
 
 // --- rangeDocument: math ---------------------------------------------------
@@ -269,6 +347,17 @@ const rangeSend = (points, values) => async (command) => {
   assert.equal(throttleRate.points[0].value, 10);  // 1/10 * 100
   assert.equal(throttleRate.points[1].value, 0);   // 0/5 * 100, a real zero
   assert.equal(throttleRate.summary, (1 + 0 + 0) / (10 + 0 + 5) * 100);
+
+  // The unequal-bucket Duration regression, on the anchored range path this
+  // time. The legacy document above proves it for `readMetricWindow`; without
+  // this the range path could average the already-averaged trend points and
+  // every other assertion here would still pass. Buckets are deliberately
+  // lopsided (10 samples, 0 samples, 5 samples) so the weighted answer and the
+  // unweighted one cannot coincide.
+  const duration = doc.series.find((series) => series.id === "duration");
+  assert.equal(duration.summary, (100 + 0 + 60) / (10 + 0 + 5));
+  assert.notEqual(duration.summary, (40 + 41 + 42) / 3);
+  assert.equal(duration.points.length, 3);
 
   for (const physicalName of Object.values(functionMap)) {
     assert.doesNotMatch(JSON.stringify(doc), new RegExp(physicalName));
