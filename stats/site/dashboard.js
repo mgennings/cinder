@@ -68,6 +68,37 @@ const formatValue = (series, value) => {
 
 const formatUtc = (iso) => new Date(iso).toISOString().replace("T", " ").replace(".000Z", " UTC")
 
+// Readout placement. The readout tracks the marker horizontally and lives in
+// its own band directly beneath the plot, so it cannot cover the value it
+// reports -- not by a gap that happens to be big enough, but by construction.
+//
+// Overlaying it inside the plot was the first attempt and it does not fit here.
+// These sparklines paint a 640x180 viewBox into roughly 90 CSS pixels of height
+// on a phone, and a readout of about 30 pixels plus a gap simply has nowhere to
+// go for a marker sitting mid-field: measured, it covered the marker on 12 of
+// 24 points at 320 wide and 5 of 24 at 375. The tall uxuiai terrain has the
+// room for an overlay; a sparkline in a card does not, and forcing the same
+// treatment onto both would be a shape copied rather than a problem solved.
+//
+// The offset is measured from the MARKER's own client rect rather than from
+// viewBox proportions, because this svg preserves its aspect ratio and is also
+// capped by `max-height`, so the painted box is not a simple scale of the
+// viewBox and a proportional mapping drifts the moment that cap engages.
+//
+// Unanimated on purpose: a readout that eases toward a moving pointer reads as
+// lag, and it would then owe `prefers-reduced-motion` a second code path.
+// The band is reserved in CSS (`figure` pads the bottom, the readout pins to
+// it), so `left` is the only value this has to drive.
+const placeReadout = (readout, figure, marker) => {
+  const field = figure.getBoundingClientRect()
+  const dot = marker.getBoundingClientRect()
+  const box = readout.getBoundingClientRect()
+  if (!field.width || !dot.width || !box.width) return
+
+  const pointX = dot.x + dot.width / 2 - field.x
+  readout.style.left = `${Math.min(Math.max(pointX - box.width / 2, 0), Math.max(field.width - box.width, 0))}px`
+}
+
 const chart = (series) => {
   const figure = document.createElement("figure")
   const values = series.points.map((point) => point.value)
@@ -76,16 +107,18 @@ const chart = (series) => {
   const padding = 10
   const maximum = Math.max(...values, 1)
   const denominator = Math.max(series.points.length - 1, 1)
-  const coordinates = series.points.map((point, index) => {
-    const x = padding + (index / denominator) * (width - padding * 2)
-    const y = height - padding - (point.value / maximum) * (height - padding * 2)
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  })
+  const geometry = series.points.map((point, index) => ({
+    x: padding + (index / denominator) * (width - padding * 2),
+    y: height - padding - (point.value / maximum) * (height - padding * 2),
+  }))
+  const coordinates = geometry.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`)
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`)
-  svg.setAttribute("role", "img")
-  svg.setAttribute("aria-label", `${series.label} trend, ${series.points.length} aggregate samples`)
+  // The exact record lives in the table beside this figure and the current
+  // value is spoken through the figure's own `aria-valuetext`, so the drawing
+  // itself is decoration and announcing it twice only adds noise.
+  svg.setAttribute("aria-hidden", "true")
   const baseline = document.createElementNS(svg.namespaceURI, "line")
   baseline.setAttribute("x1", String(padding))
   baseline.setAttribute("x2", String(width - padding))
@@ -99,7 +132,70 @@ const chart = (series) => {
     line.setAttribute("class", "chart-line")
     svg.append(line)
   }
-  figure.append(svg)
+
+  const cursor = document.createElementNS(svg.namespaceURI, "line")
+  cursor.setAttribute("class", "chart-cursor")
+  cursor.setAttribute("y1", String(padding))
+  cursor.setAttribute("y2", String(height - padding))
+  const marker = document.createElementNS(svg.namespaceURI, "circle")
+  marker.setAttribute("class", "chart-marker")
+  marker.setAttribute("r", "6")
+  svg.append(cursor, marker)
+
+  const readout = document.createElement("figcaption")
+  readout.className = "chart-readout"
+  figure.append(svg, readout)
+
+  if (!geometry.length) {
+    readout.textContent = "no samples in this window"
+    return figure
+  }
+
+  // `role="slider"` is what makes a scrubbable series both operable by keyboard
+  // and legible to a screen reader: arrow keys are the slider's documented
+  // interaction, and `aria-valuetext` is announced on each step with no live
+  // region to double-speak it.
+  figure.tabIndex = 0
+  figure.setAttribute("role", "slider")
+  figure.setAttribute("aria-orientation", "horizontal")
+  figure.setAttribute("aria-label", `inspect ${series.label.toLowerCase()}`)
+  figure.setAttribute("aria-valuemin", "0")
+  figure.setAttribute("aria-valuemax", String(geometry.length - 1))
+
+  let selected = geometry.length - 1
+  const select = (index) => {
+    selected = Math.max(0, Math.min(index, geometry.length - 1))
+    const point = series.points[selected]
+    cursor.setAttribute("x1", String(geometry[selected].x))
+    cursor.setAttribute("x2", String(geometry[selected].x))
+    marker.setAttribute("cx", String(geometry[selected].x))
+    marker.setAttribute("cy", String(geometry[selected].y))
+    readout.textContent = `${formatUtc(point.at)} · ${formatValue(series, point.value)}`
+    figure.setAttribute("aria-valuenow", String(selected))
+    figure.setAttribute("aria-valuetext", readout.textContent)
+    placeReadout(readout, figure, marker)
+  }
+
+  // A tap emits pointerdown and pointerup and no pointermove at all, so a
+  // hover-only handler leaves every phone unable to read a single value.
+  const inspect = (event) => {
+    const bounds = figure.getBoundingClientRect()
+    select(Math.round(((event.clientX - bounds.left) / bounds.width) * (geometry.length - 1)))
+  }
+  figure.addEventListener("pointerdown", inspect)
+  figure.addEventListener("pointermove", inspect)
+  figure.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+    event.preventDefault()
+    if (event.key === "Home") return select(0)
+    if (event.key === "End") return select(geometry.length - 1)
+    select(selected + (event.key === "ArrowRight" ? 1 : -1))
+  })
+
+  select(selected)
+  // The first placement runs before layout has settled on a freshly created
+  // node, so its box measures zero and the readout lands in the corner.
+  requestAnimationFrame(() => select(selected))
   return figure
 }
 

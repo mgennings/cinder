@@ -109,10 +109,36 @@ button:disabled { opacity: 0.65; cursor: wait; }
 .metric-heading span { color: var(--muted); font: 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; }
 .metric-card > strong { display: block; margin-block: 1.5rem 0.25rem; color: var(--ember); font-size: clamp(2rem, 7vw, 4rem); line-height: 0.95; overflow-wrap: anywhere; }
 .metric-card > p { margin: 0; color: var(--muted); font: 0.72rem/1.5 var(--mono); }
-figure { margin: 2rem 0 1rem; }
+/* `position: relative` is what the readout is absolutely positioned against;
+   `dashboard.js` writes its left/top from the marker's real client rect. */
+/* `position: relative` is what the readout is positioned against, and the
+   bottom padding IS the readout's band. It is reserved and always occupied --
+   the readout lives there at every selection -- so this is not the empty
+   reserved space that keeps turning up on these dashboards. */
+figure { position: relative; margin: 2rem 0 1rem; padding-bottom: 2.5rem; }
+figure[role="slider"] { cursor: crosshair; }
+/* The base rule below only covers `button, input, summary, a`, so a focusable
+   figure would take focus with nothing visible to show for it. */
+figure[role="slider"]:focus-visible { outline: 3px solid var(--ember); outline-offset: 3px; }
 svg { display: block; width: 100%; height: auto; max-height: 12rem; overflow: visible; }
 .chart-baseline { stroke: var(--line); stroke-width: 2; }
 .chart-line { fill: none; stroke: var(--ember-fill); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.chart-cursor { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; vector-effect: non-scaling-stroke; }
+.chart-marker { fill: var(--panel); stroke: var(--ember); stroke-width: 3; vector-effect: non-scaling-stroke; }
+/* The readout sits inside the field it reports on, so it must not swallow the
+   pointer -- a pointer crossing it would otherwise stop reaching the field and
+   the scrub would die mid-gesture. */
+.chart-readout {
+  position: absolute; bottom: 0; left: 0;
+  width: max-content; max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--ember) 55%, var(--line));
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  padding: 0.5rem 0.6rem;
+  color: var(--ink); font: 700 0.72rem/1.4 var(--mono);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
 .data-table summary { color: var(--ink); font: 0.75rem var(--mono); }
 /* An auto-layout table's minimum content width can exceed its 100% target
    (long UTC timestamps at large text zoom). Scroll the table in its own box
@@ -168,6 +194,9 @@ svg { display: block; width: 100%; height: auto; max-height: 12rem; overflow: vi
   * { forced-color-adjust: auto; }
   .chart-line { stroke: LinkText; }
   .chart-baseline { stroke: CanvasText; }
+  .chart-cursor { stroke: CanvasText; }
+  .chart-marker { fill: Canvas; stroke: CanvasText; }
+  .chart-readout { border-color: CanvasText; background: Canvas; color: CanvasText; }
   /* The selected range/anchor state must survive forced colors on its own
      terms, not by inheriting the ember palette forced-colors strips away. */
   .control-row button[aria-pressed="true"] { background: Highlight; color: HighlightText; border-color: Highlight; }
