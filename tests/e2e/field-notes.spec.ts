@@ -3,10 +3,10 @@ import { test, expect } from '@playwright/test';
 // https://cinder.ink/field-notes was note 001's own page and is externally
 // linked (uxuiai/src/data/products.js). These specs prove: the externally
 // linked URL still works, now as an index that leads with note 001; the
-// note's full argument survives the move to /field-notes/001 even with
-// JavaScript disabled (docs/field-notes/render.py generates the JSON these
-// pages render from, and it exists so a crawler sees the whole argument);
-// and the two pages carry distinct, correct discovery metadata.
+// note's full argument survives the move to its own descriptive URL even
+// with JavaScript disabled (docs/field-notes/render.py generates the JSON
+// these pages render from, and it exists so a crawler sees the whole
+// argument); and the two pages carry distinct, correct discovery metadata.
 
 test('the index lists every note, with 001 first', async ({ page }) => {
 	await page.goto('/field-notes');
@@ -16,13 +16,13 @@ test('the index lists every note, with 001 first', async ({ page }) => {
 	await expect(titles.first()).toHaveText('Field Note 001 — The Vote To Stay Blind');
 
 	await page.getByRole('link', { name: 'Read the note' }).first().click();
-	await expect(page).toHaveURL(/\/field-notes\/001$/);
+	await expect(page).toHaveURL(/\/field-notes\/the-vote-to-stay-blind$/);
 });
 
 test('the note renders its full argument with JavaScript disabled', async ({ browser }) => {
 	const context = await browser.newContext({ javaScriptEnabled: false });
 	const page = await context.newPage();
-	await page.goto('/field-notes/001');
+	await page.goto('/field-notes/the-vote-to-stay-blind');
 
 	await expect(page.locator('h1')).toHaveText('Field Note 001 — The Vote To Stay Blind');
 
@@ -66,14 +66,14 @@ test('canonical and social tags are correct and differ between the index and the
 		.getAttribute('content');
 	const indexTitle = await page.title();
 
-	await page.goto('/field-notes/001');
+	await page.goto('/field-notes/the-vote-to-stay-blind');
 	await expect(page.locator('link[rel=canonical]')).toHaveAttribute(
 		'href',
-		'https://cinder.ink/field-notes/001'
+		'https://cinder.ink/field-notes/the-vote-to-stay-blind'
 	);
 	await expect(page.locator('meta[property="og:url"]').last()).toHaveAttribute(
 		'content',
-		'https://cinder.ink/field-notes/001'
+		'https://cinder.ink/field-notes/the-vote-to-stay-blind'
 	);
 	const noteDescription = await page
 		.locator('meta[name="twitter:description"]')
@@ -90,6 +90,6 @@ test('no cookie is set on the index or the note page', async ({ page, context })
 	await page.goto('/field-notes');
 	expect(await context.cookies()).toHaveLength(0);
 
-	await page.goto('/field-notes/001');
+	await page.goto('/field-notes/the-vote-to-stay-blind');
 	expect(await context.cookies()).toHaveLength(0);
 });

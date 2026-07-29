@@ -1,9 +1,9 @@
 <script lang="ts">
-	// THE INDEX. Was note 001's own page until it moved to /field-notes/001 —
-	// https://cinder.ink/field-notes is a live, externally linked URL
-	// (uxuiai/src/data/products.js), so note 001 stays the first and most
-	// prominent entry here: an old inbound link has to land on a page that
-	// obviously contains what it came for.
+	// THE INDEX. Was note 001's own page until it moved to a descriptive
+	// per-note URL under /field-notes/<slug>. https://cinder.ink/field-notes
+	// is a live, externally linked URL (uxuiai/src/data/products.js), so
+	// note 001 stays the first and most prominent entry here: an old inbound
+	// link has to land on a page that obviously contains what it came for.
 	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
 	import Card from '$lib/ui/atoms/Card.svelte';
@@ -19,7 +19,7 @@
 	const DESCRIPTION =
 		'Decision gates, written down after the fact, in enough detail that someone outside this repo can use them.';
 	const CONTEXT =
-		'A field note is not a changelog entry — it exists when a choice was genuinely hard, when the measurement that settled it is worth showing, or when the honest answer cost something.';
+		'A field note is not a changelog entry. It exists when a choice was genuinely hard, when the measurement that settled it is worth showing, or when the honest answer cost something.';
 </script>
 
 <svelte:head>
@@ -44,7 +44,7 @@
 					<RecordRow label="Date">{note.date}</RecordRow>
 					<RecordRow label="Verdict" stacked class="text-mist">{note.verdict}</RecordRow>
 				</Record>
-				<Button href="/field-notes/{note.number}" class="mt-4 px-4 py-2 text-sm"
+				<Button href="/field-notes/{note.slug}" class="mt-4 px-4 py-2 text-sm"
 					>Read the note</Button
 				>
 			</Card>

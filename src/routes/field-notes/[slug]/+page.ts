@@ -33,21 +33,46 @@ export type NoteJson = {
 	blocks: NoteBlock[];
 };
 
-// Same glob the index route runs, so both routes read the identical
+// Same JSON glob the index route runs, so both routes read the identical
 // committed artifact and neither can drift from a second copy of "which
 // notes exist."
 const noteModules = import.meta.glob<{ default: NoteJson }>('../../../../docs/field-notes/*.json', {
 	eager: true
 });
 
-const notesByNumber = new Map(Object.values(noteModules).map((mod) => [mod.default.number, mod.default]));
+// The committed JSON carries only `number` ("001") — the descriptive slug
+// this route is addressed by lives in the markdown SOURCE filename
+// (note_contract.py: "the sole place that slug convention is defined" is
+// that filename's stem, numeric prefix stripped). This second glob reads
+// only file NAMES, never markdown content, to recover it. `?raw` (the same
+// treatment src/lib/claims.test.ts already uses for this directory) is
+// required, not cosmetic: without it Vite treats the matched .md files as
+// JS modules to parse, and prose is not JS.
+const noteSourceFiles = import.meta.glob('../../../../docs/field-notes/[0-9]*.md', {
+	query: '?raw',
+	import: 'default'
+});
+const sourceStems = Object.keys(noteSourceFiles).map((path) => path.split('/').pop()!.replace(/\.md$/, ''));
+
+const notesBySlug = new Map(
+	Object.values(noteModules).map((mod) => {
+		const note = mod.default;
+		// Every published note has a matching markdown source by
+		// construction — render.py refuses to emit a JSON artifact for one
+		// that doesn't first pass note_contract.validate() — so this lookup
+		// cannot come back empty.
+		const stem = sourceStems.find((s) => s.startsWith(`${note.number}-`))!;
+		const slug = stem.slice(stem.indexOf('-') + 1);
+		return [slug, note] as const;
+	})
+);
 
 // adapter-static cannot discover a dynamic route segment on its own — every
 // slug the static build should prerender has to be enumerated here.
-export const entries = () => Array.from(notesByNumber.keys()).map((slug) => ({ slug }));
+export const entries = () => Array.from(notesBySlug.keys()).map((slug) => ({ slug }));
 
 export const load: PageLoad = ({ params }) => {
-	const note = notesByNumber.get(params.slug);
+	const note = notesBySlug.get(params.slug);
 	if (!note) error(404, 'no such field note');
-	return { note };
+	return { note, slug: params.slug };
 };

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
-	import Card from '$lib/ui/atoms/Card.svelte';
 	import QuietLink from '$lib/ui/atoms/QuietLink.svelte';
 	import RuleHead from '$lib/ui/atoms/RuleHead.svelte';
 	import Record from '$lib/ui/molecules/Record.svelte';
 	import RecordRow from '$lib/ui/molecules/RecordRow.svelte';
+	import TruthCard from '$lib/ui/molecules/TruthCard.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -14,6 +14,7 @@
 	// moment a second note ships), and a plain capture of `data.note` would
 	// freeze on whichever note first mounted the page.
 	const note = $derived(data.note);
+	const slug = $derived(data.slug);
 
 	// ── blocks[] -> the design system ──────────────────────────────────────
 	//
@@ -27,12 +28,14 @@
 	//
 	// Where a block's html lands depends on the receiving prop's type. A
 	// Snippet-typed child slot (RuleHead, RecordRow) can hold a bare {@html}
-	// node. A plain-string prop cannot render markup at all — it prints the
-	// tags as literal text — so anywhere a block's text has to sit in a
-	// STRING prop (a RecordRow label, a claim's title) runs through
-	// stripHtml first. Today's note carries no markup in any label or claim
-	// title, but a future note's table header might, and this keeps that
-	// case correct instead of showing raw <code> tags on the page.
+	// node; TruthCard's `bodyIsHtml` opt-in is the same idea as an explicit
+	// component contract instead of a Snippet. A plain-string prop with
+	// neither cannot render markup at all — it prints the tags as literal
+	// text — so anywhere a block's text has to sit in a STRING prop (a
+	// RecordRow label, a claim's title) runs through stripHtml first.
+	// Today's note carries no markup in any label or claim title, but a
+	// future note's table header might, and this keeps that case correct
+	// instead of showing raw <code> tags on the page.
 	function stripHtml(value: string): string {
 		return value.replace(/<[^>]+>/g, '');
 	}
@@ -136,8 +139,8 @@
 	// Rather than invent new prose (which would reintroduce a second,
 	// hand-written source for the note's argument), the gate and verdict —
 	// both raw, both already true — stand in for it.
-	const description = $derived(`${note.gate} — ${note.verdict}`);
-	const url = $derived(`https://cinder.ink/field-notes/${note.number}`);
+	const description = $derived(`${note.gate}. ${note.verdict}`);
+	const url = $derived(`https://cinder.ink/field-notes/${slug}`);
 </script>
 
 <svelte:head>
@@ -188,10 +191,7 @@
 		{:else if group.type === 'claims'}
 			<div class="mt-3 space-y-3">
 				{#each group.rows as row (row.title)}
-					<Card class="p-4">
-						<h4 class="text-sm font-medium text-body">{row.title}</h4>
-						<p class="mt-1 text-sm leading-relaxed text-mist">{@html row.html}</p>
-					</Card>
+					<TruthCard level={4} title={row.title} body={row.html} bodyIsHtml />
 				{/each}
 			</div>
 		{:else if group.type === 'code'}
