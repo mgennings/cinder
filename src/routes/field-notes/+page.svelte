@@ -9,6 +9,7 @@
 	import Card from '$lib/ui/atoms/Card.svelte';
 	import Record from '$lib/ui/molecules/Record.svelte';
 	import RecordRow from '$lib/ui/molecules/RecordRow.svelte';
+	import { READ_PRIVACY_CLAIM } from '$lib/field-note-privacy';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -50,4 +51,10 @@
 			</Card>
 		{/each}
 	</div>
+
+	<!-- text-mist, never text-ghost: this is read text, and ghost is documented
+	     as tertiary. A privacy claim nobody can comfortably read is decoration. -->
+	<p class="mt-12 border-t border-line pt-6 text-sm leading-relaxed text-mist">
+		{READ_PRIVACY_CLAIM}
+	</p>
 </BenchPage>

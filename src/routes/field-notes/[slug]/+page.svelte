@@ -6,6 +6,7 @@
 	import Record from '$lib/ui/molecules/Record.svelte';
 	import RecordRow from '$lib/ui/molecules/RecordRow.svelte';
 	import TruthCard from '$lib/ui/molecules/TruthCard.svelte';
+	import { READ_PRIVACY_CLAIM } from '$lib/field-note-privacy';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -200,7 +201,14 @@
 		{/if}
 	{/each}
 
-	<div class="mt-10 flex flex-wrap gap-3">
+	<!-- Same constant the index renders, so a correction can never land on one
+	     page and leave a stale copy of itself on the other. text-mist, never
+	     text-ghost: this is read text, and ghost is documented as tertiary. -->
+	<p class="mt-12 border-t border-line pt-6 text-sm leading-relaxed text-mist">
+		{READ_PRIVACY_CLAIM}
+	</p>
+
+	<div class="mt-8 flex flex-wrap gap-3">
 		<Button href="/security" class="px-5 py-2.5 text-sm">How private is this, really?</Button>
 		<Button href="/" class="px-5 py-2.5 text-sm">Send something</Button>
 	</div>
