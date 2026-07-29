@@ -2,6 +2,13 @@
 
 This guide provisions your own copy of Cinder on AWS: the API, the database, and the static site behind a CDN. The entire stack is one CloudFormation/SAM template, so a deploy is a single command.
 
+> **Live Cinder updates:** This page is for a first install. Do not run the
+> guided command against the production `blip` stack: its secret parameters are
+> intentionally absent from `samconfig.toml`. Follow [the live-stack update
+> procedure](pro-payments.md#deploying-this-stack-against-the-live-service),
+> which preserves every current parameter with `UsePreviousValue`, then publish
+> the site with `scripts/deploy-frontend.sh`.
+
 ## Prerequisites
 
 | Requirement | Notes |
@@ -18,8 +25,8 @@ This guide provisions your own copy of Cinder on AWS: the API, the database, and
 | Resource | Purpose |
 | --- | --- |
 | DynamoDB table `blip-notes` | Stores ciphertext, with TTL enabled on `expiresAt` |
-| Two Lambda functions | `createNote` and `readNote`, Node 22 on ARM64 |
-| API Gateway HTTP API | Fronts the five Lambdas with CORS |
+| Lambda functions | Notes, files, identity, payments, and entitlements on Node 22 ARM64 |
+| API Gateway HTTP API | Fronts the service Lambdas with CORS |
 | S3 bucket | Holds the static site (private, served only via CloudFront) |
 | CloudFront distribution | HTTPS delivery with SPA fallback |
 | IAM roles | Least-privilege: create can only `PutItem`, read can only `DeleteItem` |
@@ -47,7 +54,7 @@ When it finishes, note the `ApiUrl` output — you need it for the front end.
    VITE_API_BASE=https://<your-api-id>.execute-api.us-east-1.amazonaws.com
    ```
 
-2. Build and sync to S3, then invalidate the CDN cache. The `scripts/deploy-frontend.sh` script does all three — edit the `BUCKET` and `DIST_ID` variables at the top to match your stack's outputs, then:
+2. Build and sync to S3, publish extensionless aliases, then invalidate the CDN cache. For the canonical Cinder stack, the repository-owned script does all four:
 
    ```bash
    ./scripts/deploy-frontend.sh
