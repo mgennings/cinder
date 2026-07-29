@@ -12,11 +12,13 @@
 // It runs on EVERY request to cinder.ink, so a mistake here is the whole site,
 // not one route.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const TEMPLATE_PATH = new URL('../../template.yaml', import.meta.url);
-const RAW_TEMPLATE = readFileSync(TEMPLATE_PATH, 'utf8');
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const RAW_TEMPLATE = readFileSync(join(REPO_ROOT, 'template.yaml'), 'utf8');
 
 type CloudFrontRequest = {
 	method: string;
@@ -123,7 +125,19 @@ function resolvedUri(uri: string, host?: string): string {
 }
 
 describe('the tested handler is derived from template.yaml, not copied', () => {
-	it('appears verbatim in the raw template at its original indentation', () => {
+	// This is a lossless round trip of a derivation against its own source, and
+	// nothing more. `reindented` is `body` dedented by `bodyIndent` and then
+	// re-prefixed with the same `bodyIndent`, so for every content line it
+	// reconstructs the original BY CONSTRUCTION. Adding a real statement to the
+	// shipped FunctionCode block leaves it green; the only mutation that reddens
+	// it is a whitespace-only line inside the block, which the `line === ''`
+	// branch maps to empty.
+	//
+	// So: it proves the extractor does not mangle, dedent too far, or drop a
+	// line. It is NOT drift detection and must never be cited as such. Drift is
+	// prevented structurally instead — there is exactly one copy of the handler
+	// in this repo, and the `function handler(` count below is what enforces it.
+	it('dedents losslessly — the extracted body re-indents back to the template text', () => {
 		const reindented = EXTRACTED.body
 			.split('\n')
 			.map((line) => (line === '' ? '' : EXTRACTED.indent + line))
@@ -141,6 +155,14 @@ describe('the tested handler is derived from template.yaml, not copied', () => {
 		expect(EXTRACTED.body.match(/function handler\(/g)).toHaveLength(1);
 		expect(RAW_TEMPLATE.match(/function handler\(/g)).toHaveLength(1);
 	});
+
+	// CloudFront caps a function at 10240 bytes of SUBSTITUTED source, comments
+	// included — and this one is deliberately comment-heavy, because the reasons
+	// are the part that has to survive. Crossing the cap fails at `sam deploy`,
+	// which is a production release. Cheaper to know here.
+	it('fits inside the CloudFront Function size limit', () => {
+		expect(Buffer.byteLength(HANDLER_SOURCE)).toBeLessThan(10240);
+	});
 });
 
 describe('apex canonicalization runs first and is untouched by the rewrite', () => {
@@ -153,14 +175,28 @@ describe('apex canonicalization runs first and is untouched by the rewrite', () 
 		});
 	});
 
-	it('carries the query string through the redirect', () => {
+	// Key ORDER is deliberately not asserted. `encodeQuery` walks the querystring
+	// object with `for…in`, and the real cloudfront-js-2.0 runtime returned the
+	// two keys in both orders across runs of the same event. Local V8 happens to
+	// be deterministic for string keys, so pinning the literal string would be
+	// green here forever while asserting something the runtime never promised.
+	//
+	// What the redirect actually has to guarantee is the contract below: the
+	// same origin and path, every pair present exactly once, each value still
+	// percent-encoded, joined with `&` behind a single `?`. Splitting and sorting
+	// tests all four without touching order.
+	it('carries every query pair through the redirect, encoded, in any key order', () => {
 		const result = handler(
 			requestEvent('/pro', 'www.cinder.ink', { plan: { value: 'year' }, ref: { value: 'a b' } })
-		);
+		) as { headers: Record<string, { value: string }> };
 
-		expect(result).toMatchObject({
-			headers: { location: { value: 'https://cinder.ink/pro?plan=year&ref=a%20b' } }
-		});
+		const [base, query] = result.headers.location.value.split('?');
+
+		expect(base).toBe('https://cinder.ink/pro');
+		// Compared raw rather than through URL/URLSearchParams on purpose: both
+		// parsers re-encode a literal space to %20 while reading, which would let
+		// a dropped encodeURIComponent pass.
+		expect(query.split('&').sort()).toEqual(['plan=year', 'ref=a%20b']);
 	});
 
 	it('matches the host case-insensitively', () => {
@@ -217,6 +253,18 @@ describe('extensionless routes resolve to their prerendered .html key', () => {
 		],
 		['/brand/cinder-mark.svg', '/brand/cinder-mark.svg', 'nested asset'],
 
+		// The one row that makes the divergence from `fobkit-clean-urls`
+		// executable instead of advisory. Cinder checks the LAST SEGMENT for a
+		// dot; FobKit checks the whole URI. Both alignments a future agent might
+		// reach for leave this row red and every other row green:
+		//   uri.indexOf('.') === -1    (FobKit's whole-URI rule) -> unchanged
+		//   lastIndexOf('/') -> indexOf('/')                     -> unchanged
+		[
+			'/a.b/c',
+			'/a.b/c.html',
+			'a dotted parent directory must not strand a clean last segment'
+		],
+
 		[
 			'/.well-known/apple-app-site-association',
 			'/.well-known/apple-app-site-association',
@@ -240,5 +288,85 @@ describe('extensionless routes resolve to their prerendered .html key', () => {
 
 		expect(result.uri).toBe('/pro/done.html');
 		expect(result.querystring).toEqual({ session: { value: 'cs_test_1' } });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The single config change that turns the rewrite above into a site-wide outage
+//
+// `<path>` -> `<path>.html` is only the right key because adapter-static emits
+// FLAT files. SvelteKit names each prerendered file after the path it rendered
+// (@sveltejs/kit src/core/postbuild/prerender.js, `output_filename`): a path
+// with no trailing slash becomes `<path>.html`, a path WITH one becomes
+// `<path>/index.html`.
+//
+// So set the `trailingSlash` page option to 'always' and every prerendered path
+// gains a slash: the build stops emitting `field-notes.html` and starts
+// emitting `field-notes/index.html`. The rewrite then sends BOTH /field-notes
+// and /field-notes/ to `/field-notes.html`, a key that no longer exists in the
+// bucket — an origin miss, which CustomErrorResponses turns into HTTP 200
+// serving the empty 200.html shell. Not one route. Every page on the site, at
+// once, from a one-word config edit.
+//
+// 'ignore' is rejected for a related reason: it prerenders whichever shape the
+// crawler happened to reach, so the key layout stops being predictable at all.
+// 'never' is the default and the only value that guarantees the flat layout.
+//
+// If the option is ever genuinely wanted, the rewrite has to target the
+// directory key instead — `uri + '/index.html'`. The sibling
+// `ash-allure-clean-urls` CloudFront Function in this same account already does
+// exactly that, and is the working reference. Change the rule first, then this
+// guard.
+//
+// This warning previously existed only as a comment in scripts/deploy-frontend.sh
+// on a branch that is not merging. A comment nobody runs is not a guard.
+// ---------------------------------------------------------------------------
+
+/** `export const trailingSlash = 'always'`, or a `trailingSlash: 'ignore'` config key. */
+const TRAILING_SLASH_ASSIGNMENT = /trailingSlash\s*[:=]\s*['"]([a-z]+)['"]/g;
+
+const TRAILING_SLASH_FAILURE = [
+	'trailingSlash is set to something other than "never".',
+	'',
+	'That changes what adapter-static writes: `field-notes/index.html` instead of',
+	'`field-notes.html`. The CloudFront viewer-request rewrite in template.yaml maps',
+	'an extensionless path to `<path>.html`, so EVERY prerendered page would miss the',
+	'origin at once and fall to the empty 200.html shell — the whole site, not one route.',
+	'',
+	'Fix the rewrite first (target `<path>/index.html`, as ash-allure-clean-urls does),',
+	'then relax this guard. Do not relax it alone.'
+].join('\n');
+
+/**
+ * Every file SvelteKit reads the `trailingSlash` page option from, plus the kit
+ * config block. Only `+page`/`+layout` modules and their `.server` twins may
+ * export it — see @sveltejs/kit src/utils/exports.js.
+ */
+function trailingSlashSources(): { path: string; text: string }[] {
+	const routeFiles = readdirSync(join(REPO_ROOT, 'src/routes'), { recursive: true })
+		.map((entry) => `src/routes/${entry}`)
+		.filter((path) => /(^|\/)\+(page|layout)(\.server)?\.(js|ts)$/.test(path));
+
+	return ['vite.config.ts', ...routeFiles].map((path) => ({
+		path,
+		text: readFileSync(join(REPO_ROOT, path), 'utf8')
+	}));
+}
+
+describe('the flat prerender layout the rewrite depends on', () => {
+	it('has trailingSlash unset, or set to "never", everywhere SvelteKit reads it', () => {
+		const sources = trailingSlashSources();
+
+		// A bad glob or a moved directory must not turn this into a vacuous pass.
+		expect(sources.map((source) => source.path)).toContain('vite.config.ts');
+		expect(sources.length).toBeGreaterThan(5);
+
+		const offenders = sources.flatMap((source) =>
+			[...source.text.matchAll(TRAILING_SLASH_ASSIGNMENT)]
+				.filter(([, value]) => value !== 'never')
+				.map(([match]) => `${source.path}: ${match}`)
+		);
+
+		expect(offenders, TRAILING_SLASH_FAILURE).toEqual([]);
 	});
 });

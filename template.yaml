@@ -646,13 +646,26 @@ Resources:
           //                         today's key layout; do not "align" them by
           //                         widening this one.
           //
-          // ES5 only, same as the sibling functions: indexOf, charAt, slice —
-          // never startsWith, endsWith, or includes.
+          // ES5 only here and in fobkit-clean-urls: indexOf, charAt, slice —
+          // never startsWith, endsWith, or includes. That is house style, not
+          // a runtime limit: ash-allure-clean-urls runs endsWith on this same
+          // cloudfront-js-2.0 runtime without complaint.
           //
           // A single trailing slash is dropped first so /field-notes/ reaches
           // the same key as /field-notes instead of falling to the shell.
           // A route with no prerendered page (/f/<locator>) misses either way
           // and still lands on the SPA shell, exactly as it did before.
+          //
+          // COUPLED TO THE BUILD, and this is the one that bites: `<path>.html`
+          // is the correct key only while adapter-static emits FLAT files. Set
+          // the `trailingSlash` page option to 'always' and it emits
+          // `field-notes/index.html` instead — every prerendered page then
+          // misses the origin, CustomErrorResponses turns each miss into an
+          // HTTP 200 serving the empty 200.html shell, and the whole site goes
+          // blank from a one-word config edit. src/lib/edge-viewer-request.test.ts
+          // fails if that option is ever set to anything but 'never'. Read that
+          // guard before changing either side; ash-allure-clean-urls is the
+          // working reference for the directory-key shape.
           var uri = request.uri;
 
           if (uri !== '/' && uri.indexOf('/.well-known/') !== 0) {
