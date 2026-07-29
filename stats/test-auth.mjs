@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash, createHmac, scryptSync } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { JSDOM } from "jsdom";
 
 process.env.STATS_SECRET_ID = "test-surface";
@@ -282,6 +285,69 @@ assert.match(navigationSource, /\["signals", "products", "places"\]/);
   assert.equal(dom.window.document.querySelectorAll(".switcher a").length, 10);
 
   dom.window.close();
+}
+
+// ── The shared registry deploy can be held back from a surface deploy ──────
+// `deploy_origin` publishes the SHARED navigation registry alongside Cinder's
+// own code. Those are different artifacts with different reviewers, and
+// coupling them makes an ordered rollout inexpressible: no client fix can ship
+// without also publishing whatever the registry currently says.
+// STATS_SKIP_NAVIGATION_DEPLOY=1 separates them, and the default is unchanged.
+//
+// Proven by RUNNING the script against fakes, never by matching its text. A
+// `python3` that records its arguments, a `node` that succeeds for the
+// function-map preflight, and an `aws` that fails, so the deploy aborts
+// immediately after the authentication section and nothing here can reach a
+// real AWS account. A regex over the source would happily pass on this rule
+// written in a comment.
+{
+  const sandbox = await mkdtemp(join(tmpdir(), "cinder-nav-deploy-"));
+  try {
+    const bin = join(sandbox, "bin");
+    await mkdir(bin);
+    await writeFile(join(bin, "python3"), '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$NAV_RECORD"\nexit 0\n', { mode: 0o755 });
+    await writeFile(join(bin, "node"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await writeFile(join(bin, "aws"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+    const runOrigin = async (name, extraEnv) => {
+      const record = join(sandbox, `${name}.txt`);
+      await writeFile(record, "");
+      const result = spawnSync("./deploy-stats.sh", ["origin"], {
+        cwd: new URL(".", import.meta.url).pathname,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          NAV_RECORD: record,
+          // Only require_function_map's presence check has to pass; the fake
+          // `node` above stands in for the parse it would otherwise run.
+          CINDER_FUNCTION_MAP_JSON: "{}",
+          ...extraEnv,
+        },
+        encoding: "utf8",
+      });
+      return { calls: await readFile(record, "utf8"), result };
+    };
+
+    // Unset: today's behavior, unchanged. The registry is published.
+    const byDefault = await runOrigin("default", {});
+    assert.match(byDefault.calls, /stats-navigation\.py deploy/, "the default must still publish the registry");
+
+    // Held back: the registry is NOT published, and the surface deploy still
+    // ran everything else in that section -- which is what proves the flag
+    // skips one command rather than short-circuiting the whole function.
+    const heldBack = await runOrigin("held-back", { STATS_SKIP_NAVIGATION_DEPLOY: "1" });
+    assert.doesNotMatch(heldBack.calls, /stats-navigation\.py/, "=1 must hold the registry back");
+    assert.match(heldBack.calls, /provision-auth\.py/, "=1 must not skip the rest of the deploy");
+
+    // A value that is neither is a hard failure. A typo must never publish the
+    // registry while its author believes it was held back.
+    const typo = await runOrigin("typo", { STATS_SKIP_NAVIGATION_DEPLOY: "true" });
+    assert.doesNotMatch(typo.calls, /stats-navigation\.py/, "an unrecognized value must not publish the registry");
+    assert.match(typo.result.stderr, /STATS_SKIP_NAVIGATION_DEPLOY must be 0 or 1, got: true/);
+    assert.notEqual(typo.result.status, 0);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
 }
 
 console.log("Cinder stats authentication contracts pass");

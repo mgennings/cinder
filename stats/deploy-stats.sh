@@ -227,12 +227,35 @@ verify_origin() {
   printf '✓ direct origin gate proved: public arrival 200, protected routes 401\n'
 }
 
+# Publishing the shared navigation registry rides along with this surface's
+# deploy, which is what has always happened and stays the default. The two are
+# not the same artifact, though: the registry is compiled from owner-only files
+# under ~/.agents and is shared by all six readers, while everything else here
+# is Cinder's own code. Coupling them makes an ORDERED rollout inexpressible --
+# there is no way to ship a client fix without also publishing whatever the
+# registry currently says, and no way to review the registry from inside this
+# repo. STATS_SKIP_NAVIGATION_DEPLOY=1 separates them.
+#
+# An unrecognized value is a hard failure, never a silent deploy: a typo like
+# `STATS_SKIP_NAVIGATION_DEPLOY=true` must not quietly publish the registry
+# while its author believes it was held back.
+deploy_navigation_registry() {
+  case "${STATS_SKIP_NAVIGATION_DEPLOY:-0}" in
+    0) python3 ~/.agents/scripts/stats-navigation.py deploy ;;
+    1) printf '  ↷ navigation registry held back (STATS_SKIP_NAVIGATION_DEPLOY=1)\n' ;;
+    *)
+      echo "STATS_SKIP_NAVIGATION_DEPLOY must be 0 or 1, got: ${STATS_SKIP_NAVIGATION_DEPLOY}" >&2
+      exit 1
+      ;;
+  esac
+}
+
 deploy_origin() {
   require_function_map
 
   say "audience-bound authentication"
   python3 provision-auth.py
-  python3 ~/.agents/scripts/stats-navigation.py deploy
+  deploy_navigation_registry
 
   say "aggregate-only runtime"
   ensure_role
