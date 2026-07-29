@@ -381,9 +381,12 @@ export const parseRangeRequest = (rawQueryString, now = new Date()) => {
   if (Number.isNaN(anchor.getTime()) || anchor.toISOString() !== endValue) return null;
   if (anchor.getTime() > now.getTime()) return null;
 
-  const anchorHoursOld = (now.getTime() - anchor.getTime()) / HOUR_MILLISECONDS;
-  if (anchorHoursOld > MAX_LOOKBACK_HOURS) return null;
-
+  // One ceiling, checked at the START of the range. Every window has positive
+  // length, so `start` is always older than `anchor` and a separate anchor-side
+  // check could never reject anything this one lets through -- it was dead by
+  // construction and no test could ever tell it apart. If a zero-length window
+  // is ever added to RANGE_WINDOWS, that assumption dies and the anchor needs
+  // its own check again.
   const start = new Date(anchor.getTime() - window.seconds * 1000);
   const startHoursOld = (now.getTime() - start.getTime()) / HOUR_MILLISECONDS;
   if (startHoursOld > MAX_LOOKBACK_HOURS) return null;
