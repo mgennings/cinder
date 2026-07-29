@@ -281,9 +281,17 @@ Stripe does have micropayment pricing, but it is not published and is not self-s
 
 ## Test-mode runbook
 
-**Nothing below has been run, and no Stripe account state was observed.** No test credential exists on this machine. The only Stripe key present anywhere is a **live** secret belonging to undertext, in `undertext/www/.env.local` — it was never read, never used, and never copied, and it is not Cinder's account in any case.
+Production was verified and switched to Cinder's live Stripe account on
+2026-07-29: charges and payouts enabled, no account requirements outstanding,
+one active $4.94 Price, and one live webhook carrying only the two settlement
+events below. The deployed key is restricted and the account's statement
+descriptor is `CINDER.INK`.
 
-So the suite runs against an injected `createSession` mock and against Stripe's documented API and signature shapes. **The mock and the real client take identical arguments** (`api/src/stripe.mjs` versus the stub in `api/test/purchase.test.mjs`), which is the point: moving from mocked to real sandbox test mode is a configuration change and not a code change. When Matt pastes sandbox keys in, the same handlers run end to end untouched.
+The runbook below remains the sandbox rehearsal. The suite runs against an
+injected `createSession` mock and Stripe's documented API and signature shapes.
+**The mock and the real client take identical arguments** (`api/src/stripe.mjs`
+versus the stub in `api/test/purchase.test.mjs`), so sandbox testing changes
+configuration rather than handlers.
 
 ### 0. Create the sandbox first
 
@@ -350,15 +358,25 @@ Then, in the Dashboard (still test mode) → Developers → Webhooks → add end
 
 Copy that endpoint's signing secret into `StripeWebhookSecret` and deploy again. To confirm which secret a deployed function is actually holding without printing it, `secretFingerprint` in `api/src/purchase.mjs` returns the first eight hex characters of its SHA-256.
 
-### 5. Before live mode — the gates
+### 5. Live-mode gates
 
-- [ ] Confirm the deployed key, webhook, and Price all belong to Cinder's own Stripe account and the intended Stripe mode before any payment test. Secret values stay outside the repository and release record.
-- [ ] The statement descriptor on that account reads `CINDER.INK`.
+- [x] The deployed key, webhook, and Price belong to Cinder's own live Stripe account. Secret values stay outside the repository and release record.
+- [x] The statement descriptor on that account reads `CINDER.INK`.
 - [x] `entitlement-provider.mjs` exports the real gate, wired at `lambda.mjs:22,104`. It verifies a signed grant and denies on signature, expiry, capability mismatch, unknown payload key, or a missing secret.
 - [ ] The whole grant path has been run once against a real test-mode Stripe, not only against the suite.
-- [ ] Matt has decided whether $4.50 net per bundle — about 45¢ a send — is the number he wants.
-- [ ] The Stripe Price (`494`) and `CinderProCredits` (`10`) agree with each other and with `src/lib/pro.ts`.
+- [x] The live Price is $4.94 for 10 credits.
+- [x] The Stripe Price (`494`) and `CinderProCredits` (`10`) agree with each other and with `src/lib/pro.ts`.
 - [x] **The EULA describes credits.** uxuiai, v1.3 effective 2026-07-27. v1.2 added credits; v1.3 corrected what a credit buys, because a grant is a time-limited send permission rather than one transfer.
+
+### Managed Payments is deliberately off
+
+New Stripe accounts can default Checkout into Managed Payments. That makes Link
+the merchant of record, changes the card statement to `LINK.COM* CINDER.INK`,
+and moves transaction receipts and support to Link. Cinder has not adopted that
+contract. `api/src/stripe.mjs` therefore sends
+`managed_payments[enabled]=false` explicitly, preserving standard Checkout and
+the documented `CINDER.INK` relationship. Revisit that one field only as part
+of a deliberate merchant-of-record, tax, support, privacy, and terms review.
 
 ## Deploying this stack against the live service
 

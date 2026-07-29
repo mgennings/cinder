@@ -36,6 +36,11 @@ export async function createCheckoutSession({
 }) {
 	const body = new URLSearchParams({
 		mode: 'payment',
+		// New Stripe accounts default to Managed Payments, which makes Link the
+		// merchant of record and changes receipts, support, and the statement
+		// descriptor. Cinder has not adopted that contract. Keep standard Checkout
+		// explicit until that merchant-of-record decision is made deliberately.
+		'managed_payments[enabled]': 'false',
 		'line_items[0][price]': price,
 		'line_items[0][quantity]': '1',
 		client_reference_id: reference,

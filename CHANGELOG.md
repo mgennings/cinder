@@ -28,14 +28,17 @@ Files larger than 4 MiB, with the guarantee untouched.
 - **The presign window scales with part count**, to a one-hour ceiling. Safe because every presigned `PUT` is signed against an exact key, length, and SHA-256, so a leaked URL authorizes writing only the bytes it was already going to receive.
 - **`/security` and the threat model** now cover the piece-wise delivery, the total-loss cost of a partial failure, and what paying does and does not change about what Cinder can see.
 
+### Fixed
+
+- **Live Checkout no longer inherits Stripe's Managed Payments default.** Cinder explicitly keeps standard Checkout so `CINDER.INK` remains the merchant relationship shown to the buyer. Adopting Link as merchant of record remains a deliberate tax, support, privacy, and terms decision rather than an account default.
+
 ### Notes
 
 - **Response streaming is still rejected, and now there is a test that says so.** Chunking is what made a larger file possible without touching the 4 MiB per-object ceiling that the buffered transport entitles. `api/test/chunked.test.mjs` asserts the constant's exact expression and fails if any streaming symbol appears in the handler, so a future attempt to raise the ceiling by trading the structural guarantee for a behavioral one breaks the build first.
 - **256 MiB is memory-bound, not transport-bound** — the one number here that is a judgment rather than a derivation. A recipient holds every part in one tab while reassembling, and a tab killed mid-delivery is a permanently destroyed file rather than an inconvenience.
 - **The gate still fails closed by construction.** With no `CAPABILITY_SECRET` configured it denies everything, and a forged, expired, wrong-capability, wrong-secret, or subject-bearing grant is the same silent refusal as no grant at all.
 - **A grant cannot be recalled.** Deleting an account closes the mint immediately, but a grant already issued works until it expires — fifteen minutes, the same trade a stateless ID token makes. Closing that window would mean the transfer API reading the entitlement table on every send, which is the link this design exists to prevent.
-- **Not deployed.** No AWS resource was created and no Stripe key was used. `CinderCapabilitySecret` is a new stack parameter; the stack has to be redeployed with it before any of this is reachable in production.
-- **Not deployed, and the price and bundle are new stack parameters.** `CinderProCredits` (default 10) joins `CinderProPriceId`, and the Stripe Price must be recreated at `494` cents. No AWS resource was created and no Stripe key was used.
+- **The live payment configuration is deployed.** Cinder's production stack uses its own live restricted Stripe key, one $4.94 Price for 10 credits, and one live webhook limited to the two settlement events the handler accepts.
 
 ## [0.2.0] — 2026-07-27
 
