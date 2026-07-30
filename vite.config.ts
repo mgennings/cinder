@@ -90,6 +90,23 @@ export default defineConfig(({ mode }) => {
 				}
 			})
 		],
+		server: {
+			// Vite refuses any Host header it was not told about, which is right: it
+			// is what stops a page somebody else controls from pointing a name at a
+			// dev server on this machine. The cost is that reviewing cinder on a
+			// phone over the private tailnet arrives as "Blocked request" with
+			// nothing to suggest the address was ever meant to work.
+			//
+			// The private switcher passes the tailnet name in CINDER_PHONE_HOST while
+			// it is publishing over HTTPS, and passes nothing otherwise. So this is
+			// empty by default and holds exactly one name during phone review. No
+			// wildcard, and no hostname stored in this repository.
+			//
+			// No port here on purpose. Playwright pins 5178 and 5179 itself
+			// (playwright.config.ts) and the switcher passes its own on the command
+			// line; a port in this file would fight both.
+			allowedHosts: process.env.CINDER_PHONE_HOST ? [process.env.CINDER_PHONE_HOST] : []
+		},
 		test: {
 			environment: 'jsdom',
 			include: ['src/**/*.test.ts']
