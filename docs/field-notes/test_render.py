@@ -65,6 +65,24 @@ _BASELINE_CSS_LINES = {
     'p{margin:0 0 3.4mm;orphans:3;widows:3}': 'p{margin:0 0 3.4mm;orphans:3;widows:3;text-wrap:pretty}',
 }
 
+# The baseline above hashes the RENDERER's output, but its fixture is a live,
+# editable document, so a deliberate copy edit to note 001 reddens a test whose
+# subject is not the copy. Regenerating the hash on every edit would be the easy
+# answer and it would quietly turn this guard into a rubber stamp: after one
+# regeneration nobody can tell a corrected sentence from a corrupted <strong>.
+#
+# So prose the note deliberately changed is reverted the same way the CSS is,
+# and the ORIGINAL captured hash keeps standing. Same shape as above: the key is
+# the baseline text, the value is what the note says today.
+_BASELINE_PROSE_LINES = {
+    'Exactly one server delivery attempt per link, up to 4 MiB. Not one recipient': (
+        'Exactly one server delivery attempt per link, up to 4 MiB for a sender with no '
+        'entitlement. Cinder Pro splits a larger file into as many as 64 pieces of 4 MiB, '
+        'a 256 MiB ceiling, and every piece keeps its own single delivery attempt. '
+        'Not one recipient'
+    ),
+}
+
 
 def _note(body: str = "", filename: str = "999-test-note.md"):
     """Write a small, otherwise-valid note (metadata + both required
@@ -244,19 +262,20 @@ def test_note_001_renders_expected_block_sequence():
     assert note.title == json_payload["title"]
 
 
-def test_note_001_html_output_unchanged_except_the_four_css_lines():
-    """The regression proof: render note 001 through the current code,
-    strip out Part 3's four deliberate CSS additions, and hash what's left
-    against the byte-exact baseline captured from the unmodified renderer
-    (see `_BASELINE_SHA256` above). Anything else moving — a stray space in
-    a paragraph join, a wrong tag out of inline(), a reordered block — means
-    the note_contract gate or the JSON-emitting refactor of to_html quietly
-    altered the one artifact they were supposed to leave alone.
+def test_note_001_html_output_unchanged_except_the_declared_edits():
+    """The regression proof: render note 001 through the current code, revert
+    the deliberate changes declared above — the four CSS lines and the copy
+    edits — and hash what is left against the byte-exact baseline captured
+    from the unmodified renderer (see `_BASELINE_SHA256`). Anything else
+    moving, a stray space in a paragraph join, a wrong tag out of inline(), a
+    reordered block, means the note_contract gate or the JSON-emitting
+    refactor of to_html quietly altered the one artifact they were supposed to
+    leave alone.
     """
     html_document, _ = render(NOTE_001)
     reconstructed_baseline = html_document
-    for after, before in _BASELINE_CSS_LINES.items():
-        assert before in reconstructed_baseline, f"expected CSS line missing: {before!r}"
+    for after, before in {**_BASELINE_CSS_LINES, **_BASELINE_PROSE_LINES}.items():
+        assert before in reconstructed_baseline, f"expected baseline line missing: {before!r}"
         reconstructed_baseline = reconstructed_baseline.replace(before, after, 1)
 
     reconstructed_bytes = reconstructed_baseline.encode("utf-8")
@@ -294,7 +313,7 @@ TESTS = [
     test_code_block_is_escaped_not_inline_processed,
     test_json_is_byte_identical_across_two_generations,
     test_note_001_renders_expected_block_sequence,
-    test_note_001_html_output_unchanged_except_the_four_css_lines,
+    test_note_001_html_output_unchanged_except_the_declared_edits,
     test_to_html_body_and_blocks_agree_on_construct_counts,
 ]
 
