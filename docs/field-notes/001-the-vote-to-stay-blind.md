@@ -49,7 +49,7 @@ Everything below is measured against the live production system, not a local cop
 
 ### The promise being defended
 
-Exactly one server delivery attempt per link, up to 4 MiB. Not one recipient and not a guaranteed download, because a server cannot observe either. Bytes, filename, and MIME type are encrypted in the browser with AES-256-GCM into one authenticated envelope; the key lives only in the URL fragment and is never transmitted. Before any response byte exists, the stored object is deleted and its absence verified — so receiving the bytes entails the deletion already happened. The transport is a fully buffered proxy integration with no streaming path, which makes that ordering structural rather than sequenced.
+Exactly one server delivery attempt per link, up to 4 MiB for a sender with no entitlement. Cinder Pro splits a larger file into as many as 64 pieces of 4 MiB, a 256 MiB ceiling, and every piece keeps its own single delivery attempt. Not one recipient and not a guaranteed download, because a server cannot observe either. Bytes, filename, and MIME type are encrypted in the browser with AES-256-GCM into one authenticated envelope; the key lives only in the URL fragment and is never transmitted. Before any response byte exists, the stored object is deleted and its absence verified — so receiving the bytes entails the deletion already happened. The transport is a fully buffered proxy integration with no streaming path, which makes that ordering structural rather than sequenced.
 
 ### The option that was rejected, and its real cost
 
