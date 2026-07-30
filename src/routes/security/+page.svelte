@@ -116,10 +116,15 @@
 	<TruthList title="What Cinder can't protect" rows={cannot} />
 
 	<RuleHead class="mt-10">Accounts</RuleHead>
-	<!-- Not a TruthCard: this body carries a link, and a card whose body is a
-	     plain string cannot hold one. The exception is deliberate rather than an
-	     oversight — widening TruthCard to accept markup would let every other
-	     claim on this page grow arbitrary structure. -->
+	<!-- Not a TruthCard, still deliberately. TruthCard was since widened and can
+	     hold markup, but only through an opt-in `bodyIsHtml` prop that defaults
+	     to false, and the opt-in carries a condition: the body must already be
+	     escaped by construction, the way a field note's blocks[] are
+	     (docs/field-notes/render.py escapes first, then applies markup). Prose
+	     hand-authored in a .svelte file never qualifies, so this link stays in a
+	     plain Card. The constraint the original comment protected is unchanged:
+	     no claim on this page grows arbitrary structure by having its string
+	     quietly widened underneath it. -->
 	<Card class="mt-4 p-4">
 		<h3 class="font-medium text-body">Sending needs no account, and never will</h3>
 		<p class="mt-1 text-sm leading-relaxed text-mist">

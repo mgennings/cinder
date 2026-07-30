@@ -1,0 +1,313 @@
+{
+  "number": "001",
+  "title": "Field Note 001 \u2014 The Vote To Stay Blind",
+  "date": "2026-07-27",
+  "gate": "Cinder / abuse resistance",
+  "verdict": "Stay request-blind. Accept being knocked offline.",
+  "vote": "12 of 12, unanimous.",
+  "blocks": [
+    {
+      "kind": "heading",
+      "level": 1,
+      "html": "Field Note 001 \u2014 The Vote To Stay Blind"
+    },
+    {
+      "kind": "meta",
+      "key": "Decision gate",
+      "value": "Cinder / abuse resistance"
+    },
+    {
+      "kind": "meta",
+      "key": "Date",
+      "value": "2026-07-27"
+    },
+    {
+      "kind": "meta",
+      "key": "Verdict",
+      "value": "Stay request-blind. Accept being knocked offline."
+    },
+    {
+      "kind": "meta",
+      "key": "Vote",
+      "value": "12 of 12, unanimous."
+    },
+    {
+      "kind": "rule"
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "html": "In plain words"
+    },
+    {
+      "kind": "paragraph",
+      "html": "Cinder does one thing. You give it a file, it locks the file in your own browser before anything leaves your computer, and it hands you a link. The first person to open that link gets the file, and Cinder erases its copy in the same breath. Cinder never holds the key, so it could not read your file even if someone made it try."
+    },
+    {
+      "kind": "paragraph",
+      "html": "Someone asked a fair question: what happens if a stranger floods it with traffic? That costs money, and it can knock the service offline."
+    },
+    {
+      "kind": "paragraph",
+      "html": "The normal way to stop that is to have the service watch where every request is coming from and turn away anyone asking too often. It is what nearly every website does. It is cheap and it works."
+    },
+    {
+      "kind": "paragraph",
+      "html": "But watching where requests come from means keeping a note of who is asking. For a tool whose entire purpose is not knowing who you are, that is not a small thing. It is the thing."
+    },
+    {
+      "kind": "paragraph",
+      "html": "So we measured instead of assuming, and found two facts that settled it."
+    },
+    {
+      "kind": "paragraph",
+      "html": "The first: the defense would not have worked here anyway. Someone determined could take Cinder offline from a single laptop, and spreading the same traffic across twenty connections slips under any limit gentle enough not to hurt real people."
+    },
+    {
+      "kind": "paragraph",
+      "html": "The second: that kind of limit hurts real people first. It works by address, and enormous numbers of people share one \u2014 everyone on a phone network, everyone at a school or a library, everyone using a VPN. Many of them use a VPN precisely because they need privacy. A privacy tool that shuts out the people who most need privacy has protected no one."
+    },
+    {
+      "kind": "paragraph",
+      "html": "So Cinder chose to stay blind. Under a flood it slows down and turns people away, and it does that by simply running out of room rather than by recognizing anybody. Nothing is lost when this happens: a request that gets turned away never reaches the part that erases your file, so your link still works once the flood passes. The honest cost is that Cinder can be pushed offline. We decided we would rather be knocked down than start keeping track of people."
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>One more thing, and it is the uncomfortable part.</strong> While checking all this, we found that Cinder had been lying. When it was too busy to start, it told people their file had been permanently destroyed \u2014 while the file sat there, perfectly fine. Worse, the protection added that same morning made the false message happen more often. We had built something that generated a lie about the one promise the product exists to keep. That is fixed, and it is written down here rather than quietly patched, because a tool that asks you to trust it does not get to hide its own mistakes."
+    },
+    {
+      "kind": "rule"
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "html": "Why this document is also the test"
+    },
+    {
+      "kind": "paragraph",
+      "html": "The PDF you are reading was sent through Cinder before it was published. Not a stand-in, not a test file: this exact document, through the live product, the same way a stranger would."
+    },
+    {
+      "kind": "paragraph",
+      "html": "That practice has a name \u2014 <strong>dogfooding</strong>, using your own product for real work instead of only testing it. It matters because of something that happened here, and the lesson is worth more than the decision above."
+    },
+    {
+      "kind": "paragraph",
+      "html": "Cinder&#x27;s tests compared files before and after and confirmed they matched perfectly. Every one passed. But the files those tests used were made up \u2014 long runs of predictable filler, named to look like documents. A file like that can survive a round trip flawlessly and prove almost nothing, because it was never a real document to begin with. It has no structure to break."
+    },
+    {
+      "kind": "paragraph",
+      "html": "The gap showed up the moment a real one was tried. A file arrived that would not open, and it looked like Cinder had corrupted it. It had not: the file had been empty filler all along, and Cinder returned it exactly as received, faithfully preserving something that was already broken. The tests were right and useless at the same time."
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>Matching before and after is not the same as working.</strong> A test that only asks &quot;did the bytes survive&quot; can pass forever while the product fails the person holding the file. The only reliable check is to send the real thing and then open it \u2014 which is why this document went through Cinder, and why the technical record below lists real files of each kind rather than generated stand-ins."
+    },
+    {
+      "kind": "rule"
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "html": "The technical record"
+    },
+    {
+      "kind": "paragraph",
+      "html": "Everything below is measured against the live production system, not a local copy or a simulation."
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "The promise being defended"
+    },
+    {
+      "kind": "paragraph",
+      "html": "Exactly one server delivery attempt per link, up to 4 MiB. Not one recipient and not a guaranteed download, because a server cannot observe either. Bytes, filename, and MIME type are encrypted in the browser with AES-256-GCM into one authenticated envelope; the key lives only in the URL fragment and is never transmitted. Before any response byte exists, the stored object is deleted and its absence verified \u2014 so receiving the bytes entails the deletion already happened. The transport is a fully buffered proxy integration with no streaming path, which makes that ordering structural rather than sequenced."
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "The option that was rejected, and its real cost"
+    },
+    {
+      "kind": "paragraph",
+      "html": "A managed firewall with a rate-based rule. Four properties, none of them prominent in the documentation:"
+    },
+    {
+      "kind": "table",
+      "header": [
+        "Mechanism",
+        "What it retains"
+      ],
+      "rows": [
+        [
+          "Request sampling",
+          "Client IP, full request path, and headers on a rolling 3-hour window. It is a <strong>required</strong> field defaulting to on, and is <strong>not</strong> governed by the logging configuration. The note-burn route carries the note&#x27;s primary key in the path, so each sample is a <code>(who, what, when)</code> tuple."
+        ],
+        [
+          "Rate-based managed keys",
+          "Up to 10,000 client addresses currently being limited, retrievable through a public API whenever aggregation is by IP."
+        ],
+        [
+          "Firewall metrics",
+          "<code>Country</code> (GeoIP-derived) and <code>Device</code> (user-agent-derived) dimensions at 15-month retention."
+        ],
+        [
+          "Coverage gap",
+          "Uploads go browser-to-storage through a pre-signed authorization, structurally bypassing the edge on the only route that moves megabytes."
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "The measurements that decided it"
+    },
+    {
+      "kind": "paragraph",
+      "html": "Two reviewers ran load against production independently."
+    },
+    {
+      "kind": "code",
+      "lines": [
+        "40 concurrent claims        \u2192 exactly 10 \u00d7 200, 30 \u00d7 503",
+        "warm service time           \u2248 165 ms",
+        "10 slots \u00f7 0.165 s          \u2248 61 req/s sustains total denial, from one machine",
+        "request cost                &lt; 200 bytes"
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "html": "And during the flood:"
+    },
+    {
+      "kind": "code",
+      "lines": [
+        "Throttles 286 \u00b7 Invocations 27 \u00b7 Errors 0",
+        "ConcurrentExecutions Maximum = 10.0 exactly"
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "html": "A shed request never enters the function. It reads no record, writes no log line, and never reaches the conditional delete \u2014 so a flood denies delivery but cannot consume a transfer. That is a provable negative. Per-IP counters inside a managed firewall are not: their emptiness is a claim about a third party&#x27;s internals that neither a user nor the operator can verify."
+    },
+    {
+      "kind": "paragraph",
+      "html": "Second measurement, which removed the last argument for the firewall: ~60 req/s distributed across ~20 addresses defeats any threshold humane enough to avoid blocking shared egress. <strong>The control would have purchased the surveillance without the protection.</strong>"
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "Four claims that did not survive audit"
+    },
+    {
+      "kind": "table",
+      "header": [
+        "Claim",
+        "Reality"
+      ],
+      "rows": [
+        [
+          "The finalize role cannot read a stored object",
+          "<code>GetObjectAttributes</code> requires <code>s3:GetObject</code>. No permission set expresses &quot;metadata but never the body&quot;."
+        ],
+        [
+          "Subresource Integrity mitigates the served-code risk",
+          "Not deployed, and useless on a first-party origin \u2014 whoever can alter the bundle can alter the integrity attribute beside it."
+        ],
+        [
+          "Stage throttling resists locator grinding",
+          "Measured: 600 requests admitted in 0.59 s against a configured burst of 40. Entropy defeats guessing; the throttle does not."
+        ],
+        [
+          "Reserved concurrency bounds the bill at ~$14/day",
+          "That figure is Lambda compute only. It bounds neither gateway requests, nor database writes, nor storage from abandoned uploads."
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "The defect the audit found in our own work"
+    },
+    {
+      "kind": "paragraph",
+      "html": "The client mapped every non-<code>410</code> refusal to a permanent-destruction state. A <code>429</code> or <code>503</code> is produced before the function is invoked, so the atomic claim never ran and the object was untouched. The interface asserted a destruction the code had not performed, and reserved concurrency \u2014 added hours earlier as a protection \u2014 increased its frequency."
+    },
+    {
+      "kind": "paragraph",
+      "html": "Now: gateway-level refusals (<code>429</code>, <code>502</code>, <code>503</code>, <code>504</code>) render a recoverable <em>busy</em> state; a <code>500</code> still renders as spent, because the handler ran and may have thrown after the claim; and an ambiguous network failure resolves toward <em>busy</em> deliberately, since if the transfer really was consumed the retry returns <code>410</code> and corrects itself. The kinder wrong answer is the self-correcting one."
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "What shipped instead"
+    },
+    {
+      "kind": "paragraph",
+      "html": "Per-function reserved concurrency of 10 (a boundary that sheds by exhaustion, never by identity); a CloudWatch alarm on shed deliveries so the outage is not silent; a monthly cost guard; object keys banded by lifetime so a one-hour transfer&#x27;s ciphertext is swept the next day rather than the eighth; and log retention pinned in infrastructure code rather than left at the default of forever."
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "Media validated end to end"
+    },
+    {
+      "kind": "paragraph",
+      "html": "Real files of each kind, through the live product, opened after arrival \u2014 not synthetic fixtures."
+    },
+    {
+      "kind": "table",
+      "header": [
+        "Type",
+        "Fixture"
+      ],
+      "rows": [
+        [
+          "PDF",
+          "This document"
+        ],
+        [
+          "Image",
+          "PNG, 1200 \u00d7 630, 16-bit RGBA"
+        ],
+        [
+          "Video",
+          "MP4, H.264, ISO Base Media"
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 3,
+      "html": "The transferable principle"
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>A refusal is not a destruction.</strong> Any system with an irreversible operation must distinguish &quot;we declined to start&quot; from &quot;we started and failed.&quot; Collapsing them is how software ends up lying about the one thing it promised."
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>Prefer the guarantee whose shape makes the failure impossible.</strong> Structural properties beat configured ones. A buffered response cannot leak early because there is no stream to write to. A concurrency cap cannot profile because it has nowhere to put a profile."
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>A control&#x27;s data appetite is part of its price</strong>, and it is rarely on the label. Read what the mechanism retains, not what its logging toggle claims."
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>Audit the protection you just shipped.</strong> The most damaging finding here was not among the options being weighed. It was in the mitigation added hours earlier."
+    },
+    {
+      "kind": "paragraph",
+      "html": "<strong>Byte-identical is not the same as usable.</strong> Verify with real artifacts, and open them afterward."
+    },
+    {
+      "kind": "rule"
+    },
+    {
+      "kind": "coda",
+      "html": "Cinder is open source. The measurements, the corrections, and the code that makes these claims true are all public \u2014 including the four claims that were wrong before they were right."
+    }
+  ]
+}
