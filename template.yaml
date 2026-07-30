@@ -80,8 +80,9 @@ Parameters:
   # refuses an empty secret, so it would deny every event rather than accept
   # every event, but neither is a thing to discover in production.
   #
-  # TEST MODE UNTIL MATT SAYS OTHERWISE. sk_test_… and the whsec_… from
-  # `stripe listen` or a sandbox endpoint. See docs/pro-payments.md.
+  # Production uses Cinder's live restricted key and live endpoint secret.
+  # Sandboxes use their own keys and endpoints; never cross those modes. See
+  # docs/pro-payments.md.
   #
   # Cinder has its OWN Stripe account, not a share of another product's. Stripe
   # branding, the statement descriptor (CINDER.INK), receipts, and dispute
@@ -92,7 +93,7 @@ Parameters:
   CinderStripeSecretKey:
     Type: String
     NoEcho: true
-    Description: Cinder's own Stripe account secret key (sk_test_… until Matt says otherwise)
+    Description: Cinder's own Stripe account key (rk_live_… in production)
   CinderStripeWebhookSecret:
     Type: String
     NoEcho: true
