@@ -4,7 +4,7 @@ const shellPath = new URL('../build/200.html', import.meta.url);
 const notePath = new URL('../build/note.html', import.meta.url);
 
 const replacements = new Map([
-	['Cinder — an encrypted note or file retrieved once', 'Someone left you a one-time note · Cinder'],
+	['Cinder — encrypted self-destructing notes and files', 'Someone left you a one-time note · Cinder'],
 	[
 		'Encrypted in your browser, the key never touches the server. One successful reveal removes Cinder\'s stored copy.',
 		'Encrypted in the sender\'s browser. Revealing it removes Cinder\'s stored copy.'

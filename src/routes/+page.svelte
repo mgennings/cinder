@@ -244,7 +244,7 @@
 </script>
 
 <svelte:head>
-	<title>Cinder — an encrypted note or file retrieved once</title>
+	<title>Cinder — encrypted self-destructing notes and files</title>
 	<link rel="canonical" href="https://cinder.ink/" />
 	<meta
 		name="description"

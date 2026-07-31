@@ -59,6 +59,8 @@ const APPROVED_REVEAL_WARNING =
 	"saved by the sender, recipient, browser, operating system, or another service remain " +
 	"outside Cinder's control.";
 
+const HOME_DISCOVERY_TITLE = 'Cinder — encrypted self-destructing notes and files';
+
 // Markup wraps prose across lines; compare the words, not the indentation.
 const flatten = (s: string) => s.replace(/\s+/g, ' ');
 
@@ -95,6 +97,15 @@ describe('destruction claims', () => {
 		expect(readme).toMatch(/atomically removes Cinder['’]s stored copy/i);
 		expect(readme).toMatch(/cannot erase copies someone already captured/i);
 		expect(llms).toMatch(/fetches nothing until (?:a human|someone) clicks reveal/i);
+	});
+
+	it('uses the truthful self-destructing-note term on the home crawl and social surfaces', () => {
+		const home = publicSurfaces['../routes/+page.svelte'];
+		const shell = publicSurfaces['../app.html'];
+
+		expect(home).toContain(`<title>${HOME_DISCOVERY_TITLE}</title>`);
+		expect(home).toContain('Copies outside Cinder remain outside its control.');
+		expect(shell).toContain(`content="${HOME_DISCOVERY_TITLE}"`);
 	});
 
 	it('gives private note links their own crawler-safe card without making them indexable', () => {
