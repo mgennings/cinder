@@ -445,4 +445,14 @@ const rangeSend = (points, values) => async (command) => {
   assert.equal(calls.length, 1);
 }
 
+{
+  // CloudWatch being unavailable is not evidence of a quiet function set.
+  // The route must fail closed rather than returning the count-shaped zeros
+  // used for a successful query that contains no datapoints.
+  const send = async () => { throw new Error("CloudWatch unavailable"); };
+  const reply = await metricsRouteReply("window=1h", { now: onTheHour, functionMap, send });
+  assert.equal(reply.statusCode, 503);
+  assert.deepEqual(JSON.parse(reply.body), { error: "metrics unavailable" });
+}
+
 console.log("Cinder anchored range and derived-rate contracts pass");
