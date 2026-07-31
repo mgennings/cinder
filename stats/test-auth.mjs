@@ -319,8 +319,10 @@ assert.match(navigationSource, /\["signals", "products", "places"\]/);
           PATH: `${bin}:${process.env.PATH}`,
           NAV_RECORD: record,
           // Only require_function_map's presence check has to pass; the fake
-          // `node` above stands in for the parse it would otherwise run.
+          // `node` above stands in for the two parse checks it would otherwise
+          // run.
           CINDER_FUNCTION_MAP_JSON: "{}",
+          CINDER_SITE_DISTRIBUTION_ID: "E2TESTSTATS123",
           ...extraEnv,
         },
         encoding: "utf8",

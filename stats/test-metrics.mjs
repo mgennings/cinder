@@ -5,6 +5,7 @@ process.env.STATS_SECRET_ID = "test-surface";
 process.env.STATS_SHARED_SECRET_ID = "test-shared";
 process.env.STATS_NAVIGATION_SECRET_ID = "test-navigation";
 process.env.STATS_AUDIENCE = "stats.cinder.ink";
+process.env.CINDER_SITE_DISTRIBUTION_ID = "E2TESTSTATS123";
 
 const {
   CINDER_FUNCTION_IDS,
@@ -16,12 +17,14 @@ const {
   metricsRouteReply,
   parseFunctionMap,
   parseRangeRequest,
+  parseSiteDistributionId,
   rangeDocument,
 } = await import("./index.mjs");
 
 const functionMap = Object.fromEntries(
   CINDER_FUNCTION_IDS.map((logicalId, index) => [logicalId, `blip-${logicalId}-Exact${index}`]),
 );
+const siteDistributionId = "E2TESTSTATS123";
 
 assert.deepEqual(parseFunctionMap(JSON.stringify(functionMap)), functionMap);
 assert.throws(() => parseFunctionMap("{}"), /every exact Cinder function/);
@@ -37,31 +40,53 @@ assert.throws(
   () => parseFunctionMap(JSON.stringify({ ...functionMap, CreateNoteFn: functionMap.ReadNoteFn })),
   /unexpected physical name|must be unique/,
 );
+assert.equal(parseSiteDistributionId(siteDistributionId), siteDistributionId);
+assert.throws(() => parseSiteDistributionId("not-a-distribution"), /CloudFront distribution ID/);
 
-const queries = metricQueries(functionMap, 3_600);
-assert.equal(queries.length, CINDER_FUNCTION_IDS.length * 5 + 6);
+const queries = metricQueries(functionMap, siteDistributionId, 3_600);
+assert.equal(queries.length, CINDER_FUNCTION_IDS.length * 5 + 7);
 const rawQueries = queries.filter((query) => query.MetricStat);
 const expressionQueries = queries.filter((query) => query.Expression);
-assert.equal(rawQueries.length, 55);
+const lambdaQueries = rawQueries.filter((query) => query.MetricStat.Metric.Namespace === "AWS/Lambda");
+const cloudFrontQueries = rawQueries.filter((query) => query.MetricStat.Metric.Namespace === "AWS/CloudFront");
+assert.equal(rawQueries.length, 56);
+assert.equal(lambdaQueries.length, 55);
+assert.equal(cloudFrontQueries.length, 1);
 assert.equal(expressionQueries.length, 6);
-assert.deepEqual(new Set(rawQueries.map((query) => query.MetricStat.Metric.Namespace)), new Set(["AWS/Lambda"]));
+assert.deepEqual(new Set(rawQueries.map((query) => query.MetricStat.Metric.Namespace)), new Set(["AWS/CloudFront", "AWS/Lambda"]));
 assert.deepEqual(
-  new Set(rawQueries.map((query) => query.MetricStat.Metric.MetricName)),
+  new Set(lambdaQueries.map((query) => query.MetricStat.Metric.MetricName)),
   new Set(["Invocations", "Errors", "Throttles", "Duration"]),
 );
 assert.deepEqual(
-  new Set(rawQueries.map((query) => query.MetricStat.Stat)),
+  new Set(lambdaQueries.map((query) => query.MetricStat.Stat)),
   new Set(["Sum", "SampleCount"]),
 );
 assert.deepEqual(
-  new Set(rawQueries.map((query) => query.MetricStat.Metric.Dimensions[0].Name)),
+  new Set(lambdaQueries.map((query) => query.MetricStat.Metric.Dimensions[0].Name)),
   new Set(["FunctionName"]),
 );
 assert.deepEqual(
-  new Set(rawQueries.map((query) => query.MetricStat.Metric.Dimensions[0].Value)),
+  new Set(lambdaQueries.map((query) => query.MetricStat.Metric.Dimensions[0].Value)),
   new Set(Object.values(functionMap)),
 );
-assert.ok(rawQueries.every((query) => query.ReturnData === false));
+assert.deepEqual(cloudFrontQueries[0], {
+  Id: "site_requests",
+  MetricStat: {
+    Metric: {
+      Namespace: "AWS/CloudFront",
+      MetricName: "Requests",
+      Dimensions: [
+        { Name: "DistributionId", Value: siteDistributionId },
+        { Name: "Region", Value: "Global" },
+      ],
+    },
+    Period: 3_600,
+    Stat: "Sum",
+  },
+  ReturnData: true,
+});
+assert.ok(lambdaQueries.every((query) => query.ReturnData === false));
 assert.ok(expressionQueries.every((query) => query.ReturnData === true));
 assert.deepEqual(expressionQueries.map((query) => query.Id), [
   "aggregate_invocations",
@@ -81,6 +106,7 @@ const send = async (command) => {
   const timestamps = Array.from({ length: points }, (_, index) => new Date(now.getTime() - (points - index) * period * 1000));
   return {
     MetricDataResults: [
+      { Id: "site_requests", Timestamps: timestamps, Values: timestamps.map((_, index) => (index + 1) * 10) },
       { Id: "aggregate_invocations", Timestamps: timestamps, Values: timestamps.map((_, index) => index + 1) },
       { Id: "aggregate_errors", Timestamps: timestamps, Values: timestamps.map(() => 0) },
       { Id: "aggregate_throttles", Timestamps: timestamps, Values: timestamps.map(() => 0) },
@@ -93,10 +119,10 @@ const send = async (command) => {
   };
 };
 
-const document = await metricsDocument({ functionMap, now, send });
+const document = await metricsDocument({ functionMap, siteDistributionId, now, send });
 assert.equal(document.checkedAt, now.toISOString());
-assert.equal(document.source, "AWS/Lambda");
-assert.deepEqual(document.scope, { product: "Cinder", functionCount: 11 });
+assert.equal(document.source, "AWS/CloudFront + AWS/Lambda");
+assert.deepEqual(document.scope, { product: "Cinder", functionCount: 11, siteRequestSource: "AWS/CloudFront" });
 assert.deepEqual(document.windows.map((window) => window.id), ["24h", "7d"]);
 assert.deepEqual(document.windows.map((window) => window.periodSeconds), [3_600, 21_600]);
 // Pinned as literals, never read back off METRIC_WINDOWS. The StartTime check
@@ -104,13 +130,14 @@ assert.deepEqual(document.windows.map((window) => window.periodSeconds), [3_600,
 // happily agree with a source that had quietly redefined "24 hours."
 assert.deepEqual(METRIC_WINDOWS.map((window) => window.seconds), [86_400, 604_800]);
 assert.deepEqual(METRIC_WINDOWS.map((window) => window.periodSeconds), [3_600, 21_600]);
-assert.deepEqual(document.windows[0].series.map((series) => series.label), ["Invocations", "Errors", "Throttles", "Duration"]);
+assert.deepEqual(document.windows[0].series.map((series) => series.label), ["Site requests", "Invocations", "Errors", "Throttles", "Duration"]);
 assert.equal(document.windows[0].series[0].points.length, 24);
 assert.equal(document.windows[1].series[0].points.length, 28);
-assert.equal(document.windows[0].series[3].aggregation, "average");
-assert.equal(document.windows[0].series[0].summary, 300);
-assert.equal(document.windows[0].series[3].summary, (10 + 23_000) / (1 + 230));
-assert.notEqual(document.windows[0].series[3].summary, 41.15);
+assert.equal(document.windows[0].series[4].aggregation, "average");
+assert.equal(document.windows[0].series[0].summary, 3_000);
+assert.equal(document.windows[0].series[1].summary, 300);
+assert.equal(document.windows[0].series[4].summary, (10 + 23_000) / (1 + 230));
+assert.notEqual(document.windows[0].series[4].summary, 41.15);
 assert.equal(calls.length, 2);
 
 for (const window of METRIC_WINDOWS) {
@@ -123,6 +150,7 @@ for (const window of METRIC_WINDOWS) {
 
 const browserDocument = JSON.stringify(document);
 for (const physicalName of Object.values(functionMap)) assert.doesNotMatch(browserDocument, new RegExp(physicalName));
+assert.doesNotMatch(browserDocument, new RegExp(siteDistributionId));
 assert.doesNotMatch(browserDocument, /people|recipients|downloads|deliveries|opens/i);
 
 const source = await readFile(new URL("index.mjs", import.meta.url), "utf8");
@@ -144,10 +172,10 @@ assert.deepEqual(RANGE_WINDOWS.map((window) => window.id), ["1h", "4h", "24h", "
 assert.deepEqual(RANGE_WINDOWS.map((window) => window.periodSeconds), [60, 300, 1_800, 10_800]);
 assert.deepEqual(RANGE_WINDOWS.map((window) => window.seconds), [3_600, 14_400, 86_400, 604_800]);
 
-// The 61-query ceiling holds at every anchored period, not just the legacy
+// The 62-query ceiling holds at every anchored period, not just the legacy
 // document's 3_600s period exercised above.
 for (const anchoredPeriod of RANGE_WINDOWS.map((window) => window.periodSeconds)) {
-  assert.equal(metricQueries(functionMap, anchoredPeriod).length, 61);
+  assert.equal(metricQueries(functionMap, siteDistributionId, anchoredPeriod).length, 62);
 }
 
 // --- parseRangeRequest: accept ------------------------------------------
@@ -310,6 +338,7 @@ const rangeSend = (points, values) => async (command) => {
   // t1 has invocations=0 with a stray error -- that bucket's rate must be
   // dropped, never Infinity. t2's throttle rate is a legitimate 0%.
   const send = rangeSend(3, {
+    site_requests: [40, 50, 60],
     aggregate_invocations: [10, 0, 5],
     aggregate_errors: [2, 3, 1],
     aggregate_throttles: [1, 0, 0],
@@ -318,7 +347,7 @@ const rangeSend = (points, values) => async (command) => {
     aggregate_duration_count: [10, 0, 5],
   });
   const window = RANGE_WINDOWS.find((candidate) => candidate.id === "4h");
-  const doc = await rangeDocument({ window, end: onTheHour, functionMap, now: onTheHour, send });
+  const doc = await rangeDocument({ window, end: onTheHour, functionMap, siteDistributionId, now: onTheHour, send });
 
   assert.deepEqual(Object.keys(doc).sort(), ["checkedAt", "range", "scope", "series", "source"].sort());
   assert.deepEqual(Object.keys(doc.range).sort(), ["end", "id", "label", "mode", "periodSeconds", "start"].sort());
@@ -329,7 +358,7 @@ const rangeSend = (points, values) => async (command) => {
   assert.equal(doc.range.periodSeconds, 300);
 
   assert.deepEqual(doc.series.map((series) => series.id), [
-    "invocations", "errors", "error_rate", "throttles", "throttle_rate", "duration",
+    "site_requests", "invocations", "errors", "error_rate", "throttles", "throttle_rate", "duration",
   ]);
   for (const series of doc.series) {
     assert.deepEqual(Object.keys(series).sort(), ["aggregation", "id", "label", "points", "summary", "unit"].sort());
@@ -337,6 +366,9 @@ const rangeSend = (points, values) => async (command) => {
   }
 
   const errorRate = doc.series.find((series) => series.id === "error_rate");
+  const siteRequests = doc.series.find((series) => series.id === "site_requests");
+  assert.equal(siteRequests.summary, 150);
+  assert.equal(siteRequests.points.length, 3);
   assert.equal(errorRate.points.length, 2);
   assert.equal(errorRate.points[0].value, 20);   // 2/10 * 100
   assert.equal(errorRate.points[1].value, 20);   // 1/5 * 100
@@ -377,7 +409,7 @@ const rangeSend = (points, values) => async (command) => {
     aggregate_duration_count: [0, 0],
   });
   const window = RANGE_WINDOWS.find((candidate) => candidate.id === "1h");
-  const doc = await rangeDocument({ window, end: null, functionMap, now: onTheHour, send });
+  const doc = await rangeDocument({ window, end: null, functionMap, siteDistributionId, now: onTheHour, send });
   assert.equal(doc.range.mode, "live");
   assert.equal(doc.range.end, onTheHour.toISOString());
   const errorRate = doc.series.find((series) => series.id === "error_rate");
@@ -403,7 +435,7 @@ const rangeSend = (points, values) => async (command) => {
     aggregate_duration_count: [1, 1],
   });
   const window = RANGE_WINDOWS.find((candidate) => candidate.id === "1h");
-  const doc = await rangeDocument({ window, end: onTheHour, functionMap, now: onTheHour, send });
+  const doc = await rangeDocument({ window, end: onTheHour, functionMap, siteDistributionId, now: onTheHour, send });
   const errorRate = doc.series.find((series) => series.id === "error_rate");
   assert.equal(errorRate.points.length, 1);
   assert.equal(errorRate.points[0].value, 10);
@@ -416,18 +448,18 @@ const rangeSend = (points, values) => async (command) => {
   const send = async (command) => { calls.push(command.input); return { MetricDataResults: [] }; };
 
   for (const query of rejected) {
-    const reply = await metricsRouteReply(query, { now: midHour, functionMap, send });
+    const reply = await metricsRouteReply(query, { now: midHour, functionMap, siteDistributionId, send });
     assert.equal(reply.statusCode, 400, query);
   }
   assert.equal(calls.length, 0, "an invalid request must never reach CloudWatch");
 
-  const legacyReply = await metricsRouteReply(undefined, { now, functionMap, send });
+  const legacyReply = await metricsRouteReply(undefined, { now, functionMap, siteDistributionId, send });
   assert.equal(legacyReply.statusCode, 200);
   assert.ok(JSON.parse(legacyReply.body).windows, "legacy no-query clients keep the deployed document shape");
   assert.equal(calls.length, 2);
   calls.length = 0;
 
-  const liveReply = await metricsRouteReply("window=1h", { now: onTheHour, functionMap, send });
+  const liveReply = await metricsRouteReply("window=1h", { now: onTheHour, functionMap, siteDistributionId, send });
   assert.equal(liveReply.statusCode, 200);
   const liveBody = JSON.parse(liveReply.body);
   assert.equal(liveBody.range.mode, "live");
@@ -436,7 +468,7 @@ const rangeSend = (points, values) => async (command) => {
   assert.equal(calls[0].MetricDataQueries[0].MetricStat.Period, 60);
   calls.length = 0;
 
-  const fixedReply = await metricsRouteReply("window=4h&end=2026-07-28T18:00:00.000Z", { now: midHour, functionMap, send });
+  const fixedReply = await metricsRouteReply("window=4h&end=2026-07-28T18:00:00.000Z", { now: midHour, functionMap, siteDistributionId, send });
   assert.equal(fixedReply.statusCode, 200);
   const fixedBody = JSON.parse(fixedReply.body);
   assert.equal(fixedBody.range.mode, "fixed");
@@ -450,7 +482,7 @@ const rangeSend = (points, values) => async (command) => {
   // The route must fail closed rather than returning the count-shaped zeros
   // used for a successful query that contains no datapoints.
   const send = async () => { throw new Error("CloudWatch unavailable"); };
-  const reply = await metricsRouteReply("window=1h", { now: onTheHour, functionMap, send });
+  const reply = await metricsRouteReply("window=1h", { now: onTheHour, functionMap, siteDistributionId, send });
   assert.equal(reply.statusCode, 503);
   assert.deepEqual(JSON.parse(reply.body), { error: "metrics unavailable" });
 }

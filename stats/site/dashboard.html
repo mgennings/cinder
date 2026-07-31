@@ -19,13 +19,13 @@
     </header>
     <main class="dashboard-shell">
       <section class="hero" aria-labelledby="title">
-        <p class="eyebrow">AWS/LAMBDA / EXACT CINDER FUNCTIONS</p>
+        <p class="eyebrow">AWS/CLOUDFRONT + LAMBDA / AGGREGATE-ONLY</p>
         <h1 id="title">only infrastructure, never&nbsp;notes.</h1>
         <p>
-          Invocations, errors, error rate, throttles, throttle rate, and
-          duration are aggregated across Cinder's exact Lambda function set,
-          read from the authenticated origin. No logs or application data are
-          read.
+          Site requests are aggregated from Cinder's public CloudFront
+          distribution. Invocations, errors, error rate, throttles, throttle
+          rate, and duration are aggregated across Cinder's exact Lambda
+          function set. No logs, note content, or application data are read.
         </p>
       </section>
 
@@ -42,10 +42,10 @@
         <button id="nav-next" type="button" disabled>Next hour</button>
       </div>
 
-      <section id="metric-grid" class="metric-grid explorer-shell" aria-label="aggregate Lambda metrics" aria-busy="true"></section>
+      <section id="metric-grid" class="metric-grid explorer-shell" aria-label="aggregate infrastructure metrics" aria-busy="true"></section>
 
       <footer class="proof-line">
-        <p><strong id="scope">11 exact functions</strong> · <span id="checked-at">checking origin</span></p>
+        <p><strong id="scope">public site delivery + 11 exact functions</strong> · <span id="checked-at">checking origin</span></p>
         <p id="status" class="status" role="status" aria-live="polite"></p>
       </footer>
     </main>

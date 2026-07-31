@@ -66,8 +66,8 @@ const rangePayload = (windowId, mode, end) => {
   });
   return {
     checkedAt: LIVE_INSTANT,
-    source: "AWS/Lambda",
-    scope: { product: "Cinder", functionCount: 11 },
+    source: "AWS/CloudFront + AWS/Lambda",
+    scope: { product: "Cinder", functionCount: 11, siteRequestSource: "AWS/CloudFront" },
     range: {
       id: windowId,
       label: RANGE_LABELS[windowId] ?? RANGE_LABELS["24h"],
@@ -77,6 +77,7 @@ const rangePayload = (windowId, mode, end) => {
       mode,
     },
     series: [
+      build("site_requests", "Site requests", "count", "sum", 1_200, Array.from({ length: count }, (_, i) => 100 + i * 12)),
       build("invocations", "Invocations", "count", "sum", 84, Array.from({ length: count }, (_, i) => i * 3)),
       build("errors", "Errors", "count", "sum", 4, Array.from({ length: count }, (_, i) => i % 2)),
       build("error_rate", "Error rate", "percent", "ratio", 4.76, Array.from({ length: count }, (_, i) => (i % 2) * 12.5)),
@@ -362,13 +363,13 @@ try {
       await page.getByRole("button", { name: /open stats/i }).click();
       await page.waitForSelector(".metric-card");
       assert.equal(new URL(page.url()).pathname, "/", `${label}: login exposed an implementation route`);
-      assert.equal(await page.locator(".metric-card").count(), 6, `${label}: expected six metric small multiples (added error/throttle rate)`);
+      assert.equal(await page.locator(".metric-card").count(), 7, `${label}: expected seven metric small multiples (site delivery plus Lambda rates)`);
       assert.equal(
-        await page.locator(".metric-card figure").count(), 6,
+        await page.locator(".metric-card figure").count(), 7,
         `${label}: every metric needs a chart container`,
       );
       assert.equal(
-        await page.locator('figure[role="slider"]').count(), 5,
+        await page.locator('figure[role="slider"]').count(), 6,
         `${label}: sampled metrics need keyboard-accessible chart sliders`,
       );
       assert.equal(

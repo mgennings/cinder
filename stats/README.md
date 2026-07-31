@@ -1,9 +1,10 @@
 # Cinder private infrastructure stats
 
 `stats.cinder.ink` is a clean-root, audience-bound private surface. It reads
-only CloudWatch aggregate metrics for Cinder's exact Lambda function set:
-Invocations, Errors, Throttles, and Duration over fixed 24-hour and 7-day
-windows.
+only CloudWatch aggregate metrics: delivery requests from Cinder's one public
+CloudFront distribution, plus Invocations, Errors, Throttles, and Duration for
+Cinder's exact Lambda function set over fixed 24-hour and 7-day windows. A
+site request is a delivery request, not a visitor, reader, or note event.
 
 The Lambda role can call only `cloudwatch:GetMetricData` in `us-east-1` and
 read the three exact stats secrets. It has no log permission and no application
@@ -31,9 +32,9 @@ malformed or non-hour `end`, a future anchor, an anchor more than 336 hours
 duration -- would exceed that same 336-hour lookback. 336 hours sits exactly at
 CloudWatch's 1-minute-resolution retention ceiling.
 
-The response reuses the existing 61 `GetMetricData` query structures (55
-per-function metrics plus 6 aggregate expressions) at the anchored period, and
-adds two series derived entirely server-side from those same aggregates:
+The response uses 62 `GetMetricData` query structures: 55 per-function
+metrics, 6 Lambda aggregate expressions, and one public-site request metric.
+It adds two series derived entirely server-side from the Lambda aggregates:
 `error_rate` and `throttle_rate`, each `errors|throttles / invocations * 100`
 aligned by timestamp. A bucket whose invocations are zero or absent produces no
 rate point for that bucket, and the whole-range `summary` is `null` -- never
@@ -55,12 +56,15 @@ clean-root login, window control, navigation revocation, and logout paths.
 
 Deployment requires `CINDER_FUNCTION_MAP_JSON`, a JSON object whose keys are
 the 11 exact logical function IDs in `template.yaml` and whose values are their
-exact deployed physical names. The deploy script does not list or discover
+exact deployed physical names, plus `CINDER_SITE_DISTRIBUTION_ID` for Cinder's
+public CloudFront distribution. The deploy script does not list or discover
 Cinder resources. The runtime rejects missing, additional, malformed, or
-duplicate entries before issuing a metric query.
+duplicate function-map entries, and an invalid distribution ID, before issuing
+a metric query.
 
 ```bash
 export CINDER_FUNCTION_MAP_JSON='{"CreateNoteFn":"blip-CreateNoteFn-..."}'
+export CINDER_SITE_DISTRIBUTION_ID='EXAMPLE123'
 ./deploy-stats.sh origin
 ./deploy-stats.sh domain
 ```

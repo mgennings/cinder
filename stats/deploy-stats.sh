@@ -35,6 +35,15 @@ require_function_map() {
     'const { parseFunctionMap } = await import("./index.mjs"); parseFunctionMap();'
 }
 
+require_site_distribution() {
+  [[ -n "${CINDER_SITE_DISTRIBUTION_ID:-}" ]] || {
+    echo "CINDER_SITE_DISTRIBUTION_ID must name Cinder's public CloudFront distribution" >&2
+    exit 1
+  }
+  CINDER_SITE_DISTRIBUTION_ID="$CINDER_SITE_DISTRIBUTION_ID" node --input-type=module -e \
+    'const { parseSiteDistributionId } = await import("./index.mjs"); parseSiteDistributionId();'
+}
+
 ensure_role() {
   if ! aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
     aws iam create-role \
@@ -78,7 +87,8 @@ ensure_lambda() {
     --arg navigation "$NAVIGATION_SECRET_ID" \
     --arg audience "$DOMAIN" \
     --arg function_map "$CINDER_FUNCTION_MAP_JSON" \
-    '{Variables:{STATS_SECRET_ID:$surface,STATS_SHARED_SECRET_ID:$shared,STATS_NAVIGATION_SECRET_ID:$navigation,STATS_AUDIENCE:$audience,CINDER_FUNCTION_MAP:$function_map}}' \
+    --arg site_distribution "$CINDER_SITE_DISTRIBUTION_ID" \
+    '{Variables:{STATS_SECRET_ID:$surface,STATS_SHARED_SECRET_ID:$shared,STATS_NAVIGATION_SECRET_ID:$navigation,STATS_AUDIENCE:$audience,CINDER_FUNCTION_MAP:$function_map,CINDER_SITE_DISTRIBUTION_ID:$site_distribution}}' \
     >"$SCRATCH/environment.json"
 
   if aws lambda get-function --function-name "$FUNCTION" >/dev/null 2>&1; then
@@ -252,6 +262,7 @@ deploy_navigation_registry() {
 
 deploy_origin() {
   require_function_map
+  require_site_distribution
 
   say "audience-bound authentication"
   python3 provision-auth.py

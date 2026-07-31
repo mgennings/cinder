@@ -264,7 +264,8 @@ const updateNavigatorState = () => {
 }
 
 const renderRange = (payload) => {
-  document.querySelector("#scope").textContent = `${payload.scope.functionCount} exact functions`
+  const siteDelivery = payload.scope.siteRequestSource === "AWS/CloudFront" ? "public site delivery + " : ""
+  document.querySelector("#scope").textContent = `${siteDelivery}${payload.scope.functionCount} exact functions`
   document.querySelector("#checked-at").textContent = `checked ${new Date(payload.checkedAt).toLocaleString()}`
   const cards = payload.series.map((series) => {
     const card = document.createElement("article")

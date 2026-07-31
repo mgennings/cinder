@@ -356,6 +356,19 @@ export const parseFunctionMap = (wireValue = process.env.CINDER_FUNCTION_MAP) =>
 };
 
 
+// This is an address, not a name: it identifies the one public Cinder
+// distribution whose aggregate delivery requests belong on this surface. It
+// arrives as explicit deployment input so the stats deploy never discovers
+// Cinder resources or expands its read authority.
+export const parseSiteDistributionId = (wireValue = process.env.CINDER_SITE_DISTRIBUTION_ID) => {
+  const distributionId = String(wireValue ?? "");
+  if (!/^[A-Z0-9]{1,64}$/.test(distributionId)) {
+    throw new Error("CINDER_SITE_DISTRIBUTION_ID must be a CloudFront distribution ID");
+  }
+  return distributionId;
+};
+
+
 // Parses and validates a `/api/metrics` query string before anything ever
 // reaches CloudWatch. Returns `null` for any malformed, unknown, repeated, or
 // out-of-range input; `{ legacy: true }` for the deployed no-query document
@@ -406,7 +419,21 @@ const metricStat = (functionName, metricName, period, stat) => ({
 });
 
 
-export const metricQueries = (functionMap, period) => {
+const cloudFrontMetricStat = (distributionId, metricName, period, stat) => ({
+  Metric: {
+    Namespace: "AWS/CloudFront",
+    MetricName: metricName,
+    Dimensions: [
+      { Name: "DistributionId", Value: distributionId },
+      { Name: "Region", Value: "Global" },
+    ],
+  },
+  Period: period,
+  Stat: stat,
+});
+
+
+export const metricQueries = (functionMap, siteDistributionId, period) => {
   const queries = [];
   CINDER_FUNCTION_IDS.forEach((logicalId, index) => {
     const functionName = functionMap[logicalId];
@@ -420,6 +447,7 @@ export const metricQueries = (functionMap, period) => {
   });
   return [
     ...queries,
+    { Id: "site_requests", MetricStat: cloudFrontMetricStat(siteDistributionId, "Requests", period, "Sum"), ReturnData: true },
     { Id: "aggregate_invocations", Expression: 'SUM(METRICS("invocations_"))', Label: "Invocations", ReturnData: true },
     { Id: "aggregate_errors", Expression: 'SUM(METRICS("errors_"))', Label: "Errors", ReturnData: true },
     { Id: "aggregate_throttles", Expression: 'SUM(METRICS("throttles_"))', Label: "Throttles", ReturnData: true },
@@ -431,6 +459,7 @@ export const metricQueries = (functionMap, period) => {
 
 
 const metricDefinitions = Object.freeze([
+  Object.freeze({ id: "site_requests", label: "Site requests", unit: "count", aggregation: "sum" }),
   Object.freeze({ id: "invocations", label: "Invocations", unit: "count", aggregation: "sum" }),
   Object.freeze({ id: "errors", label: "Errors", unit: "count", aggregation: "sum" }),
   Object.freeze({ id: "throttles", label: "Throttles", unit: "count", aggregation: "sum" }),
@@ -451,6 +480,7 @@ const sumValues = (result) => (result?.Values ?? [])
 export const readMetricWindow = async (
   window,
   functionMap,
+  siteDistributionId,
   now = new Date(),
   send = (command) => cloudwatch.send(command),
 ) => {
@@ -458,11 +488,12 @@ export const readMetricWindow = async (
     StartTime: new Date(now.getTime() - window.seconds * 1000),
     EndTime: now,
     ScanBy: "TimestampAscending",
-    MetricDataQueries: metricQueries(functionMap, window.periodSeconds),
+    MetricDataQueries: metricQueries(functionMap, siteDistributionId, window.periodSeconds),
   }));
   const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
   const durationCount = sumValues(results.get("aggregate_duration_count"));
   const summaries = {
+    site_requests: sumValues(results.get("site_requests")),
     invocations: sumValues(results.get("aggregate_invocations")),
     errors: sumValues(results.get("aggregate_errors")),
     throttles: sumValues(results.get("aggregate_throttles")),
@@ -477,7 +508,7 @@ export const readMetricWindow = async (
     series: metricDefinitions.map((definition) => ({
       ...definition,
       summary: summaries[definition.id],
-      points: pointsFor(results.get(`aggregate_${definition.id}`)),
+      points: pointsFor(results.get(definition.id === "site_requests" ? "site_requests" : `aggregate_${definition.id}`)),
     })),
   };
 };
@@ -485,20 +516,22 @@ export const readMetricWindow = async (
 
 export const metricsDocument = async ({
   functionMap = parseFunctionMap(),
+  siteDistributionId = parseSiteDistributionId(),
   now = new Date(),
   send,
 } = {}) => ({
   checkedAt: now.toISOString(),
-  source: "AWS/Lambda",
-  scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length },
-  windows: await Promise.all(METRIC_WINDOWS.map((window) => readMetricWindow(window, functionMap, now, send))),
+  source: "AWS/CloudFront + AWS/Lambda",
+  scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length, siteRequestSource: "AWS/CloudFront" },
+  windows: await Promise.all(METRIC_WINDOWS.map((window) => readMetricWindow(window, functionMap, siteDistributionId, now, send))),
 });
 
 
 // The scrubbable range endpoint adds Error rate and Throttle rate beside the
-// four existing series. Both are derived here, server-side, from the same 61
+// Lambda series. Both are derived here, server-side, from the same 62
 // queries -- never a new CloudWatch query, never client-side math.
 const rangeSeriesDefinitions = Object.freeze([
+  Object.freeze({ id: "site_requests", label: "Site requests", unit: "count", aggregation: "sum" }),
   Object.freeze({ id: "invocations", label: "Invocations", unit: "count", aggregation: "sum" }),
   Object.freeze({ id: "errors", label: "Errors", unit: "count", aggregation: "sum" }),
   Object.freeze({ id: "error_rate", label: "Error rate", unit: "percent", aggregation: "ratio" }),
@@ -537,13 +570,14 @@ export const readRangeWindow = async (
   start,
   end,
   functionMap,
+  siteDistributionId,
   send = (command) => cloudwatch.send(command),
 ) => {
   const response = await send(new GetMetricDataCommand({
     StartTime: start,
     EndTime: end,
     ScanBy: "TimestampAscending",
-    MetricDataQueries: metricQueries(functionMap, window.periodSeconds),
+    MetricDataQueries: metricQueries(functionMap, siteDistributionId, window.periodSeconds),
   }));
   const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
   const durationCount = sumValues(results.get("aggregate_duration_count"));
@@ -552,6 +586,7 @@ export const readRangeWindow = async (
   const throttlesTotal = sumValues(results.get("aggregate_throttles"));
 
   const summaries = {
+    site_requests: sumValues(results.get("site_requests")),
     invocations: invocationsTotal,
     errors: errorsTotal,
     error_rate: invocationsTotal > 0 ? (errorsTotal / invocationsTotal) * 100 : null,
@@ -560,6 +595,7 @@ export const readRangeWindow = async (
     duration: durationCount > 0 ? sumValues(results.get("aggregate_duration_sum")) / durationCount : null,
   };
   const pointsById = {
+    site_requests: pointsFor(results.get("site_requests")),
     invocations: pointsFor(results.get("aggregate_invocations")),
     errors: pointsFor(results.get("aggregate_errors")),
     error_rate: ratePoints(results.get("aggregate_errors"), results.get("aggregate_invocations")),
@@ -580,16 +616,17 @@ export const rangeDocument = async ({
   window,
   end = null,
   functionMap = parseFunctionMap(),
+  siteDistributionId = parseSiteDistributionId(),
   now = new Date(),
   send,
 }) => {
   const anchor = end ?? now;
   const start = new Date(anchor.getTime() - window.seconds * 1000);
-  const series = await readRangeWindow(window, start, anchor, functionMap, send);
+  const series = await readRangeWindow(window, start, anchor, functionMap, siteDistributionId, send);
   return {
     checkedAt: now.toISOString(),
-    source: "AWS/Lambda",
-    scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length },
+    source: "AWS/CloudFront + AWS/Lambda",
+    scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length, siteRequestSource: "AWS/CloudFront" },
     range: {
       id: window.id,
       label: window.label,
@@ -605,14 +642,15 @@ export const rangeDocument = async ({
 
 // Thin, testable seam between the raw query string and CloudWatch: every
 // rejection returns before `functionMap` or `send` is ever touched.
-export const metricsRouteReply = async (rawQueryString, { now = new Date(), functionMap, send } = {}) => {
+export const metricsRouteReply = async (rawQueryString, { now = new Date(), functionMap, siteDistributionId, send } = {}) => {
   const parsed = parseRangeRequest(rawQueryString, now);
   if (!parsed) return jsonReply(400, { error: "invalid range request" });
   try {
     const resolvedFunctionMap = functionMap ?? parseFunctionMap();
+    const resolvedSiteDistributionId = siteDistributionId ?? parseSiteDistributionId();
     const document = parsed.legacy
-      ? await metricsDocument({ functionMap: resolvedFunctionMap, now, send })
-      : await rangeDocument({ window: parsed.window, end: parsed.end, functionMap: resolvedFunctionMap, now, send });
+      ? await metricsDocument({ functionMap: resolvedFunctionMap, siteDistributionId: resolvedSiteDistributionId, now, send })
+      : await rangeDocument({ window: parsed.window, end: parsed.end, functionMap: resolvedFunctionMap, siteDistributionId: resolvedSiteDistributionId, now, send });
     return jsonReply(200, document);
   } catch {
     return jsonReply(503, { error: "metrics unavailable" });
