@@ -477,6 +477,25 @@ const sumValues = (result) => (result?.Values ?? [])
   .reduce((sum, value) => sum + value, 0);
 
 
+const REQUIRED_RESULT_IDS = Object.freeze([
+  "site_requests",
+  "aggregate_invocations",
+  "aggregate_errors",
+  "aggregate_throttles",
+  "aggregate_duration",
+  "aggregate_duration_sum",
+  "aggregate_duration_count",
+]);
+
+
+const completeMetricResults = (response) => {
+  const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
+  const complete = REQUIRED_RESULT_IDS.every((id) => results.get(id)?.StatusCode === "Complete");
+  if (!complete || (response.Messages?.length ?? 0) > 0) throw new Error("incomplete CloudWatch results");
+  return results;
+};
+
+
 export const readMetricWindow = async (
   window,
   functionMap,
@@ -490,7 +509,7 @@ export const readMetricWindow = async (
     ScanBy: "TimestampAscending",
     MetricDataQueries: metricQueries(functionMap, siteDistributionId, window.periodSeconds),
   }));
-  const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
+  const results = completeMetricResults(response);
   const durationCount = sumValues(results.get("aggregate_duration_count"));
   const summaries = {
     site_requests: sumValues(results.get("site_requests")),
@@ -520,6 +539,7 @@ export const metricsDocument = async ({
   now = new Date(),
   send,
 } = {}) => ({
+  availability: "available",
   checkedAt: now.toISOString(),
   source: "AWS/CloudFront + AWS/Lambda",
   scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length, siteRequestSource: "AWS/CloudFront" },
@@ -579,7 +599,7 @@ export const readRangeWindow = async (
     ScanBy: "TimestampAscending",
     MetricDataQueries: metricQueries(functionMap, siteDistributionId, window.periodSeconds),
   }));
-  const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
+  const results = completeMetricResults(response);
   const durationCount = sumValues(results.get("aggregate_duration_count"));
   const invocationsTotal = sumValues(results.get("aggregate_invocations"));
   const errorsTotal = sumValues(results.get("aggregate_errors"));
@@ -624,6 +644,7 @@ export const rangeDocument = async ({
   const start = new Date(anchor.getTime() - window.seconds * 1000);
   const series = await readRangeWindow(window, start, anchor, functionMap, siteDistributionId, send);
   return {
+    availability: "available",
     checkedAt: now.toISOString(),
     source: "AWS/CloudFront + AWS/Lambda",
     scope: { product: "Cinder", functionCount: CINDER_FUNCTION_IDS.length, siteRequestSource: "AWS/CloudFront" },
@@ -645,15 +666,21 @@ export const rangeDocument = async ({
 export const metricsRouteReply = async (rawQueryString, { now = new Date(), functionMap, siteDistributionId, send } = {}) => {
   const parsed = parseRangeRequest(rawQueryString, now);
   if (!parsed) return jsonReply(400, { error: "invalid range request" });
+  let resolvedFunctionMap;
+  let resolvedSiteDistributionId;
   try {
-    const resolvedFunctionMap = functionMap ?? parseFunctionMap();
-    const resolvedSiteDistributionId = siteDistributionId ?? parseSiteDistributionId();
+    resolvedFunctionMap = parseFunctionMap(functionMap === undefined ? undefined : JSON.stringify(functionMap));
+    resolvedSiteDistributionId = parseSiteDistributionId(siteDistributionId);
+  } catch {
+    return jsonReply(503, { availability: "unconfigured", error: "metrics unconfigured" });
+  }
+  try {
     const document = parsed.legacy
       ? await metricsDocument({ functionMap: resolvedFunctionMap, siteDistributionId: resolvedSiteDistributionId, now, send })
       : await rangeDocument({ window: parsed.window, end: parsed.end, functionMap: resolvedFunctionMap, siteDistributionId: resolvedSiteDistributionId, now, send });
     return jsonReply(200, document);
   } catch {
-    return jsonReply(503, { error: "metrics unavailable" });
+    return jsonReply(503, { availability: "unavailable", error: "metrics unavailable" });
   }
 };
 

@@ -34,6 +34,11 @@ CloudWatch's 1-minute-resolution retention ceiling.
 
 The response uses 62 `GetMetricData` query structures: 55 per-function
 metrics, 6 Lambda aggregate expressions, and one public-site request metric.
+Every complete response carries `availability: "available"`. Missing result
+IDs, CloudWatch messages, and non-`Complete` result statuses fail with
+`availability: "unavailable"`; invalid deployment inputs fail with
+`availability: "unconfigured"`. A complete empty series remains an available
+numeric zero.
 It adds two series derived entirely server-side from the Lambda aggregates:
 `error_rate` and `throttle_rate`, each `errors|throttles / invocations * 100`
 aligned by timestamp. A bucket whose invocations are zero or absent produces no

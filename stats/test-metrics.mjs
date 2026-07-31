@@ -106,21 +106,22 @@ const send = async (command) => {
   const timestamps = Array.from({ length: points }, (_, index) => new Date(now.getTime() - (points - index) * period * 1000));
   return {
     MetricDataResults: [
-      { Id: "site_requests", Timestamps: timestamps, Values: timestamps.map((_, index) => (index + 1) * 10) },
-      { Id: "aggregate_invocations", Timestamps: timestamps, Values: timestamps.map((_, index) => index + 1) },
-      { Id: "aggregate_errors", Timestamps: timestamps, Values: timestamps.map(() => 0) },
-      { Id: "aggregate_throttles", Timestamps: timestamps, Values: timestamps.map(() => 0) },
-      { Id: "aggregate_duration", Timestamps: timestamps, Values: timestamps.map((_, index) => 40 + index / 10) },
+      { Id: "site_requests", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map((_, index) => (index + 1) * 10) },
+      { Id: "aggregate_invocations", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map((_, index) => index + 1) },
+      { Id: "aggregate_errors", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map(() => 0) },
+      { Id: "aggregate_throttles", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map(() => 0) },
+      { Id: "aggregate_duration", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map((_, index) => 40 + index / 10) },
       // Deliberately unequal buckets. The visible Duration summary must weight
       // by samples, not average the already-averaged trend points.
-      { Id: "aggregate_duration_sum", Timestamps: timestamps, Values: timestamps.map((_, index) => index ? 1_000 : 10) },
-      { Id: "aggregate_duration_count", Timestamps: timestamps, Values: timestamps.map((_, index) => index ? 10 : 1) },
+      { Id: "aggregate_duration_sum", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map((_, index) => index ? 1_000 : 10) },
+      { Id: "aggregate_duration_count", StatusCode: "Complete", Timestamps: timestamps, Values: timestamps.map((_, index) => index ? 10 : 1) },
     ],
   };
 };
 
 const document = await metricsDocument({ functionMap, siteDistributionId, now, send });
 assert.equal(document.checkedAt, now.toISOString());
+assert.equal(document.availability, "available");
 assert.equal(document.source, "AWS/CloudFront + AWS/Lambda");
 assert.deepEqual(document.scope, { product: "Cinder", functionCount: 11, siteRequestSource: "AWS/CloudFront" });
 assert.deepEqual(document.windows.map((window) => window.id), ["24h", "7d"]);
@@ -328,6 +329,7 @@ const rangeSend = (points, values) => async (command) => {
   return {
     MetricDataResults: Object.entries(values).map(([id, seriesValues]) => ({
       Id: id,
+      StatusCode: "Complete",
       Timestamps: seriesValues.map((value, index) => value === null ? null : timestamps[index]).filter(Boolean),
       Values: seriesValues.filter((value) => value !== null),
     })),
@@ -349,7 +351,8 @@ const rangeSend = (points, values) => async (command) => {
   const window = RANGE_WINDOWS.find((candidate) => candidate.id === "4h");
   const doc = await rangeDocument({ window, end: onTheHour, functionMap, siteDistributionId, now: onTheHour, send });
 
-  assert.deepEqual(Object.keys(doc).sort(), ["checkedAt", "range", "scope", "series", "source"].sort());
+  assert.deepEqual(Object.keys(doc).sort(), ["availability", "checkedAt", "range", "scope", "series", "source"].sort());
+  assert.equal(doc.availability, "available");
   assert.deepEqual(Object.keys(doc.range).sort(), ["end", "id", "label", "mode", "periodSeconds", "start"].sort());
   assert.equal(doc.range.mode, "fixed");
   assert.equal(doc.range.id, "4h");
@@ -401,6 +404,7 @@ const rangeSend = (points, values) => async (command) => {
   // Zero invocations across the whole range: both rates report `summary:
   // null`, never Infinity/NaN/a falsely reassuring zero, and no rate points.
   const send = rangeSend(2, {
+    site_requests: [0, 0],
     aggregate_invocations: [0, 0],
     aggregate_errors: [0, 0],
     aggregate_throttles: [0, 0],
@@ -427,6 +431,7 @@ const rangeSend = (points, values) => async (command) => {
   // invocations (not merely zero) must also be dropped, never treated as an
   // implicit zero denominator turned into Infinity.
   const send = rangeSend(2, {
+    site_requests: [0, 0],
     aggregate_invocations: [10, null],
     aggregate_errors: [1, 4],
     aggregate_throttles: [0, 0],
@@ -445,7 +450,20 @@ const rangeSend = (points, values) => async (command) => {
 
 {
   const calls = [];
-  const send = async (command) => { calls.push(command.input); return { MetricDataResults: [] }; };
+  const send = async (command) => {
+    calls.push(command.input);
+    return {
+      MetricDataResults: [
+        "site_requests",
+        "aggregate_invocations",
+        "aggregate_errors",
+        "aggregate_throttles",
+        "aggregate_duration",
+        "aggregate_duration_sum",
+        "aggregate_duration_count",
+      ].map((Id) => ({ Id, StatusCode: "Complete", Timestamps: [], Values: [] })),
+    };
+  };
 
   for (const query of rejected) {
     const reply = await metricsRouteReply(query, { now: midHour, functionMap, siteDistributionId, send });
@@ -484,7 +502,54 @@ const rangeSend = (points, values) => async (command) => {
   const send = async () => { throw new Error("CloudWatch unavailable"); };
   const reply = await metricsRouteReply("window=1h", { now: onTheHour, functionMap, siteDistributionId, send });
   assert.equal(reply.statusCode, 503);
-  assert.deepEqual(JSON.parse(reply.body), { error: "metrics unavailable" });
+  assert.deepEqual(JSON.parse(reply.body), { availability: "unavailable", error: "metrics unavailable" });
+}
+
+for (const response of [
+  { MetricDataResults: [] },
+  { MetricDataResults: [{ Id: "site_requests", StatusCode: "PartialData", Messages: [{ Code: "DataLimit", Value: "partial" }] }] },
+  { MetricDataResults: [{ Id: "site_requests", StatusCode: "InternalError" }] },
+]) {
+  const reply = await metricsRouteReply("window=1h", {
+    now: onTheHour,
+    functionMap,
+    siteDistributionId,
+    send: async () => response,
+  });
+  assert.equal(reply.statusCode, 503);
+  assert.deepEqual(JSON.parse(reply.body), { availability: "unavailable", error: "metrics unavailable" });
+}
+
+{
+  const reply = await metricsRouteReply("window=1h", {
+    now: onTheHour,
+    functionMap,
+    siteDistributionId,
+    send: rangeSend(0, Object.fromEntries([
+      "site_requests",
+      "aggregate_invocations",
+      "aggregate_errors",
+      "aggregate_throttles",
+      "aggregate_duration",
+      "aggregate_duration_sum",
+      "aggregate_duration_count",
+    ].map((id) => [id, []]))),
+  });
+  assert.equal(reply.statusCode, 200);
+  const body = JSON.parse(reply.body);
+  assert.equal(body.availability, "available");
+  assert.equal(body.series.find((series) => series.id === "site_requests").summary, 0);
+}
+
+{
+  const reply = await metricsRouteReply("window=1h", {
+    now: onTheHour,
+    functionMap: {},
+    siteDistributionId,
+    send: async () => { throw new Error("must not send"); },
+  });
+  assert.equal(reply.statusCode, 503);
+  assert.deepEqual(JSON.parse(reply.body), { availability: "unconfigured", error: "metrics unconfigured" });
 }
 
 console.log("Cinder anchored range and derived-rate contracts pass");
