@@ -490,7 +490,10 @@ const REQUIRED_RESULT_IDS = Object.freeze([
 
 const completeMetricResults = (response) => {
   const results = new Map((response.MetricDataResults ?? []).map((result) => [result.Id, result]));
-  const complete = REQUIRED_RESULT_IDS.every((id) => results.get(id)?.StatusCode === "Complete");
+  const complete = REQUIRED_RESULT_IDS.every((id) => {
+    const result = results.get(id);
+    return result?.StatusCode === "Complete" && (result.Messages?.length ?? 0) === 0;
+  });
   if (!complete || (response.Messages?.length ?? 0) > 0) throw new Error("incomplete CloudWatch results");
   return results;
 };

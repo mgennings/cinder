@@ -509,6 +509,23 @@ for (const response of [
   { MetricDataResults: [] },
   { MetricDataResults: [{ Id: "site_requests", StatusCode: "PartialData", Messages: [{ Code: "DataLimit", Value: "partial" }] }] },
   { MetricDataResults: [{ Id: "site_requests", StatusCode: "InternalError" }] },
+  {
+    MetricDataResults: [
+      "site_requests",
+      "aggregate_invocations",
+      "aggregate_errors",
+      "aggregate_throttles",
+      "aggregate_duration",
+      "aggregate_duration_sum",
+      "aggregate_duration_count",
+    ].map((Id) => ({
+      Id,
+      StatusCode: "Complete",
+      Timestamps: [],
+      Values: [],
+      ...(Id === "site_requests" ? { Messages: [{ Code: "DataLimit", Value: "truncated" }] } : {}),
+    })),
+  },
 ]) {
   const reply = await metricsRouteReply("window=1h", {
     now: onTheHour,
