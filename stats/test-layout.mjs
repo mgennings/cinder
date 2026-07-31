@@ -329,7 +329,22 @@ try {
       await page.waitForSelector(".metric-card");
       assert.equal(new URL(page.url()).pathname, "/", `${label}: login exposed an implementation route`);
       assert.equal(await page.locator(".metric-card").count(), 6, `${label}: expected six metric small multiples (added error/throttle rate)`);
-      assert.equal(await page.locator("svg[role=img]").count(), 6, `${label}: every metric needs an accessible chart`);
+      assert.equal(
+        await page.locator(".metric-card figure").count(), 6,
+        `${label}: every metric needs a chart container`,
+      );
+      assert.equal(
+        await page.locator('figure[role="slider"]').count(), 5,
+        `${label}: sampled metrics need keyboard-accessible chart sliders`,
+      );
+      assert.equal(
+        await page
+          .locator("figure:not([role]) .chart-readout")
+          .filter({ hasText: "no samples in this window" })
+          .count(),
+        1,
+        `${label}: a metric without samples needs truthful chart context, not a fabricated value`,
+      );
 
       // -- range buttons: exact four, correct labels, default 24h selected --
       const rangeButtonLabels = await page.locator("[data-window]").allTextContents();
