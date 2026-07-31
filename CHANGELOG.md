@@ -4,10 +4,14 @@ All notable changes to Cinder are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-31
+
 Files larger than 4 MiB, with the guarantee untouched.
 
 ### Added
 
+- **A data-driven field-note reader.** The series renders from one validated source, keeps its privacy explainer honest, and carries the real entitlement behind large-file limits.
+- **Truthful private infrastructure dashboards.** Anchored hour-by-hour windows, keyboard-readable sampled charts, and explicit no-sample states expose what AWS actually reports without turning provider failures into zeros.
 - **Cinder Pro is prepaid credits: $4.94 for 10 large sends.** One credit sends one file over 4 MiB. Not a subscription and not an unlock — the balance sits on the account until it is spent, buying again adds to it rather than being refused, and everything under 4 MiB stays free forever with no account. The reason is arithmetic: Stripe's fixed 30¢ was 92% of the fee damage on the old $0.94 unlock, taking 34.8% of the money; a bundle takes 9%.
 - **A credit is spent at the mint, and the cost is on screen before the sender commits.** The send screen names the piece count *and* the price at file selection, before a byte is encrypted, and says plainly that a delivery which breaks partway destroys the pieces and spends the credit anyway — Cinder cannot see which transfer failed, which is the same reason it can never see who a file went to. No surface implies a refund the code does not perform.
 - **Transfers up to 256 MiB, in pieces.** A large file is split into parts of at most 4 MiB, each sealed as its own AES-256-GCM envelope, stored under its own random object key, and claimed by its own atomic delete-and-verify. This is not a second protocol: `POST /files` writes N ordinary grants and the finalize and claim handlers were not modified at all. The per-object promise at 256 MiB is the same rows in the same table hit by the same conditional writes as the promise at 3 MiB.
@@ -20,6 +24,7 @@ Files larger than 4 MiB, with the guarantee untouched.
 
 ### Changed
 
+- **Search and social titles name the product plainly.** Cinder now identifies itself as encrypted self-destructing notes and files wherever a search result or shared link first meets it.
 - **The entitlement row is a counter, not a boolean.** `{pk, credits, grantedAt}` is the complete item. The mint spends one credit with a single conditional `UpdateItem` (`SET credits = credits - :one` under `attribute_exists(pk) AND credits >= :one`), so the check and the decrement are one call: 40 simultaneous sends against a balance of 7 hand out exactly 7 grants and the balance never goes negative. A zero balance is a state, not a fault, and it is the same silent refusal an anonymous caller gets.
 - **A duplicate Stripe delivery can no longer buy a second bundle.** Credits accumulate, so at-least-once delivery would have become at-least-once billing. The webhook now takes an exclusive claim on the pending row — a conditional delete returning `ALL_OLD` — before crediting, and puts the row back with its original deadline if the credit write then fails. Ten simultaneous deliveries of one payment add ten credits, not a hundred.
 - **A retried send still costs nothing.** The client presents its cached grant byte for byte, so the mint is never reached twice; two sends behind one grant leave 9 of 10 credits, asserted through the account page in the journey suite.
@@ -30,6 +35,8 @@ Files larger than 4 MiB, with the guarantee untouched.
 
 ### Fixed
 
+- **Stats chart readouts now reflow with the reader.** Resizing or increasing text to 200% keeps every sampled value inside its figure without horizontal scrolling.
+- **Every prerendered route resolves at its clean address.** Field notes and other nested pages no longer depend on a filename-shaped URL or a root-only alias.
 - **Live Checkout no longer inherits Stripe's Managed Payments default.** Cinder explicitly keeps standard Checkout so `CINDER.INK` remains the merchant relationship shown to the buyer. Adopting Link as merchant of record remains a deliberate tax, support, privacy, and terms decision rather than an account default.
 
 ### Notes
