@@ -11,11 +11,18 @@ const HERE = new URL(".", import.meta.url);
 const BREAKPOINTS = [
   { name: "mobile-320", width: 320, height: 568 },
   { name: "mobile-375", width: 375, height: 667 },
+  { name: "mobile-402", width: 402, height: 874 },
   { name: "mobile-440", width: 440, height: 956 },
   { name: "tablet-768", width: 768, height: 1024 },
   { name: "desktop-1440", width: 1440, height: 900 },
 ];
 const APPEARANCES = ["light", "dark"];
+const LARGE_TEXT_BREAKPOINTS = new Set([
+  "mobile-320",
+  "mobile-375",
+  "mobile-402",
+  "mobile-440",
+]);
 const ASSETS = new Map([
   ["/stats.css", ["site/stats.css", "text/css; charset=utf-8"]],
   ["/login.js", ["site/login.js", "application/javascript; charset=utf-8"]],
@@ -217,6 +224,33 @@ const assertLayout = async (page, label) => {
   assert.deepEqual(result.smallTargets, [], `${label}: interactive target is smaller than 48px`);
   assert.deepEqual(await orphanedBlocks(page), [], `${label}: a heading or paragraph ends on a single stranded word`);
 };
+
+
+const assertChartReadoutsFit = async (page, label) => {
+  const outside = await page.locator('figure[role="slider"]').evaluateAll((figures) =>
+    figures
+      .map((figure) => {
+        const field = figure.getBoundingClientRect();
+        const readout = figure.querySelector(".chart-readout")?.getBoundingClientRect();
+        return {
+          label: figure.getAttribute("aria-label"),
+          left: readout?.left ?? null,
+          right: readout?.right ?? null,
+          fieldLeft: field.left,
+          fieldRight: field.right,
+        };
+      })
+      .filter(
+        ({ left, right, fieldLeft, fieldRight }) =>
+          left === null || right === null || left < fieldLeft - 1 || right > fieldRight + 1,
+      ),
+  );
+  assert.deepEqual(outside, [], `${label}: a sampled chart readout leaves its own figure`);
+};
+
+const waitForReflow = (page) => page.evaluate(
+  () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+);
 
 
 // A heading or paragraph whose final laid-out line carries one stranded word is
@@ -425,12 +459,15 @@ try {
         navigationAllowed = true;
       }
 
-      // 200% text zoom at the narrowest supported width: same layout floor
-      // (no overflow, no clipping, 48px targets) must still hold.
-      if (breakpoint.name === "mobile-320") {
-        await page.addStyleTag({ content: "html { font-size: 200%; }" });
+      // Apply the scale after the authenticated dashboard has rendered. This
+      // catches positioning state that was correct at the initial font size but
+      // becomes stale once a current-value readout grows during reflow.
+      if (LARGE_TEXT_BREAKPOINTS.has(breakpoint.name)) {
+        const rootTextOverride = await page.addStyleTag({ content: "html { font-size: 200%; }" });
+        await waitForReflow(page);
+        await assertChartReadoutsFit(page, `${label} 200% text`);
         await assertLayout(page, `${label} 200% text`);
-        await page.addStyleTag({ content: "html { font-size: 100%; }" });
+        await rootTextOverride.evaluate((node) => node.remove());
       }
 
       if (breakpoint.name === "mobile-320" || breakpoint.name === "desktop-1440") {

@@ -99,6 +99,11 @@ const placeReadout = (readout, figure, marker) => {
   readout.style.left = `${Math.min(Math.max(pointX - box.width / 2, 0), Math.max(field.width - box.width, 0))}px`
 }
 
+// A root text-size change can widen the readout without changing the selected
+// marker. Observe both boxes so the saved `left` is always recomputed from the
+// current geometry, rather than from the font size at selection time.
+const chartReflowObservers = new WeakMap()
+
 const chart = (series) => {
   const figure = document.createElement("figure")
   const values = series.points.map((point) => point.value)
@@ -175,6 +180,14 @@ const chart = (series) => {
     figure.setAttribute("aria-valuetext", readout.textContent)
     placeReadout(readout, figure, marker)
   }
+
+  // Moving `left` changes position only, not either observed box's size, so
+  // this cannot create a ResizeObserver loop. Observe the readout itself for
+  // text-scale reflow and the figure for width changes from responsive layout.
+  const reflowObserver = new ResizeObserver(() => placeReadout(readout, figure, marker))
+  reflowObserver.observe(readout)
+  reflowObserver.observe(figure)
+  chartReflowObservers.set(figure, reflowObserver)
 
   // A tap emits pointerdown and pointerup and no pointermove at all, so a
   // hover-only handler leaves every phone unable to read a single value.
@@ -271,6 +284,9 @@ const renderRange = (payload) => {
     card.append(heading, value, context, chart(series), table(series))
     return card
   })
+  for (const figure of grid.querySelectorAll("figure")) {
+    chartReflowObservers.get(figure)?.disconnect()
+  }
   grid.replaceChildren(...cards)
   grid.setAttribute("aria-busy", "false")
   status.textContent = rangeLabel(payload.range)
