@@ -5,12 +5,14 @@
 	let {
 		current,
 		location,
+		accountLabel = 'Account',
 		title,
 		lede,
 		children
 	}: {
 		current: string;
 		location: string;
+		accountLabel?: 'Sign in' | 'Account';
 		title: string;
 		lede?: string;
 		children: Snippet;
@@ -18,7 +20,7 @@
 </script>
 
 <div class="min-h-dvh">
-	<DashboardHeader {current} {location} />
+	<DashboardHeader {current} {location} {accountLabel} />
 
 	<main id="main-content" class="bench mx-auto w-full max-w-3xl px-5 py-10" tabindex="-1">
 		<header class="max-w-2xl">

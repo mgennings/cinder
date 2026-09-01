@@ -25,6 +25,14 @@ test.describe('the Cinder dashboard shell', () => {
 		);
 	});
 
+	test('sign in is a first-class destination before Pro on the sending surface', async ({ page }) => {
+		await page.goto('/');
+
+		const destinations = nav(page).getByRole('link');
+		await expect(destinations).toHaveText(['Send', 'Sign in', 'Cinder Pro']);
+		await expect(destinations.nth(1)).toHaveAttribute('href', '/signin');
+	});
+
 	test('the keyboard path starts with escape, home, then the destinations', async ({ page }) => {
 		await page.goto('/account');
 
@@ -32,8 +40,8 @@ test.describe('the Cinder dashboard shell', () => {
 		const path = [
 			page.getByRole('banner').getByRole('link', { name: 'Cinder home' }),
 			nav(page).getByRole('link', { name: 'Send' }),
-			nav(page).getByRole('link', { name: 'Cinder Pro' }),
-			nav(page).getByRole('link', { name: 'Account' })
+			nav(page).getByRole('link', { name: 'Account' }),
+			nav(page).getByRole('link', { name: 'Cinder Pro' })
 		];
 
 		await skip.focus();

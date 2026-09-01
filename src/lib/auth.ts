@@ -63,6 +63,9 @@ export function rememberSelectedProvider(provider: Provider): void {
 
 export const identityConfigured = () => Boolean(HOSTED_UI && CLIENT_ID && API_BASE);
 
+/** True only in the explicit local review build started by scripts/dev-review.mjs. */
+export const reviewAccessEnabled = () => DEV_INSTANT_SESSION;
+
 const redirectUri = () => `${location.origin}/account`;
 
 // The crypto layer's encoder rather than a third hand-rolled copy of the

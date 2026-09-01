@@ -35,6 +35,39 @@ describe('video review feature flag', () => {
 		expect(videoEnabledForSession()).toBe(true);
 	});
 
+	it('captures the canonical ?video=on link and preserves unrelated URL state', async () => {
+		history.replaceState(null, '', '/?campaign=friend&video=on#keep-me');
+
+		expect(videoEnabledForSession()).toBe(true);
+		await Promise.resolve();
+		expect(location.pathname + location.search + location.hash).toBe('/?campaign=friend#keep-me');
+
+		history.replaceState(null, '', '/');
+		expect(videoEnabledForSession()).toBe(true);
+	});
+
+	it('accepts the earlier #video-on spelling without making it canonical', async () => {
+		history.replaceState(null, '', '/#video-on');
+
+		expect(videoEnabledForSession()).toBe(true);
+		await Promise.resolve();
+		expect(location.pathname + location.search + location.hash).toBe('/');
+	});
+
+	it('lets the same tab explicitly turn video back off', async () => {
+		history.replaceState(null, '', '/?video=on');
+		expect(videoEnabledForSession()).toBe(true);
+		await Promise.resolve();
+
+		history.replaceState(null, '', '/?video=off');
+		expect(videoEnabledForSession()).toBe(false);
+		await Promise.resolve();
+		expect(location.pathname + location.search + location.hash).toBe('/');
+
+		history.replaceState(null, '', '/');
+		expect(videoEnabledForSession()).toBe(false);
+	});
+
 	it('does not capture or erase an unrelated fragment', () => {
 		history.replaceState(null, '', '/#something-else');
 

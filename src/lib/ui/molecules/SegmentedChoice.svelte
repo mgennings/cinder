@@ -17,7 +17,7 @@
 	} = $props();
 </script>
 
-<fieldset>
+<fieldset class="min-w-0">
 	<legend class="sr-only">{legend}</legend>
 	<div class="seg">
 		{#each options as opt (opt.value)}

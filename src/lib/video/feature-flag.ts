@@ -2,33 +2,43 @@ import { replaceState } from '$app/navigation';
 
 const VIDEO_SESSION_KEY = 'cinder.video-review';
 
-/**
- * Captures the hidden video review fragment for this browser tab.
- *
- * The URL is cleaned before storage is touched so the review switch never
- * remains in copied links, screenshots, or browser history.
- */
+/** Capture a one-shot video review URL into this browser tab. */
 export function videoEnabledForSession(): boolean {
 	if (typeof window === 'undefined') return false;
-	if (import.meta.env.VITE_VIDEO_REVIEW_DEFAULT === '1') return true;
 
-	const captured = new URLSearchParams(location.hash.slice(1)).get('video') === 'on';
-	if (captured) {
-		const cleanUrl = location.pathname + location.search;
+	const url = new URL(location.href);
+	const fragment = new URLSearchParams(url.hash.slice(1));
+	const legacyFragment = url.hash === '#video-on';
+	const fragmentRequest = fragment.get('video');
+	const requested = url.searchParams.get('video') ?? fragmentRequest ?? (legacyFragment ? 'on' : null);
+
+	if (requested === 'on' || requested === 'off') {
+		url.searchParams.delete('video');
+		if (legacyFragment) url.hash = '';
+		else if (fragmentRequest) {
+			fragment.delete('video');
+			url.hash = fragment.toString();
+		}
+		const cleanUrl = url.pathname + url.search + url.hash;
 		// Initial afterNavigate callbacks run while SvelteKit is still completing
 		// hydration. The next microtask is the first moment its router accepts a
-		// replaceState call, and still clears the fragment in the same turn.
+		// replaceState call, and still clears the switch in the same turn.
 		queueMicrotask(() => replaceState(cleanUrl, {}));
 		try {
-			sessionStorage.setItem(VIDEO_SESSION_KEY, 'on');
+			sessionStorage.setItem(VIDEO_SESSION_KEY, requested);
 		} catch {
-			return true;
+			return requested === 'on';
 		}
+		return requested === 'on';
 	}
 
 	try {
-		return captured || sessionStorage.getItem(VIDEO_SESSION_KEY) === 'on';
+		const stored = sessionStorage.getItem(VIDEO_SESSION_KEY);
+		if (stored === 'on') return true;
+		if (stored === 'off') return false;
 	} catch {
-		return captured;
+		// Storage is optional. The build default still works without it.
 	}
+
+	return import.meta.env.VITE_VIDEO_REVIEW_DEFAULT === '1';
 }

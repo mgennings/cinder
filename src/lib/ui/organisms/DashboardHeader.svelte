@@ -2,13 +2,21 @@
 	import Button from '../atoms/Button.svelte';
 	import Wordmark from '../atoms/Wordmark.svelte';
 
-	let { current, location }: { current: string; location: string } = $props();
+	let {
+		current,
+		location,
+		accountLabel = 'Account'
+	}: {
+		current: string;
+		location: string;
+		accountLabel?: 'Sign in' | 'Account';
+	} = $props();
 
-	const destinations = [
+	const destinations = $derived([
 		{ href: '/', label: 'Send' },
-		{ href: '/pro', label: 'Cinder Pro' },
-		{ href: '/account', label: 'Account' }
-	];
+		{ href: accountLabel === 'Sign in' ? '/signin' : '/account', label: accountLabel },
+		{ href: '/pro', label: 'Cinder Pro' }
+	]);
 </script>
 
 <header class="dashboard-header">

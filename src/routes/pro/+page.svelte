@@ -20,7 +20,13 @@
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
-	import { startCheckout, entitlement, sessionState, identityConfigured } from '$lib/auth';
+	import {
+		startCheckout,
+		entitlement,
+		sessionState,
+		identityConfigured,
+		reviewAccessEnabled
+	} from '$lib/auth';
 	import SignInPanel from '$lib/ui/organisms/SignInPanel.svelte';
 	import { MAX_FILE_BYTES, MAX_TRANSFER_BYTES } from '$lib/crypto/file-crypto';
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
@@ -33,7 +39,7 @@
 	// There is no 'owned' state any more, and its absence is the model: credits
 	// run down, so the buy button is never the wrong thing to show. What changes
 	// with a balance is the sentence next to it, not whether it exists.
-	type State = 'loading' | 'signed-out' | 'expired' | 'ready' | 'unavailable';
+	type State = 'loading' | 'signed-out' | 'expired' | 'ready' | 'review' | 'unavailable';
 
 	let view = $state<State>('loading');
 	let credits = $state(0);
@@ -49,6 +55,7 @@
 	const maxProLabel = `${Math.round(MAX_TRANSFER_BYTES / (1024 * 1024))} MiB`;
 
 	const PRICE = PRO_PRICE;
+	const reviewAccess = reviewAccessEnabled();
 
 	onMount(async () => {
 		if (!identityConfigured()) {
@@ -67,6 +74,11 @@
 				session === 'expired'
 					? 'That session ended. Sign in again to buy Cinder Pro.'
 					: 'Sign in to buy Cinder Pro.';
+			return;
+		}
+		if (reviewAccess) {
+			view = 'review';
+			announcement = 'Review access is active. Stripe and credits are bypassed in this build.';
 			return;
 		}
 		credits = (await entitlement()).credits;
@@ -120,6 +132,7 @@
 <DashboardPage
 	current="/pro"
 	location="Cinder Pro"
+	accountLabel={view === 'ready' || view === 'review' ? 'Account' : 'Sign in'}
 	title="Cinder Pro"
 	lede={`${PRICE} for ${PRO_CREDITS} large sends, each one up to the ${maxProLabel} ceiling. Not a subscription, not a plan, not a renewal. The credits sit there until you use them, and anything under ${freeLabel} stays free forever, with no account.`}
 >
@@ -162,6 +175,15 @@
 			     the pay point, ready to buy, instead of landing on /account with the
 			     thing they wanted two clicks away. -->
 			<SignInPanel verb="Continue" returnTo="/pro" onstatus={(s) => (announcement = s)} />
+		</section>
+	{:else if view === 'review'}
+		<section in:fade={{ duration: dur(200) }} aria-labelledby="review-heading" class="mt-6">
+			<h2 id="review-heading" class="text-base font-semibold text-body">Review access is active</h2>
+			<p class="mt-2 max-w-xl text-sm leading-relaxed text-mist text-pretty">
+				This signed development session bypasses Stripe and credit spending. It still asks the local
+				identity service for a server-verified capability before a video can leave this browser.
+			</p>
+			<Button class="mt-4 px-5" variant="ember" href="/?mode=video">Send a video</Button>
 		</section>
 	{:else}
 		<section in:fade={{ duration: dur(200) }} aria-labelledby="purchase-heading" class="mt-6">

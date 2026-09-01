@@ -108,7 +108,7 @@
 	};
 </script>
 
-<Card as="section" class="p-6">
+<Card as="section" class="p-[clamp(16px,6.4vw,24px)]">
 	<SegmentedChoice
 		legend="What are you sending?"
 		name="mode"

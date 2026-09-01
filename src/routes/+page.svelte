@@ -3,6 +3,7 @@
 	// the orchestration between this browser's crypto and the server that will
 	// hold the ciphertext. Every pixel below it belongs to a component.
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { afterNavigate } from '$app/navigation';
 	import { fly } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
@@ -47,7 +48,13 @@
 		VideoTooLargeError,
 		type UploadState
 	} from '$lib/video/types';
-	import { entitlement, signedIn, identityConfigured } from '$lib/auth';
+	import {
+		entitlement,
+		sessionState,
+		identityConfigured,
+		reviewAccessEnabled,
+		type SessionState
+	} from '$lib/auth';
 	import { PRO_PRICE, PRO_CREDITS } from '$lib/pro';
 	import Merkaba from '$lib/ui/atoms/Merkaba.svelte';
 	import Wordmark from '$lib/ui/atoms/Wordmark.svelte';
@@ -56,6 +63,7 @@
 	import VideoSendForm from '$lib/ui/organisms/VideoSendForm.svelte';
 	import LinkReadyPanel from '$lib/ui/organisms/LinkReadyPanel.svelte';
 	import SiteFooter from '$lib/ui/organisms/SiteFooter.svelte';
+	import DashboardHeader from '$lib/ui/organisms/DashboardHeader.svelte';
 	import { humanSize } from '$lib/ui/format';
 
 	let mode = $state('note');
@@ -79,12 +87,37 @@
 	// API — and it must not be shown as zero: telling someone they have none when
 	// we never asked is worse than saying nothing.
 	let credits = $state<number | null>(null);
+	let accountState = $state<SessionState | 'loading'>('loading');
+	const reviewAccess = reviewAccessEnabled();
+	const transportFixtureAccess = Boolean(import.meta.env.VITE_DEV_CAPABILITY_GRANT);
 
 	const readCredits = async () => {
-		credits = identityConfigured() && signedIn() ? (await entitlement()).credits : null;
+		if (transportFixtureAccess) {
+			accountState = 'live';
+			credits = 0;
+			return;
+		}
+		accountState = identityConfigured() ? await sessionState() : 'none';
+		credits = accountState === 'live' ? (await entitlement()).credits : null;
 	};
 	afterNavigate(() => {
+		const search = new URLSearchParams(location.search);
+		const fragment = new URLSearchParams(location.hash.slice(1));
+		const requestedVideo =
+			search.get('video') === 'on' ||
+			fragment.get('video') === 'on' ||
+			location.hash === '#video-on';
 		videoEnabled = videoEnabledForSession();
+		if (
+			videoEnabled &&
+			(import.meta.env.VITE_VIDEO_REVIEW_DEFAULT === '1' ||
+				requestedVideo ||
+				search.get('mode') === 'video')
+		) {
+			mode = 'video';
+		} else if (!videoEnabled && mode === 'video') {
+			mode = 'note';
+		}
 	});
 	onMount(() => {
 		void readCredits();
@@ -445,6 +478,12 @@
 	/>
 </svelte:head>
 
+<DashboardHeader
+	current="/"
+	location="Send"
+	accountLabel={accountState === 'live' ? 'Account' : 'Sign in'}
+/>
+
 <VaultPage>
 	{#snippet header()}
 		<!-- The merkaba as a crest: two counter-rotating tetrahedra = two-factor, made visible. -->
@@ -473,7 +512,9 @@
 				     honestly say "this browser only". -->
 				<p class="mt-3 text-center text-xs text-ghost">
 					From this browser only:
-					<a class="underline underline-offset-2" href={`/video/${videoLocator}`}>check on it</a>,
+					<a class="underline underline-offset-2" href={resolve(`/video/${videoLocator}`)}
+						>check on it</a
+					>,
 					add time while it is being watched, or destroy it before anyone opens it.
 				</p>
 			{/if}
@@ -505,6 +546,8 @@
 					file={videoFile}
 					segments={videoSegments}
 					{credits}
+					{accountState}
+					{reviewAccess}
 					bind:prepaid={videoPrepaid}
 					bind:ttl
 					busy={videoBusy}
@@ -522,5 +565,5 @@
 		</SendComposer>
 	{/if}
 
-	<SiteFooter {credits} />
+	<SiteFooter {credits} {reviewAccess} />
 </VaultPage>

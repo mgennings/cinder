@@ -8,6 +8,7 @@
 	// expiry, what "gone" means, and the screen-recording limit — is on screen
 	// BEFORE anything encrypts. The button that starts encryption sits below it.
 	import { fade } from 'svelte/transition';
+	import { resolve } from '$app/paths';
 	import {
 		SEGMENT_BYTES,
 		SEND_COST_CREDITS,
@@ -16,6 +17,7 @@
 		type UploadState
 	} from '$lib/video/types';
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
+	import { identityConfigured, type SessionState } from '$lib/auth';
 	import Button from '../atoms/Button.svelte';
 	import QuietLink from '../atoms/QuietLink.svelte';
 	import Alert from '../atoms/Alert.svelte';
@@ -24,12 +26,16 @@
 	import FileInput from '../atoms/FileInput.svelte';
 	import SegmentedChoice from '../molecules/SegmentedChoice.svelte';
 	import PhaseProgress from '../molecules/PhaseProgress.svelte';
+	import SignInPanel from './SignInPanel.svelte';
+	import LiveRegion from '../atoms/LiveRegion.svelte';
 	import { humanSize } from '../format';
 
 	let {
 		file,
 		segments,
 		credits,
+		accountState,
+		reviewAccess = false,
 		prepaid = $bindable('0'),
 		ttl = $bindable('86400'),
 		busy,
@@ -48,6 +54,9 @@
 		segments: number;
 		/** null means "we have no idea" — signed out, or a build with no identity API. */
 		credits: number | null;
+		accountState: SessionState | 'loading';
+		/** Explicit local review authority. Never a purchased balance. */
+		reviewAccess?: boolean;
 		/** Prepaid extensions for the recipient: '0' | '2' | '4' | '8'. */
 		prepaid?: string;
 		ttl?: string;
@@ -97,6 +106,7 @@
 	// The camera path: the same native input, with `capture` so a phone opens
 	// the camera directly. No custom recorder — the platform's is the honest one.
 	let recordInput: HTMLInputElement | null = $state(null);
+	let signInStatus = $state('');
 </script>
 
 <!-- The story before the control. Someone arriving here has never used this
@@ -110,6 +120,37 @@
 	</p>
 </div>
 
+{#if accountState === 'loading'}
+	<p class="mt-6 text-sm text-mist">Checking this browser…</p>
+{:else if accountState !== 'live'}
+	<section class="video-account-preflight" aria-labelledby="video-account-heading">
+		<div>
+			<p class="font-mono text-xs font-bold tracking-[0.14em] text-ember-ink uppercase">
+				Account first
+			</p>
+			<h2 id="video-account-heading" class="mt-2 text-lg font-semibold text-body text-balance">
+				Sign in before choosing the&nbsp;video.
+			</h2>
+			<p class="mt-2 text-sm leading-relaxed text-mist text-pretty">
+				The provider trip would discard a video you already picked. Sign in now and Cinder brings
+				you directly back to Video. Your account is used for access and credits, never attached to
+				the video or its link.
+			</p>
+		</div>
+		<div>
+			<LiveRegion message={signInStatus} />
+			{#if identityConfigured()}
+				<SignInPanel
+					verb="Continue"
+					returnTo="/?mode=video"
+					onstatus={(sentence) => (signInStatus = sentence)}
+				/>
+			{:else}
+				<p class="text-sm leading-relaxed text-mist">Video accounts are not available in this build.</p>
+			{/if}
+		</div>
+	</section>
+{:else}
 <div class="mt-6">
 	<label for="video-input" class="mb-2 block text-sm text-mist"> Choose a video </label>
 	<FileInput id="video-input" accept="video/*" onchange={onpick} disabled={busy} />
@@ -160,7 +201,7 @@
 	<Select id="video-ttl" options={ttlOptions} bind:value={ttl} disabled={busy} />
 </div>
 
-<fieldset class="mt-4" disabled={busy}>
+<fieldset class="mt-4 min-w-0" disabled={busy}>
 	<div class="mb-2 text-sm text-mist">Prepay extra watch time for them</div>
 	<SegmentedChoice
 		legend="Prepaid extra watch time"
@@ -170,7 +211,11 @@
 	/>
 	<Disclosure summary="What is prepaid time?" class="mt-1">
 		Extra minutes your person can add with one tap, with no account and no card of their own.
-		Each {extensionMinutes}-minute extension costs you 1 credit now, whether or not they use it.
+		{#if reviewAccess}
+			This review build grants those minutes without spending credits.
+		{:else}
+			Each {extensionMinutes}-minute extension costs you 1 credit now, whether or not they use it.
+		{/if}
 	</Disclosure>
 </fieldset>
 
@@ -183,32 +228,29 @@
 	     sit one tap away under the question a person would actually ask. Do not
 	     quietly drop a fact to make this shorter; move it under a question. -->
 	<div in:fade={{ duration: dur(200) }} class="mt-4">
-		<p class="text-sm text-body">
-			{totalCredits} credits{#if Number(prepaid) > 0}, including {prepaid} prepaid extensions{/if}{credits ===
-			null
-				? ''
-				: `, out of the ${creditWord(credits)} on this account`}.
-		</p>
+		{#if reviewAccess}
+			<p class="text-sm text-body">
+				Review access is active. Signed development capabilities do not spend credits.
+			</p>
+		{:else}
+			<p class="text-sm text-body">
+				{totalCredits} credits{#if Number(prepaid) > 0}, including {prepaid} prepaid extensions{/if}{credits ===
+				null
+					? ''
+					: `, out of the ${creditWord(credits)} on this account`}.
+			</p>
+		{/if}
 		<!-- The door to credits, on the surface that spends them. It used to
 		     appear ONLY at a balance of exactly zero, so a signed-out sender —
 		     the common case, since video is the first thing here that costs
 		     anything — read a price with no way to pay it and no account named.
 		     Matt hit exactly that on 2026-09-01 and could not find credits at
 		     all. Anyone who cannot pay for this send now gets the next step. -->
-		{#if credits === null}
-			<p class="mt-1 text-xs leading-relaxed text-mist text-pretty">
-				Credits live on an account, so this needs one. It is an opaque number from Apple or
-				Google, no email and no name.
-				<a class="underline underline-offset-2" href="/signin">Sign in</a>
-				or
-				<a class="underline underline-offset-2" href="/pro">see what Pro costs</a>. Notes and
-				files under 4 MiB stay free, with no account, always.
-			</p>
-		{:else if credits < totalCredits}
+		{#if !reviewAccess && credits !== null && credits < totalCredits}
 			<p class="mt-1 text-xs leading-relaxed text-mist text-pretty">
 				This send needs {totalCredits} and the account has {creditWord(credits)}. {PRO_PRICE} adds
 				{PRO_CREDITS}.
-				<a class="underline underline-offset-2" href="/pro">Top up</a>.
+				<a class="underline underline-offset-2" href={resolve('/pro')}>Top up</a>.
 			</p>
 		{/if}
 		<p class="mt-1 text-xs leading-relaxed text-ghost text-pretty">
@@ -245,7 +287,7 @@
 		<Alert class="mt-3">
 			{error}
 			{#if needsCredits}
-				<a class="underline underline-offset-2" href="/pro">See what Pro costs</a>.
+				<a class="underline underline-offset-2" href={resolve('/pro')}>See what Pro costs</a>.
 			{/if}
 		</Alert>
 	</div>
@@ -290,3 +332,21 @@
 		Create one-time link
 	</Button>
 {/if}
+{/if}
+
+<style>
+	.video-account-preflight {
+		display: grid;
+		gap: 1.5rem;
+		margin-top: 1.5rem;
+		border-block: 1px solid color-mix(in oklab, var(--color-line) 60%, transparent);
+		padding-block: 1.5rem;
+	}
+
+	@media (min-width: 40rem) {
+		.video-account-preflight {
+			grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.85fr);
+			align-items: center;
+		}
+	}
+</style>

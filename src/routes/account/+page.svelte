@@ -12,6 +12,7 @@
 	// outage with an error page nobody can act on.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import {
 		completeSignIn,
 		signOut,
@@ -19,6 +20,7 @@
 		entitlement,
 		sessionState,
 		identityConfigured,
+		reviewAccessEnabled,
 		takeReturnTo,
 		peekReturnTo
 	} from '$lib/auth';
@@ -41,15 +43,18 @@
 	// here, so a screen reader hears the outcome rather than inferring it from a
 	// button that quietly changed label.
 	let announcement = $state('');
+	const reviewAccess = reviewAccessEnabled();
 
 	async function refresh() {
 		const session = await sessionState();
 		if (session === 'live') {
 			credits = (await entitlement()).credits;
 			view = 'signed-in';
-			announcement = credits
-				? `Signed in. ${creditWord(credits)} left.`
-				: 'Signed in. No credits on this account.';
+			announcement = reviewAccess
+				? 'Review access is active. Development sends do not spend credits.'
+				: credits
+					? `Signed in. ${creditWord(credits)} left.`
+					: 'Signed in. No credits on this account.';
 			return;
 		}
 		credits = 0;
@@ -174,7 +179,9 @@
 	current="/account"
 	location="Account"
 	title="An account, and nothing else"
-	lede="Sending a note or a file needs no account, and it never will. This account exists only to honor a Cinder Pro balance on the browser you are using now, and on the next one. Nothing else belongs here."
+	lede={reviewAccess
+		? 'This browser has a signed local review session. It can exercise paid paths without Stripe or a pretend credit balance.'
+		: 'Sending a note or a file needs no account, and it never will. This account exists only to honor a Cinder Pro balance on the browser you are using now, and on the next one. Nothing else belongs here.'}
 >
 	<!-- The announcement is the same information the buttons carry, said once,
 	     for anyone who is not looking at the buttons. -->
@@ -212,18 +219,23 @@
 			<SignInPanel onstatus={(s) => (announcement = s)} />
 		{:else}
 			<h2 class="font-semibold">
-				{credits ? `${creditWord(credits)} left` : 'Signed in'}
+				{reviewAccess ? 'Review access' : credits ? `${creditWord(credits)} left` : 'Signed in'}
 			</h2>
 			<!-- The balance is the whole reason this screen exists, so it is the
 			     heading rather than a detail underneath one. A zero balance says
 			     what still works before it says what to do about it: running out
 			     is the expected end of a purchase, not a broken product. -->
 			<p class="mt-2 text-sm leading-relaxed text-mist">
-				{credits
-					? `One credit sends one large file. That count and the date you last bought are the only things here besides a hash.`
-					: `No credits on this account. Sending under the free size limit still works, free, forever — ${PRO_PRICE} adds ${PRO_CREDITS} large sends when you want them.`}
+				{reviewAccess
+					? 'This is a signed development session, not a purchased balance. It mints server-verified capabilities without spending credits, so the video path can be tested end to end.'
+					: credits
+						? `One credit sends one large file. That count and the date you last bought are the only things here besides a hash.`
+						: `No credits on this account. Sending under the free size limit still works, free, forever — ${PRO_PRICE} adds ${PRO_CREDITS} large sends when you want them.`}
 			</p>
 			<div class="mt-4 flex flex-col gap-2 sm:flex-row">
+				{#if reviewAccess}
+					<Button variant="ember" href="/?mode=video" class="px-5">Send a video</Button>
+				{:else}
 				<!-- Signed in with nothing bought is otherwise a dead end: the page
 				     states the absence of a purchase and offers no way to make one.
 				     The link goes to the pay point, where the price and what Stripe
@@ -234,8 +246,9 @@
 				<Button variant="ember" href="/pro" class="px-5">
 					{credits ? 'Add more credits' : 'Get Cinder Pro'}
 				</Button>
+				{/if}
 				<Button class="px-5" onclick={handleSignOut}>Sign out</Button>
-				{#if confirmingDelete}
+				{#if !reviewAccess && confirmingDelete}
 					<!-- A second, deliberate press rather than a browser confirm dialog:
 					     the consequence is permanent and deserves a sentence, which a
 					     native dialog cannot style or a screen reader read in context. -->
@@ -245,13 +258,13 @@
 					<Button class="px-5" onclick={() => (confirmingDelete = false)}>
 						Keep my account
 					</Button>
-				{:else}
+				{:else if !reviewAccess}
 					<Button class="px-5" onclick={() => (confirmingDelete = true)}>
 						Delete my account
 					</Button>
 				{/if}
 			</div>
-			{#if confirmingDelete}
+			{#if !reviewAccess && confirmingDelete}
 				<p class="mt-3 text-sm leading-relaxed text-mist">
 					This deletes any credits you have left and the account itself. There is no email on file, so
 					there is no way to restore it afterward.
@@ -266,7 +279,7 @@
 	<TruthList title="What that means" rows={truths} />
 
 	<p class="mt-10 text-sm text-mist">
-		The rest of the threat model is on <a class="text-ember-ink underline" href="/security"
+		The rest of the threat model is on <a class="text-ember-ink underline" href={resolve('/security')}
 			>the security page</a
 		>.
 	</p>

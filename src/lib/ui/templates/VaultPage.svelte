@@ -20,8 +20,9 @@
 </script>
 
 <main
+	id="main-content"
 	{@attach terrain()}
-	class="vault-glow flex min-h-screen flex-col items-center justify-center px-5 py-16"
+	class="vault-glow flex min-h-screen flex-col items-center justify-center px-[clamp(16px,5.33vw,20px)] py-16"
 >
 	<div class="relative w-full max-w-lg">
 		{#if header}

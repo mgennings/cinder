@@ -639,6 +639,7 @@ body::before {
 	   screen readers, and forms all behave without reinvention. */
 	.seg {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 0.25rem;
 		padding: 0.25rem;
 		border: 1px solid var(--color-line);
@@ -647,7 +648,8 @@ body::before {
 		box-shadow: var(--shadow-inset);
 	}
 	.seg-option {
-		flex: 1;
+		flex: 1 1 4rem;
+		min-width: 0;
 		position: relative;
 		display: flex;
 		align-items: center;

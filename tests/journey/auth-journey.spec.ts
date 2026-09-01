@@ -73,6 +73,39 @@ test.describe('the doors', () => {
 });
 
 test.describe('where the person ends up', () => {
+	test('video asks for sign-in before file selection and returns directly to Video', async ({
+		page
+	}) => {
+		await page.goto('/#video=on');
+		await page.getByRole('radio', { name: /^video$/i }).check();
+
+		await expect(page.getByRole('heading', { name: /sign in before choosing the video/i })).toBeVisible();
+		await expect(page.locator('#video-input')).toHaveCount(0);
+
+		await page.getByRole('button', { name: /continue with apple/i }).click();
+		await expect(page).toHaveURL(/\/?mode=video$/, { timeout: 30_000 });
+		await expect(page.getByRole('radio', { name: /^video$/i })).toBeChecked();
+		await expect(page.locator('#video-input')).toBeVisible();
+
+		// Fieldsets have a browser min-content width by default. At 200% text
+		// that used to widen the segmented controls inside an overflow-hidden
+		// card, so the document itself reported no overflow while half the
+		// controls were visibly gone.
+		await page.setViewportSize({ width: 375, height: 667 });
+		await page.evaluate(() => document.documentElement.style.setProperty('font-size', '200%'));
+		const layout = await page.evaluate(() => {
+			const card = document.querySelector<HTMLElement>('.card')!;
+			const clippedControls = [...card.querySelectorAll<HTMLElement>('fieldset, .seg, .field')].filter(
+				(element) => element.scrollWidth > element.clientWidth + 1
+			);
+			return {
+				cardOverflow: card.scrollWidth - card.clientWidth,
+				clippedControls: clippedControls.length
+			};
+		});
+		expect(layout).toEqual({ cardOverflow: 0, clippedControls: 0 });
+	});
+
 	test('signing in from the pay point comes back to the pay point', async ({ page }) => {
 		await page.goto('/pro');
 		await page.getByRole('button', { name: APPLE }).click();

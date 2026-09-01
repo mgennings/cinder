@@ -24,8 +24,9 @@ describe('the explicit local-review session', () => {
 				headers: { 'content-type': 'application/json' }
 			})
 		);
-		const { sessionState, signedIn } = await loadAuth(true);
+		const { reviewAccessEnabled, sessionState, signedIn } = await loadAuth(true);
 
+		expect(reviewAccessEnabled()).toBe(true);
 		await expect(sessionState()).resolves.toBe('live');
 		expect(signedIn()).toBe(true);
 		expect(request).toHaveBeenCalledOnce();
@@ -34,8 +35,9 @@ describe('the explicit local-review session', () => {
 
 	it('does nothing when an ordinary build has not opted in', async () => {
 		const request = vi.spyOn(globalThis, 'fetch');
-		const { sessionState, signedIn } = await loadAuth(false);
+		const { reviewAccessEnabled, sessionState, signedIn } = await loadAuth(false);
 
+		expect(reviewAccessEnabled()).toBe(false);
 		await expect(sessionState()).resolves.toBe('none');
 		expect(signedIn()).toBe(false);
 		expect(request).not.toHaveBeenCalled();

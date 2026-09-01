@@ -113,7 +113,7 @@
 <main class="auth-arrival">
 	<section class="auth-panel" aria-label={title}>
 		<div class="auth-panel-inner">
-			<Wordmark />
+			<Wordmark mark />
 
 			<LiveRegion message={announcement} />
 
