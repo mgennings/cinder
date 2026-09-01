@@ -28,6 +28,7 @@ import { bytesToBase64Url } from './crypto/codec';
 const HOSTED_UI = import.meta.env.VITE_IDENTITY_HOSTED_UI ?? '';
 const CLIENT_ID = import.meta.env.VITE_IDENTITY_CLIENT_ID ?? '';
 const API_BASE = import.meta.env.VITE_IDENTITY_API_BASE ?? '';
+const DEV_INSTANT_SESSION = import.meta.env.VITE_DEV_INSTANT_SESSION === '1';
 
 // Cognito's provider names, exactly as template.yaml declares them.
 export type Provider = 'SignInWithApple' | 'Google';
@@ -320,11 +321,28 @@ async function reach(input: URL | string, init?: RequestInit): Promise<Response 
 	}
 }
 
+// Local review can ask the local identity server for a signed session without
+// crossing Apple or Google. The server owns the switch and the credential: this
+// flag can only ask, never mint. Production has no matching endpoint.
+async function instantDevSession(): Promise<Tokens | null> {
+	if (!DEV_INSTANT_SESSION || !API_BASE) return null;
+
+	const res = await reach(`${API_BASE}/dev/session`, { method: 'POST' });
+	if (!res?.ok) return null;
+
+	const body = (await res.json()) as { id_token?: string; refresh_token?: string };
+	if (!body.id_token || !body.refresh_token) return null;
+
+	const tokens = { idToken: body.id_token, refreshToken: body.refresh_token };
+	sessionStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+	return tokens;
+}
+
 // browser that decides whether a session is still live, and a second copy of
 // that decision is a second thing to get wrong.
 export async function freshIdToken(): Promise<string | null> {
 	const tokens = readTokens();
-	if (!tokens) return null;
+	if (!tokens) return (await instantDevSession())?.idToken ?? null;
 
 	const res = await reach(new URL('/oauth2/token', HOSTED_UI), {
 		method: 'POST',
@@ -367,10 +385,11 @@ export async function freshIdToken(): Promise<string | null> {
 export type SessionState = 'none' | 'live' | 'expired';
 
 export async function sessionState(): Promise<SessionState> {
-	if (!signedIn()) return 'none';
+	const hadSession = signedIn();
 	// freshIdToken clears storage itself when the origin refuses, so by the time
 	// this returns, `signedIn()` already agrees with the answer given here.
-	return (await freshIdToken()) ? 'live' : 'expired';
+	if (await freshIdToken()) return 'live';
+	return hadSession ? 'expired' : 'none';
 }
 
 // The one question this whole layer exists to answer, and under prepaid credits

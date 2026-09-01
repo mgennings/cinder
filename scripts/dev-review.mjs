@@ -130,6 +130,7 @@ try {
 
 	start('Cinder identity', 'node', ['./scripts/dev-identity.mjs'], {
 		CINDER_DEV_ENTITLEMENT_BYPASS: '1',
+		CINDER_DEV_INSTANT_SESSION: '1',
 		DEV_IDENTITY_PUBLIC_ORIGIN: origins.identity,
 		DEV_WEB_ORIGIN: origins.web
 	});
@@ -141,13 +142,14 @@ try {
 		VITE_VIDEO_REVIEW_DEFAULT: '1',
 		VITE_IDENTITY_API_BASE: origins.identity,
 		VITE_IDENTITY_HOSTED_UI: origins.identity,
-		VITE_IDENTITY_CLIENT_ID: 'dev-cinder-client'
+		VITE_IDENTITY_CLIENT_ID: 'dev-cinder-client',
+		VITE_DEV_INSTANT_SESSION: '1'
 	});
 	await waitForPort(5190);
 
 	console.log(`\n${phone ? 'Phone' : 'Local'} review is ready:`);
 	console.log(`  ${origins.web}/`);
-	console.log('Sign in through the normal account journey. Paid capabilities mint without credits.');
+	console.log('A signed local session is created automatically. Paid capabilities mint without credits.');
 	console.log('Press Ctrl-C to stop the complete stack.\n');
 } catch (error) {
 	console.error(error instanceof Error ? error.message : error);

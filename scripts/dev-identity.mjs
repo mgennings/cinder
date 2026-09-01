@@ -65,6 +65,7 @@ const PRODUCT = 'cinder';
 // production topology.
 const CAPABILITY_SECRET = process.env.CAPABILITY_SECRET || 'dev-capability-secret';
 const DEVELOPMENT_ENTITLEMENT_BYPASS = process.env.CINDER_DEV_ENTITLEMENT_BYPASS === '1';
+const DEVELOPMENT_INSTANT_SESSION = process.env.CINDER_DEV_INSTANT_SESSION === '1';
 
 // Two modes, and which one is running is printed at startup so it is never a
 // guess. DOUBLE is the default: a local stand-in for the hosted checkout page,
@@ -127,6 +128,12 @@ function idToken(sub) {
 const codes = new Map(); // code -> { challenge, sub }
 const sessions = new Map(); // refresh token -> sub
 const deleted = new Set(); // subs whose "pool record" is gone
+
+const newSession = (sub = randomUUID()) => {
+	const refresh = randomBytes(24).toString('base64url');
+	sessions.set(refresh, sub);
+	return { id_token: idToken(sub), refresh_token: refresh };
+};
 
 const s256 = (v) => createHash('sha256').update(v, 'utf8').digest('base64url');
 
@@ -243,6 +250,18 @@ const server = createServer(async (req, res) => {
 			return send(res, 200, { 'content-type': 'application/json' }, JSON.stringify(JWKS));
 		}
 
+		// Deliberately absent unless the local harness was started in review mode.
+		// This issues a normal signed dev token; every capability still crosses the
+		// shipped verifier before the entitlement bypass can skip a credit spend.
+		if (req.method === 'POST' && path === '/dev/session' && DEVELOPMENT_INSTANT_SESSION) {
+			return send(
+				res,
+				200,
+				{ 'content-type': 'application/json' },
+				JSON.stringify(newSession())
+			);
+		}
+
 		// The hosted UI's authorize step. A real one shows Apple or Google; this
 		// one allocates a fresh account and comes straight back, so every run of
 		// the journey starts from an account that has never paid.
@@ -267,13 +286,11 @@ const server = createServer(async (req, res) => {
 				if (!entry || entry.challenge !== s256(form.get('code_verifier') || '')) {
 					return send(res, 400, {}, '{"error":"invalid_grant"}');
 				}
-				const refresh = randomBytes(24).toString('base64url');
-				sessions.set(refresh, entry.sub);
 				return send(
 					res,
 					200,
 					{ 'content-type': 'application/json' },
-					JSON.stringify({ id_token: idToken(entry.sub), refresh_token: refresh })
+					JSON.stringify(newSession(entry.sub))
 				);
 			}
 
@@ -335,8 +352,11 @@ async function ensureTable() {
 await ensureTable();
 server.listen(PORT, HOST, () => {
 	console.log(
-		`dev-identity on ${ORIGIN}  stripe=${REAL_STRIPE ? `LIVE-TEST (${PRICE_ID})` : 'DOUBLE'}  entitlement-bypass=${DEVELOPMENT_ENTITLEMENT_BYPASS ? 'ON' : 'off'}`
+		`dev-identity on ${ORIGIN}  stripe=${REAL_STRIPE ? `LIVE-TEST (${PRICE_ID})` : 'DOUBLE'}  entitlement-bypass=${DEVELOPMENT_ENTITLEMENT_BYPASS ? 'ON' : 'off'}  instant-session=${DEVELOPMENT_INSTANT_SESSION ? 'ON' : 'off'}`
 	);
+	if (DEVELOPMENT_INSTANT_SESSION) {
+		console.warn('DEVELOPMENT INSTANT SESSION ACTIVE: this local server signs a session on request');
+	}
 	if (DEVELOPMENT_ENTITLEMENT_BYPASS) {
 		console.warn(
 			'DEVELOPMENT ENTITLEMENT BYPASS ACTIVE: authenticated capability mints do not read or spend credits'
