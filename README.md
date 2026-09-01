@@ -17,6 +17,8 @@ Cinder is a zero-knowledge, self-destructing note and file service. You write a 
 
 Files make one additional promise, and it is deliberately narrow: **exactly one server delivery attempt**, up to 4 MiB. Cinder deletes its own stored encrypted copy and verifies the object is gone before any response byte exists, so receiving the bytes is itself proof the deletion already happened. Any failure after that claim permanently consumes the transfer — there is no retry, and the reveal screen says so before anyone presses the button. The filename and MIME type are encrypted alongside the bytes.
 
+Video is a third artifact with its own promise, deliberately different from the file promise and never blended with it: the recipient gets a **watch window, not a copy**. Inside the server-enforced window they can watch, lose connection, come back, and rewatch; past its deadline no segment is ever served again and the stored ciphertext is destroyed. There is no download button and no keepable link — and, said plainly rather than pretended away, nothing on the web can stop a screen recording. The full account, including why video ciphertext flows through scoped presigned GETs when file bytes never do, is in [docs/security.md](docs/security.md).
+
 The bar was "the best one out there." Concretely that means clearing the bar the respected tools clear — client-side encryption with the key held only in the URL fragment — and doing it on real AWS infrastructure with an atomic, race-proof burn, wrapped in a UI that's a pleasure to use.
 
 ## Why Cinder is different

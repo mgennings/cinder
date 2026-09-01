@@ -58,6 +58,37 @@
 		}
 	];
 
+	// The video promise is its OWN promise, deliberately different from the file
+	// promise and never blended with it (docs/ephemeral-video-design.md). A
+	// video is a watch window; a file is one delivery attempt. Saying them in
+	// one breath would misstate both.
+	const videos: Row[] = [
+		{
+			title: 'A watch window, not a copy',
+			body: 'A video does not make the file promise, and we will not pretend it does. The recipient gets a watch window with a server-enforced deadline: inside it they can watch, lose their connection, come back, and rewatch. Past the deadline no piece is ever served again, and the stored copy is destroyed within about a minute, with a standing cleanup rule behind it. There is no download button and no keepable link.'
+		},
+		{
+			title: 'The ceiling is the guarantee',
+			body: 'Only the recipient’s browser can see that a video was watched to the end, because we cannot observe playback of ciphertext we cannot read. Finishing shortens the window to eight more minutes; someone who blocks that signal keeps the video only until the window’s hard ceiling, which is bounded and enforced by the server. The countdown on screen always shows the server’s real deadline, never a theatrical number.'
+		},
+		{
+			title: 'Still ciphertext, delivered differently',
+			body: 'A video is encrypted in the sender’s browser in pieces of 4 MiB or less, with a key that travels only in the link fragment, same as everything else here. Because a video can be far larger than one buffered response, its encrypted pieces flow from storage to the recipient through short-lived signed URLs instead of through our delivery function. That path is confined to video objects and scoped to their own storage prefix; what crosses the wire is bytes nobody but the link holder can open. The file path is unchanged.'
+		},
+		{
+			title: 'Declining is invisible',
+			body: 'Declining at the gate destroys the video unwatched and costs nothing. The sender only ever sees "still waiting" or "gone", with no timestamp: watched, declined, expired, and destroyed all look identical from the sending side, on purpose, so declining carries no social penalty the sender can measure.'
+		},
+		{
+			title: 'Adding time never identifies anyone',
+			body: 'Extensions are funded by taps the sender prepaid, which need no account and no card, or by a signed permission slip minted on our separate account API. That slip names what may be done and nothing about who is doing it, exactly like a paid send. Neither sending nor extending links a person to a video.'
+		},
+		{
+			title: 'One honest limit, said before anyone presses play',
+			body: 'Nothing on the web can stop a screen recording or a second phone pointed at the screen, and no app can, including the ones that pretend to. The decrypted copy the recipient’s browser holds during the window is discarded when the window ends, and that discard is best-effort browser behavior, never a guarantee. What we promise is that our stored copy is destroyed on schedule and that no copy exists unless someone chooses to make one.'
+		}
+	];
+
 	const cannot: Row[] = [
 		{
 			title: 'A compromised server serving bad JavaScript',
@@ -113,6 +144,7 @@
 
 	<TruthList title="What Cinder protects" rows={protects} />
 	<TruthList title="Sending a file" rows={files} />
+	<TruthList title="Sending a video" rows={videos} />
 	<TruthList title="What Cinder can't protect" rows={cannot} />
 
 	<RuleHead class="mt-10">Accounts</RuleHead>
