@@ -78,6 +78,15 @@ export default defineConfig(({ mode }) => {
 						'script-src': ['self'],
 						'style-src': ['self', 'unsafe-inline'],
 						'img-src': ['self', 'data:'],
+						// A video is decrypted on this device and played back from an
+						// object URL the page itself created, so `blob:` is the only
+						// source it ever needs. Without this directive media falls back
+						// to `default-src: 'none'` and the browser refuses the page's
+						// own blob, which reads as a video that silently never plays.
+						// This grants no network destination: `connect-src` still names
+						// the only origins anything can be fetched from or sent to, so
+						// what leaves the device is unchanged.
+						'media-src': ['self', 'blob:'],
 						'font-src': ['self'],
 						'manifest-src': ['self'],
 						'worker-src': ['self'],
