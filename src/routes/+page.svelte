@@ -292,6 +292,22 @@
 
 	const videoBusy = $derived(videoEncrypting || videoUpload?.phase === 'uploading');
 
+	// Leaving mid-send loses the send. The encrypted pieces are staged on this
+	// device and survive, but the fragment key and the upload grant live only in
+	// this page's memory, so a reload cannot pick the send back up — and the
+	// credits were already spent when the link was created. Until a send can be
+	// resumed across a reload, the honest thing is to let the browser ask.
+	//
+	// Deliberately NOT a stalled-state guard: a stalled upload with the Resume
+	// button on screen is a decision the person is already making, and prompting
+	// there would nag rather than protect. Only an in-flight send is at risk.
+	$effect(() => {
+		if (!videoBusy) return;
+		const ask = (event: BeforeUnloadEvent) => event.preventDefault();
+		window.addEventListener('beforeunload', ask);
+		return () => window.removeEventListener('beforeunload', ask);
+	});
+
 	function pickVideo(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
 		const chosen = input.files?.[0] ?? null;
