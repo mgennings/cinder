@@ -25,7 +25,13 @@ export default defineConfig(({ mode }) => {
 	// would silently block every request in local dev and in the Playwright
 	// suite, where the API is http://localhost:4000 — a CSP that is only correct
 	// in production is a CSP nobody exercises before shipping.
-	const env = loadEnv(mode, process.cwd(), 'VITE_');
+	// `loadEnv` reads .env FILES only. Vite also exposes any VITE_-prefixed
+	// shell variable to the client, and playwright.config.ts and every phone
+	// review pass the API base exactly that way. Reading only the files meant
+	// the app called an origin the policy never named, so the browser refused
+	// the upload before it left and the surface reported a dropped connection.
+	// The shell wins because it is the more specific of the two.
+	const env = { ...loadEnv(mode, process.cwd(), 'VITE_'), ...process.env };
 	const apiOrigin = env.VITE_API_BASE ? new URL(env.VITE_API_BASE).origin : null;
 
 	// The identity API and the Cognito hosted UI, derived the same way and for
