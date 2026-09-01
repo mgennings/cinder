@@ -40,7 +40,10 @@ export default defineConfig(({ mode }) => {
 	// build cannot call. The hosted UI is also a redirect TARGET, but `form-action`
 	// stays 'none': the browser leaves via location.assign, not a form post.
 	const identityOrigins = [env.VITE_IDENTITY_API_BASE, env.VITE_IDENTITY_HOSTED_UI]
-		.filter(Boolean)
+		// A typed predicate, not `filter(Boolean)`: the merged env can hold
+		// undefined now that process.env is part of it, and Boolean does not
+		// narrow the type for the `new URL` below.
+		.filter((u): u is string => Boolean(u))
 		.map((u) => new URL(u).origin);
 
 	// SvelteKit types CSP sources as a template-literal union of scheme, host,
