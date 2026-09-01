@@ -46,7 +46,8 @@
 		dur,
 		onpick,
 		oncreate,
-		oncancel
+		oncancel,
+		video
 	}: {
 		mode?: string;
 		text?: string;
@@ -71,6 +72,14 @@
 		onpick: (e: Event) => void;
 		oncreate: () => void;
 		oncancel: () => void;
+		/**
+		 * The whole video surface, injected by the route. Video is a third
+		 * artifact with its own promise, its own cost, and its own disclosure
+		 * copy — none of the note/file footer below (ttl, passphrase, the shared
+		 * button) applies to it, so the snippet owns everything under the mode
+		 * switch and this component renders nothing else in video mode.
+		 */
+		video?: import('svelte').Snippet;
 	} = $props();
 
 	const maxLabel = `${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MiB`;
@@ -78,7 +87,8 @@
 
 	const modeOptions = [
 		{ value: 'note', label: 'Note' },
-		{ value: 'file', label: 'File' }
+		{ value: 'file', label: 'File' },
+		{ value: 'video', label: 'Video' }
 	];
 
 	const ttlOptions = [
@@ -104,6 +114,9 @@
 		disabled={busy}
 	/>
 
+	{#if mode === 'video'}
+		{@render video?.()}
+	{:else}
 	{#if mode === 'note'}
 		<div class="mt-4">
 			<TextArea
@@ -228,5 +241,6 @@
 		<Button variant="ember" onclick={oncreate} disabled={!ready} class="mt-5 w-full py-3 text-sm">
 			Create one-time link
 		</Button>
+	{/if}
 	{/if}
 </Card>

@@ -24,15 +24,34 @@
 		finalizeFileTransfer,
 		TransferNotEntitledError
 	} from '$lib/api';
-	import { buildLink, buildFileLink, buildTransferLink, derivePartLocator } from '$lib/link';
+	import {
+		buildLink,
+		buildFileLink,
+		buildTransferLink,
+		buildVideoLink,
+		derivePartLocator
+	} from '$lib/link';
 	import { rememberTransferStatus } from '$lib/status-store';
-	import { capabilityGrant, CAPABILITY_MULTIPART_TRANSFER } from '$lib/entitlement';
+	import {
+		capabilityGrant,
+		CAPABILITY_MULTIPART_TRANSFER,
+		CAPABILITY_VIDEO_SEND
+	} from '$lib/entitlement';
+	import { videoSegmenter } from '$lib/video/crypto';
+	import { createVideoUploader, type VideoUploader } from '$lib/video/uploader';
+	import { VideoNotEntitledError } from '$lib/video/api';
+	import {
+		SEND_COST_CREDITS,
+		VideoTooLargeError,
+		type UploadState
+	} from '$lib/video/types';
 	import { entitlement, signedIn, identityConfigured } from '$lib/auth';
 	import { PRO_PRICE, PRO_CREDITS } from '$lib/pro';
 	import Merkaba from '$lib/ui/atoms/Merkaba.svelte';
 	import Wordmark from '$lib/ui/atoms/Wordmark.svelte';
 	import VaultPage from '$lib/ui/templates/VaultPage.svelte';
 	import SendComposer, { type Phase } from '$lib/ui/organisms/SendComposer.svelte';
+	import VideoSendForm from '$lib/ui/organisms/VideoSendForm.svelte';
 	import LinkReadyPanel from '$lib/ui/organisms/LinkReadyPanel.svelte';
 	import SiteFooter from '$lib/ui/organisms/SiteFooter.svelte';
 	import { humanSize } from '$lib/ui/format';
@@ -240,6 +259,156 @@
 		link = '';
 		error = '';
 		uploaded = 0;
+		videoFile = null;
+		videoSegments = 1;
+		videoUpload = null;
+		videoUploader = null;
+		videoEncrypting = false;
+		videoError = '';
+		videoNeedsCredits = false;
+		videoLocator = '';
+	}
+
+	// --- THE VIDEO SEND. A third artifact with its own promise: the recipient
+	// gets a watch window, not a copy, and the sender's upload is RESUMABLE —
+	// nothing has been promised to anyone until the link is shared, which is
+	// exactly why this side gets a resume and the claim side never will. The
+	// crypto, staging, and resume machinery live in $lib/video; this owns only
+	// the orchestration and the honest error words.
+
+	let videoFile: File | null = $state(null);
+	let videoSegments = $state(1);
+	let videoPrepaid = $state('0');
+	let videoEncrypting = $state(false);
+	// Reassigned whole by the uploader's subscribe — raw, never mutated.
+	let videoUpload = $state.raw<UploadState | null>(null);
+	let videoError = $state('');
+	let videoNeedsCredits = $state(false);
+	let videoLocator = $state('');
+	// The uploader survives across a stall so run() can resume from the last
+	// confirmed segment. Not reactive: the UI watches videoUpload, not this.
+	let videoUploader: VideoUploader | null = null;
+	let videoFragmentKey = '';
+
+	const videoBusy = $derived(videoEncrypting || videoUpload?.phase === 'uploading');
+
+	function pickVideo(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const chosen = input.files?.[0] ?? null;
+		videoError = '';
+		videoNeedsCredits = false;
+		// A new file invalidates any stalled upload of the old one.
+		videoUploader = null;
+		videoUpload = null;
+		if (!chosen) {
+			videoFile = null;
+			return;
+		}
+		try {
+			// Size math from metadata only — refusing a 4 GB pick costs zero reads.
+			videoSegments = videoSegmenter.plan(chosen).segments;
+			videoFile = chosen;
+		} catch (err) {
+			videoFile = null;
+			input.value = '';
+			videoError =
+				err instanceof VideoTooLargeError
+					? `That video is ${humanSize(err.size)}. The limit is 512 MiB.`
+					: err instanceof Error
+						? err.message
+						: 'That video could not be read.';
+		}
+	}
+
+	async function sendVideo() {
+		if (!videoFile || videoBusy) return;
+		videoError = '';
+		videoNeedsCredits = false;
+		const prepaid = Number(videoPrepaid);
+
+		// The mint is the spend — credits leave the account when the grant is
+		// created, before any bytes exist, and the disclosure above the button
+		// said so. Never cached: every video send is a fresh, deliberate charge.
+		const grant = await capabilityGrant(CAPABILITY_VIDEO_SEND, {
+			fresh: true,
+			...(prepaid ? { prepaidExtensions: prepaid } : {})
+		});
+		if (!grant) {
+			videoNeedsCredits = true;
+			videoError =
+				credits === 0
+					? `Sending this video costs ${SEND_COST_CREDITS + prepaid} credits and this account has none left. ${PRO_PRICE} adds ${PRO_CREDITS} more.`
+					: `Sending a video costs ${SEND_COST_CREDITS + prepaid} credits, so it needs a signed-in account with credits. The encryption still happens on this device either way.`;
+			return;
+		}
+
+		videoEncrypting = true;
+		try {
+			const stream = await videoSegmenter.open(videoFile);
+			videoFragmentKey = stream.fragmentKey;
+			const uploader = createVideoUploader({
+				stream,
+				ttlSeconds: Number(ttl),
+				capabilityGrant: grant
+			});
+			videoUploader = uploader;
+			uploader.subscribe((s) => (videoUpload = s));
+			// The moment POST /videos answers, the status credential exists — and
+			// it is remembered NOW rather than at 'done', so a stall after create
+			// still leaves this browser able to destroy the half-sent video.
+			void uploader.created.then((g) => {
+				videoEncrypting = false;
+				videoLocator = g.locator;
+				rememberTransferStatus(g.locator, g.statusToken);
+			});
+			await driveVideo(uploader);
+		} catch {
+			// driveVideo already worded it; a throw from open() lands here.
+			if (videoEncrypting) {
+				videoError = videoError || 'That video could not be encrypted on this device.';
+			}
+		} finally {
+			videoEncrypting = false;
+		}
+	}
+
+	// Shared by the first run and every resume: the completion path is identical.
+	async function driveVideo(uploader: VideoUploader): Promise<void> {
+		try {
+			await uploader.run();
+			const g = await uploader.created;
+			link = buildVideoLink(location.origin, g.locator, videoFragmentKey, videoSegments);
+			// The mint spent credits; re-read rather than guessing, same as chunked.
+			await readCredits();
+		} catch (err) {
+			if (videoUpload?.phase === 'canceled') {
+				videoUploader = null;
+				videoUpload = null;
+				return;
+			}
+			if (err instanceof VideoNotEntitledError) {
+				// Resume cannot fix a refused grant — drop the uploader.
+				videoUploader = null;
+				videoUpload = null;
+				videoNeedsCredits = true;
+				videoError = err.message;
+				return;
+			}
+			// Everything else is a stall: the uploader kept its confirmed count,
+			// and the form renders the resume door. No error prose needed — the
+			// stall alert says exactly where it stopped and what resume does.
+			if (videoUpload?.phase !== 'stalled') {
+				videoError = err instanceof Error ? err.message : 'Something went wrong.';
+			}
+		}
+	}
+
+	async function resumeVideo() {
+		if (videoUploader) await driveVideo(videoUploader);
+	}
+
+	function cancelVideo() {
+		videoUploader?.cancel();
 	}
 </script>
 
@@ -259,14 +428,31 @@
 			<Merkaba size={96} />
 		</div>
 		<Wordmark as="heading" />
-		<p class="mt-2 text-sm text-mist">
-			One retrieval from Cinder. Encrypted in your browser — we never see it.
+		<!-- Mode-aware, because "one retrieval" is the note and file promise and a
+		     video makes a different one (a watch window). The design doc's rule:
+		     no copy anywhere blends the three. -->
+		<p class="mt-2 text-sm text-mist text-balance">
+			{#if mode === 'video'}
+				A watch window, not a copy. Encrypted in your browser; Cinder never sees it.
+			{:else}
+				One retrieval from Cinder. Encrypted in your browser — we never see it.
+			{/if}
 		</p>
 	{/snippet}
 
 	{#if link}
 		<div in:fly={{ y: 12, duration: dur(350) }}>
 			<LinkReadyPanel {link} onreset={reset} />
+			{#if videoLocator && link.includes('/v/')}
+				<!-- The sender's one private door. The credential behind it lives
+				     only in this browser's storage, which is why the sentence can
+				     honestly say "this browser only". -->
+				<p class="mt-3 text-center text-xs text-ghost">
+					From this browser only:
+					<a class="underline underline-offset-2" href={`/video/${videoLocator}`}>check on it</a>,
+					add time while it is being watched, or destroy it before anyone opens it.
+				</p>
+			{/if}
 		</div>
 	{:else}
 		<SendComposer
@@ -278,7 +464,7 @@
 			{file}
 			{parts}
 			{credits}
-			{busy}
+			busy={busy || videoBusy}
 			{phase}
 			{uploaded}
 			{ready}
@@ -288,7 +474,27 @@
 			onpick={pickFile}
 			oncreate={create}
 			oncancel={cancel}
-		/>
+		>
+			{#snippet video()}
+				<VideoSendForm
+					file={videoFile}
+					segments={videoSegments}
+					{credits}
+					bind:prepaid={videoPrepaid}
+					bind:ttl
+					busy={videoBusy}
+					encrypting={videoEncrypting}
+					upload={videoUpload}
+					error={videoError}
+					needsCredits={videoNeedsCredits}
+					{dur}
+					onpick={pickVideo}
+					oncreate={sendVideo}
+					onresume={resumeVideo}
+					oncancel={cancelVideo}
+				/>
+			{/snippet}
+		</SendComposer>
 	{/if}
 
 	<SiteFooter {credits} />
