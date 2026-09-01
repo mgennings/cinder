@@ -62,10 +62,8 @@ async function attemptVideoSend(page: Page, prepaidLabel?: RegExp): Promise<void
 		buffer: pattern(96_000)
 	});
 	if (prepaidLabel) await page.getByRole('radio', { name: prepaidLabel }).check();
-	// The disclosure is on screen before the button that spends anything.
-	await expect(
-		page.getByText(/Sending this video costs 2 credits, spent when Cinder hands you the link/)
-	).toBeVisible();
+	// The cost is on screen before the button that spends anything.
+	await expect(page.getByText(/2 credits/)).toBeVisible();
 	await page.getByRole('button', { name: /create one-time link/i }).click();
 }
 

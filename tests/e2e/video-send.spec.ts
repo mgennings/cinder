@@ -43,16 +43,19 @@ test('the disclosure is on screen before anything encrypts or uploads', async ({
 
 	await startVideoSend(page, pattern(64_000));
 
-	// The spec's send-screen copy, VERBATIM, with the cost, the expiry rule,
-	// and the screen-recording honesty — before the button is pressed.
+	// What the sender must be able to READ before the button is pressed. The
+	// cost and the zero-knowledge line are visible outright; the rest is one
+	// tap away, under the question a person actually asks. The disclosures are
+	// native <details>, so their text is in the DOM either way — asserting the
+	// summaries is what proves the question is reachable rather than buried.
+	await expect(page.getByText(/2 credits/)).toBeVisible();
+	await expect(page.getByText('Cinder never sees the video, its name, or your key.')).toBeVisible();
+	await expect(page.getByText('Can they save a copy anyway?')).toBeVisible();
+	await expect(page.getByText('What happens to my credits?')).toBeVisible();
+	// The honesty itself, still stated in full, still before anything encrypts.
 	await expect(
-		page.getByText('Sending this video costs 2 credits, spent when Cinder hands you the link')
-	).toBeVisible();
-	await expect(
-		page.getByText('it cannot stop the other side from recording their screen')
-	).toBeVisible();
-	// The total is stated next to the disclosure, and nothing has left the device.
-	await expect(page.getByText(/2 credits total/)).toBeVisible();
+		page.getByText(/no app on earth can stop that|record their screen/)
+	).toHaveCount(1);
 	expect(videoCalls).toEqual([]);
 
 	const { link } = await finishVideoSend(page);
@@ -84,7 +87,7 @@ test('a dropped connection stalls the upload and resume finishes it', async ({ p
 	await page.getByRole('button', { name: /create one-time link/i }).click();
 
 	// The stall is narrated honestly: where it stopped, and that nothing is lost.
-	await expect(page.getByText(/the connection dropped at piece 2 of 3/i)).toBeVisible({
+	await expect(page.getByText(/the upload stopped at piece 2 of 3/i)).toBeVisible({
 		timeout: 30_000
 	});
 	await expect(page.getByText(/nothing is\s+lost/i)).toBeVisible();

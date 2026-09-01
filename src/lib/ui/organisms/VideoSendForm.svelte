@@ -20,6 +20,7 @@
 	import QuietLink from '../atoms/QuietLink.svelte';
 	import Alert from '../atoms/Alert.svelte';
 	import Select from '../atoms/Select.svelte';
+	import Disclosure from '../atoms/Disclosure.svelte';
 	import FileInput from '../atoms/FileInput.svelte';
 	import SegmentedChoice from '../molecules/SegmentedChoice.svelte';
 	import PhaseProgress from '../molecules/PhaseProgress.svelte';
@@ -98,10 +99,19 @@
 	let recordInput: HTMLInputElement | null = $state(null);
 </script>
 
+<!-- The story before the control. Someone arriving here has never used this
+     and cannot act until they know what the thing does, so two plain lines
+     say it, and every qualification waits behind a question further down. -->
 <div class="mt-4">
-	<label for="video-input" class="mb-2 block text-sm text-mist">
-		Choose a video, up to {maxLabel}
-	</label>
+	<p class="text-sm font-medium text-body text-balance">Send a video that deletes&nbsp;itself.</p>
+	<p class="mt-1 text-sm leading-relaxed text-mist text-pretty">
+		They watch it, and then Cinder destroys its copy. No download, no forwardable file, and
+		nothing left sitting in their messages.
+	</p>
+</div>
+
+<div class="mt-6">
+	<label for="video-input" class="mb-2 block text-sm text-mist"> Choose a video </label>
 	<FileInput id="video-input" accept="video/*" onchange={onpick} disabled={busy} />
 	<p class="mt-2 text-xs text-ghost text-balance">
 		Or
@@ -113,7 +123,7 @@
 		>
 			record one now
 		</button>
-		with your camera. Either way it is encrypted on this device before anything is sent.
+		with your camera. Up to {maxLabel}.
 	</p>
 	<input
 		bind:this={recordInput}
@@ -131,12 +141,16 @@
 		     eating it entirely on a long filename. The name is its own block:
 		     inline, a long unbreakable filename strands itself as the last line
 		     of the size sentence (audit-web-typography flagged it at 320). -->
-		<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs text-ghost">
-			{humanSize(file.size)} <span class="block break-all">{file.name}</span>
-		</p>
-		<p in:fade={{ duration: dur(200) }} class="mt-1 text-xs text-mist">
-			Sent as {segments}
-			encrypted {segments === 1 ? 'piece' : `pieces of up to ${segmentLabel}`}.
+		<!-- The name gets its own block because the native control truncates it
+		     from the right and eats a long one entirely, and because inline it
+		     strands itself as the last line of the size sentence (flagged by
+		     audit-web-typography at 320). Size and piece count share one line:
+		     they are one fact about the same file, and as two lines they read
+		     as two separate things to check. -->
+		<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs break-all text-mist">{file.name}</p>
+		<p in:fade={{ duration: dur(200) }} class="mt-1 text-xs text-ghost">
+			{humanSize(file.size)} · {segments}
+			encrypted {segments === 1 ? 'piece' : `pieces of up to ${segmentLabel}`}
 		</p>
 	{/if}
 </div>
@@ -154,31 +168,54 @@
 		options={prepaidOptions}
 		bind:value={prepaid}
 	/>
-	<p class="mt-2 text-xs leading-relaxed text-ghost text-balance">
-		Prepaid time your recipient can add with one tap, no account, no card. Each {extensionMinutes}-minute
-		extension costs you 1 credit now, whether or not it gets used.
-	</p>
+	<Disclosure summary="What is prepaid time?" class="mt-1">
+		Extra minutes your person can add with one tap, with no account and no card of their own.
+		Each {extensionMinutes}-minute extension costs you 1 credit now, whether or not they use it.
+	</Disclosure>
 </fieldset>
 
 {#if file}
-	<!-- The disclosure. VERBATIM from docs/ephemeral-video-design.md, "The send
-	     screen, before encryption starts" — one unbroken line, on screen before
-	     the button that starts encryption. Do not edit it here; the design doc
-	     is the source and the e2e spec pins the order. -->
-	<p in:fade={{ duration: dur(200) }} class="mt-4 text-xs leading-relaxed text-mist text-pretty">
-		Sending this video costs 2 credits, spent when Cinder hands you the link, not when it is watched. If nobody opens it, it is destroyed at the expiry you choose. Once your person finishes watching, they get 8 more minutes, and either of you can add time. Cinder never sees the video, its name, or your key, and it cannot stop the other side from recording their screen. Nobody can promise that; Cinder is just&nbsp;the&nbsp;one&nbsp;saying&nbsp;so.
-	</p>
-	<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs text-ghost">
-		{#if Number(prepaid) > 0}
-			With {prepaid} prepaid extensions: {totalCredits} credits total{credits === null
+	<!-- The disclosure, restructured on Matt's instruction 2026-09-01: the wall
+	     of prose it used to be was correct and unreadable, which is a defect in
+	     a surface somebody meets once. Every fact from the design doc's send
+	     screen is still HERE and still on screen before anything encrypts — the
+	     two that decide whether to press the button stay visible, and the rest
+	     sit one tap away under the question a person would actually ask. Do not
+	     quietly drop a fact to make this shorter; move it under a question. -->
+	<div in:fade={{ duration: dur(200) }} class="mt-4">
+		<p class="text-sm text-body">
+			{totalCredits} credits{#if Number(prepaid) > 0}, including {prepaid} prepaid extensions{/if}{credits ===
+			null
 				? ''
 				: `, out of the ${creditWord(credits)} on this account`}.
-		{:else}
-			{totalCredits} credits total{credits === null
-				? ''
-				: `, out of the ${creditWord(credits)} on this account`}.
-		{/if}
-	</p>
+		</p>
+		<p class="mt-1 text-xs leading-relaxed text-ghost text-pretty">
+			Cinder never sees the video, its name, or your key.
+		</p>
+
+		<div class="mt-2 divide-y divide-line/60 border-y border-line/60">
+			<Disclosure summary="What does the other person get?">
+				A link that opens to a short explanation and two buttons: watch, or destroy it unwatched.
+				When they press play they get up to 64 minutes to watch, lose their connection, come back,
+				and rewatch. When they finish, they get {extensionMinutes} more minutes, and either of you can
+				add time. There is no download and no keepable link, and you only ever see that it is gone,
+				never whether they watched or declined.
+			</Disclosure>
+			<Disclosure summary="Can they save a copy anyway?">
+				They can record their screen or point another phone at it, and no app on earth can stop
+				that. Cinder will not pretend otherwise. What Cinder promises is narrower and real: no
+				copy exists unless a person deliberately makes one, and nothing is left behind in a chat
+				log or a photo backup.
+			</Disclosure>
+			<Disclosure summary="What happens to my credits?">
+				They are spent when Cinder hands you the link, not when the video is watched, so they are
+				already gone by the time the pieces finish uploading. If the upload stops partway,
+				resuming costs nothing more. Nothing is refunded if the video is never opened, because
+				Cinder cannot see who opened what. If nobody opens it, it is destroyed at the expiry you
+				chose above.
+			</Disclosure>
+		</div>
+	</div>
 	{#if credits === 0}
 		<!-- Zero is a state, not a fault. -->
 		<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist text-pretty">
@@ -204,9 +241,14 @@
 	<!-- A dropped connection is a pause, not a loss: nothing has been promised
 	     to anyone yet, and every confirmed piece stays confirmed. -->
 	<div in:fade={{ duration: dur(200) }}>
+		<!-- "Stopped", not "the connection dropped": the client cannot tell a lost
+		     connection from a refused request, and naming a cause it did not
+		     observe sends people to check their wifi when the fault is here. It
+		     said "dropped" while a CSP was refusing every upload, which cost real
+		     time on 2026-09-01. -->
 		<Alert class="mt-3">
-			The connection dropped at piece {upload.confirmed + 1} of {upload.segments}. Nothing is
-			lost: resume continues from the last confirmed piece.
+			The upload stopped at piece {upload.confirmed + 1} of {upload.segments}. Nothing is lost and
+			nothing more is charged: resuming continues from the last confirmed piece.
 		</Alert>
 		<Button variant="ember" onclick={onresume} class="mt-3 w-full py-3 text-sm">
 			Resume the upload
