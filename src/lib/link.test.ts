@@ -5,7 +5,8 @@ import {
 	buildTransferLink,
 	parseFragmentKey,
 	parseFragmentParts,
-	derivePartLocator
+	derivePartLocator,
+	deriveSegmentLocator
 } from './link';
 
 describe('link', () => {
@@ -81,6 +82,21 @@ describe('link', () => {
 		);
 		expect(await derivePartLocator('the-transfer-locator', 7)).toBe(
 			'FaZ0Hg0YQz37DVi3oZLWtjnq1LGol1pfFh_q-2H78nM'
+		);
+	});
+
+	it('derives video segment locators identically to parts, and to the server', async () => {
+		// The design doc's rule: video segments REUSE the part derivation rather
+		// than inventing a third one. The constants below are the output of
+		// deriveSegmentLocator in api/src/id.mjs, and they are the same bytes the
+		// part test above pins — that sameness is the contract, not an accident.
+		// If this test ever needs different constants from the part test, the
+		// reuse has been broken and every video segment will answer 410.
+		expect(await deriveSegmentLocator('the-transfer-locator', 0)).toBe(
+			'EZs_axYFbYFTg6Q4tTLX93h2MjtjYayJ1sFr3neNrkU'
+		);
+		expect(await deriveSegmentLocator('the-transfer-locator', 127)).toBe(
+			await derivePartLocator('the-transfer-locator', 127)
 		);
 	});
 

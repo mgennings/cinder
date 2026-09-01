@@ -67,3 +67,27 @@ export async function derivePartLocator(locator: string, index: number): Promise
 	// implementations of the same alphabet is exactly how that stops being true.
 	return bytesToBase64Url(new Uint8Array(digest));
 }
+
+// A video link always carries its segment count, even at 1: the watch gate has
+// to state what claiming costs to download BEFORE anything is claimed, and
+// asking the server would be a request on link arrival — the preview-bot
+// defense forbids exactly that. Same reasoning as buildTransferLink; the count
+// stays a hint until segment zero's authenticated header confirms it.
+export function buildVideoLink(
+	origin: string,
+	locator: string,
+	fragmentKey: string,
+	segments: number
+): string {
+	return `${origin}/v/${locator}#${fragmentKey}.${segments}`;
+}
+
+// Video segment locators are the SAME derivation, by design rather than by
+// coincidence: docs/ephemeral-video-design.md says video reuses the part
+// derivation instead of inventing a third one, so this is a name, not a new
+// recipe. It must stay byte-identical to deriveSegmentLocator in
+// api/src/id.mjs (itself an alias of deriveChunkLocator). The parity test in
+// link.test.ts pins this export against Node-produced constants, so replacing
+// the alias with a drifted reimplementation goes red instead of quietly
+// answering 410 for every segment.
+export const deriveSegmentLocator = derivePartLocator;

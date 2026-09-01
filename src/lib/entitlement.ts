@@ -18,6 +18,10 @@ import { freshIdToken } from './auth';
 /** Must match CAPABILITY.MULTIPART_TRANSFER in api/src/capabilities.mjs. */
 export const CAPABILITY_MULTIPART_TRANSFER = 'transfer.multipart';
 
+/** The video capabilities (docs/video-api-contract.md). Same gate, new names. */
+export const CAPABILITY_VIDEO_SEND = 'video.send';
+export const CAPABILITY_VIDEO_EXTEND = 'video.extend';
+
 const API_BASE = import.meta.env.VITE_IDENTITY_API_BASE ?? '';
 
 // Set only by the local dev server and the e2e suite (see playwright.config.ts
@@ -42,9 +46,26 @@ const DEV_GRANT: string | null = import.meta.env.VITE_DEV_CAPABILITY_GRANT ?? nu
 const EARLY_SECONDS = 60;
 const cache = new Map<string, { grant: string; usableUntilMs: number }>();
 
-export async function capabilityGrant(capability: string): Promise<string | null> {
-	const cached = cache.get(capability);
-	if (cached && Date.now() < cached.usableUntilMs) return cached.grant;
+export async function capabilityGrant(
+	capability: string,
+	options: {
+		/**
+		 * video.send only: extensions the sender prepays for their recipient,
+		 * 2 | 4 | 8 (the mint refuses anything else). Each one costs a credit AT
+		 * MINT, so a grant carrying prepaid time is never cached — reusing it for
+		 * a second video would hand out prepaid extensions nobody paid for twice,
+		 * and the balance on screen would be a lie in the sender's favor.
+		 */
+		prepaidExtensions?: number;
+		/** Skip the cache entirely — every mint is a fresh, deliberate spend. */
+		fresh?: boolean;
+	} = {}
+): Promise<string | null> {
+	const cacheable = !options.fresh && !options.prepaidExtensions;
+	if (cacheable) {
+		const cached = cache.get(capability);
+		if (cached && Date.now() < cached.usableUntilMs) return cached.grant;
+	}
 
 	try {
 		const idToken = API_BASE ? await freshIdToken() : null;
@@ -52,7 +73,10 @@ export async function capabilityGrant(capability: string): Promise<string | null
 			const res = await fetch(`${API_BASE}/capability`, {
 				method: 'POST',
 				headers: { authorization: `Bearer ${idToken}`, 'content-type': 'application/json' },
-				body: JSON.stringify({ capability })
+				body: JSON.stringify({
+					capability,
+					...(options.prepaidExtensions ? { prepaidExtensions: options.prepaidExtensions } : {})
+				})
 			});
 			if (res.ok) {
 				const body = (await res.json()) as { grant?: string | null; expiresIn?: number };
@@ -61,7 +85,7 @@ export async function capabilityGrant(capability: string): Promise<string | null
 				// failing silently once the server's TTL changes.
 				if (typeof body.grant === 'string' && body.grant && Number.isFinite(body.expiresIn)) {
 					const usableUntilMs = Date.now() + Math.max(body.expiresIn! - EARLY_SECONDS, 0) * 1000;
-					cache.set(capability, { grant: body.grant, usableUntilMs });
+					if (cacheable) cache.set(capability, { grant: body.grant, usableUntilMs });
 					return body.grant;
 				}
 			}

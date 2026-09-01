@@ -136,8 +136,12 @@ function unframe(ciphertext: Uint8Array, version: number) {
 	};
 }
 
-/** A fresh key, and the salt that has to travel with it when there is one. */
-async function sealingKey(raw: Uint8Array, passphrase?: string) {
+/**
+ * A fresh key, and the salt that has to travel with it when there is one.
+ * Exported for the video segmenter (src/lib/video), which seals under the same
+ * scheme and must not re-derive it.
+ */
+export async function sealingKey(raw: Uint8Array, passphrase?: string) {
 	if (!passphrase) return { key: await importRaw(raw), salt: undefined };
 	const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
 	return { key: await deriveWithPassphrase(raw, passphrase, salt), salt };
@@ -186,6 +190,50 @@ function positionAad(index: number, partCount: number): Uint8Array {
 }
 
 /**
+ * Seals ONE position-authenticated envelope: the shared core of the chunked
+ * file path and the video segmenter (src/lib/video/crypto.ts). Exported so
+ * video reuses this exact framing instead of re-deriving it — the design doc
+ * forbids a third copy of the offset arithmetic for the same reason the
+ * chunked lane's copy was folded back in here. Byte-for-byte what the loop in
+ * `encryptFileParts` always produced: withHeader ‖ GCM(positionAad) ‖ frame,
+ * CHUNKED_ENVELOPE_VERSION.
+ */
+export async function sealPositionedPart(
+	key: CryptoKey,
+	salt: Uint8Array | undefined,
+	header: Uint8Array,
+	payload: Uint8Array,
+	index: number,
+	partCount: number
+): Promise<PartEnvelope> {
+	const plain = withHeader(header, payload);
+
+	// A fresh 96-bit IV per part. Random IVs under one key are safe far past
+	// 128 messages; the birthday bound that makes this a real question starts
+	// around 2^32.
+	const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+	const sealed = new Uint8Array(
+		await crypto.subtle.encrypt(
+			{
+				name: 'AES-GCM',
+				iv: toBuf(iv),
+				additionalData: toBuf(positionAad(index, partCount))
+			},
+			key,
+			toBuf(plain)
+		)
+	);
+
+	const ciphertext = frame(CHUNKED_ENVELOPE_VERSION, salt, iv, sealed);
+
+	return {
+		ciphertext,
+		ciphertextBytes: ciphertext.length,
+		ciphertextSha256: await sha256Base64(ciphertext)
+	};
+}
+
+/**
  * Encrypts one file as N independent envelopes under a single key.
  *
  * The filename and MIME type are encrypted ONCE, into part zero's header, not
@@ -224,31 +272,7 @@ export async function encryptFileParts(
 				? enc.encode(JSON.stringify({ name: file.name, type: file.type, parts: partCount }))
 				: new Uint8Array(0);
 
-		const plain = withHeader(header, slice);
-
-		// A fresh 96-bit IV per part. Random IVs under one key are safe far past
-		// 64 messages; the birthday bound that makes this a real question starts
-		// around 2^32.
-		const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-		const sealed = new Uint8Array(
-			await crypto.subtle.encrypt(
-				{
-					name: 'AES-GCM',
-					iv: toBuf(iv),
-					additionalData: toBuf(positionAad(index, partCount))
-				},
-				key,
-				toBuf(plain)
-			)
-		);
-
-		const ciphertext = frame(CHUNKED_ENVELOPE_VERSION, salt, iv, sealed);
-
-		parts.push({
-			ciphertext,
-			ciphertextBytes: ciphertext.length,
-			ciphertextSha256: await sha256Base64(ciphertext)
-		});
+		parts.push(await sealPositionedPart(key, salt, header, slice, index, partCount));
 	}
 
 	return { parts, fragmentKey: bytesToBase64Url(raw) };
