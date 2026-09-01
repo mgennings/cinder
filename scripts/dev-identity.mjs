@@ -51,7 +51,11 @@ const PORT = Number(process.env.DEV_IDENTITY_PORT || 4100);
 // 127.0.0.1 are different origins to a browser and can resolve to different
 // address families. See the header of scripts/dev-api.mjs.
 const HOST = process.env.DEV_IDENTITY_HOST || '127.0.0.1';
-const ORIGIN = `http://${HOST}:${PORT}`;
+// The advertised origin, which is not always the bound one. Reviewing the paid
+// flow on a phone means the checkout URL this hands the browser has to name an
+// address that phone can reach; 127.0.0.1 there is the phone itself. Same
+// reason and same shape as DEV_API_PUBLIC_ORIGIN in scripts/dev-api.mjs.
+const ORIGIN = process.env.DEV_IDENTITY_PUBLIC_ORIGIN || `http://${HOST}:${PORT}`;
 
 const CLIENT_ID = 'dev-cinder-client';
 const PRODUCT = 'cinder';
