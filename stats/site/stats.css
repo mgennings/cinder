@@ -100,6 +100,20 @@ button:disabled { opacity: 0.65; cursor: wait; }
    the horizontal axis for the one-hour-per-gesture swipe in dashboard.js. */
 .explorer-shell { touch-action: pan-y; }
 .metric-grid { display: grid; gap: 0.75rem; min-height: 20rem; }
+/* First paint: the grid has no children until /api/metrics answers, and that
+   Lambda is nearly always cold, so the main component's first state IS the
+   wait -- name it instead of showing 20rem of bare ground. `:empty` scopes
+   this to the truly blank grid; a window change keeps the old cards on screen
+   and the status line carries that feedback instead. The pulse dies under
+   prefers-reduced-motion via the global kill switch below. */
+.metric-grid[aria-busy="true"]:empty { place-content: center; }
+.metric-grid[aria-busy="true"]:empty::before {
+  content: "reading the aggregate record…";
+  color: var(--muted);
+  font: 0.82rem/1.5 var(--mono);
+  animation: first-paint-pulse 1.6s ease-in-out infinite alternate;
+}
+@keyframes first-paint-pulse { from { opacity: 1; } to { opacity: 0.45; } }
 .metric-card { min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); border-radius: 0.75rem; }
 /* flex-wrap plus min-width:0 on the label: a flex item's default min-width:auto
    refuses to shrink below its own unwrapped content, so a long label next to

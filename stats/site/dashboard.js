@@ -301,6 +301,10 @@ const loadRange = async () => {
   syncUrl()
   updateNavigatorState()
   grid.setAttribute("aria-busy", "true")
+  // On first paint the empty grid's own waiting state (stats.css) carries the
+  // feedback; on a window change the old cards stay visible, so this line is
+  // the only signal that a new range is being read.
+  status.textContent = "reading the aggregate record…"
   try {
     const parameters = new URLSearchParams({ window: state.windowId })
     if (state.end) parameters.set("end", state.end)
