@@ -173,7 +173,23 @@ const handlers = makeEntitlementHandlers(doc, {
 	clientProducts: { [CLIENT_ID]: PRODUCT },
 	productPeppers: { [PRODUCT]: 'dev-pepper' },
 	capabilitySecret: CAPABILITY_SECRET,
-	capabilityLimits: { [PRODUCT]: { 'transfer.multipart': { maxParts: 64 } } }
+	// Parity with api/src/identity-lambda.mjs, on purpose: the journey suite
+	// exists to prove the REAL mint refuses the unpaid, and a capability absent
+	// here would make that refusal a config accident instead of a proof. Every
+	// video number is Matt's pricing gate (docs/ephemeral-video-design.md).
+	capabilityLimits: {
+		[PRODUCT]: {
+			'transfer.multipart': { maxParts: 64 },
+			'video.send': { maxSegments: 128 },
+			'video.extend': { extensions: 1 }
+		}
+	},
+	capabilityCosts: {
+		[PRODUCT]: {
+			'video.send': { credits: 2, prepaidExtensionCredits: 1 },
+			'video.extend': { credits: 1 }
+		}
+	}
 });
 
 const { checkout: startCheckout, webhook: purchaseWebhook } = makePurchaseHandlers(doc, {

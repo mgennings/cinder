@@ -34,8 +34,14 @@ const HOST = '127.0.0.1';
 //                       and verified by the shipped gate. A dev grant here would
 //                       let the journey succeed while unpaid, which is precisely
 //                       the failure that suite exists to catch.
+// --strictPort is load-bearing under Vite 8: Tailscale's serve proxy holds
+// 5178-5180 on the TAILNET addresses, and vite's availability probe reads that
+// as "port in use" and silently drifts to 5181+ — so Playwright waits on a
+// port nothing ever binds and the whole suite dies with "was not able to
+// start". With strictPort vite binds 127.0.0.1 directly (which is free),
+// prints a warning about the wildcard, and serves. Do not remove it.
 const server = (port: number, env: string) => ({
-	command: `${env} pnpm dev --port ${port} --host ${HOST}`,
+	command: `${env} pnpm dev --port ${port} --host ${HOST} --strictPort`,
 	url: `http://${HOST}:${port}`,
 	reuseExistingServer: false,
 	timeout: 120_000

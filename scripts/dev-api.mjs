@@ -16,6 +16,7 @@ import {
 } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { makeHandlers } from '../api/src/handlers.mjs';
+import { makeVideoHandlers } from '../api/src/video-handlers.mjs';
 import { gate } from '../api/src/entitlement-provider.mjs';
 import { mintStatusToken, verifyStatusToken } from '../api/src/status-token.mjs';
 
@@ -49,6 +50,9 @@ const doc = DynamoDBDocumentClient.from(raw);
 
 const objects = new Map(); // key -> { body: Buffer, sha: string }
 const grants = new Map(); // key -> { bytes, sha, expiresAtMs }
+// Read authorizations, video segments only — the dev twin of a presigned GET.
+// Reusable within its window, exactly like the real signature.
+const readGrants = new Map(); // key -> { expiresAtMs }
 
 const devS3 = {
 	async presignPut({ key, bytes, sha256, expiresIn }) {
@@ -57,6 +61,10 @@ const devS3 = {
 			url: `${ORIGIN}/dev-bucket/${key}`,
 			headers: { 'content-length': String(bytes), 'x-amz-checksum-sha256': sha256 }
 		};
+	},
+	async presignGet({ key, expiresIn }) {
+		readGrants.set(key, { expiresAtMs: Date.now() + expiresIn * 1000 });
+		return `${ORIGIN}/dev-bucket/${key}`;
 	},
 	async attributes({ key }) {
 		const o = objects.get(key);
@@ -87,13 +95,27 @@ const devS3 = {
 // so an unentitled local caller still gets the 402 the e2e suite asserts.
 // Do not import this into api/src/.
 const DEV_GRANT = 'dev-capability-grant';
+// What the dev literal is entitled to, per capability. The video.send row
+// carries prepaidExtensions: 2 so tests/e2e can exercise the one-tap prepaid
+// path and its exhaustion into 402 without an identity server.
+const DEV_GRANT_LIMITS = {
+	'transfer.multipart': { maxParts: 64 },
+	'video.send': { maxSegments: 128, prepaidExtensions: 2 },
+	'video.extend': { extensions: 1 }
+};
 const devGate = {
 	async check(req) {
 		const real = await gate.check(req);
 		if (real.granted) return real;
 		if (req.grant !== DEV_GRANT) return { granted: false };
-		return { granted: req.capability === 'transfer.multipart', limits: { maxParts: 64 } };
+		const limits = DEV_GRANT_LIMITS[req.capability];
+		return limits ? { granted: true, limits } : { granted: false };
 	}
+};
+
+const devStatusTokens = {
+	mint: (claims) => mintStatusToken({ secret: DEV_STATUS_SECRET, ...claims }),
+	verify: (token) => verifyStatusToken(token, { secret: DEV_STATUS_SECRET })
 };
 
 const { createNote, readNote, createFile, finalizeFile, statusFile, claimFile } = makeHandlers(
@@ -101,12 +123,34 @@ const { createNote, readNote, createFile, finalizeFile, statusFile, claimFile } 
 	devS3,
 	{
 		capabilities: devGate,
-		statusTokens: {
-			mint: (claims) => mintStatusToken({ secret: DEV_STATUS_SECRET, ...claims }),
-			verify: (token) => verifyStatusToken(token, { secret: DEV_STATUS_SECRET })
-		}
+		statusTokens: devStatusTokens
 	}
 );
+
+// The dev burn scheduler: one timer per session, re-armed by name exactly the
+// way EventBridge Scheduler updates the named schedule. unref'd so a pending
+// burn never holds the process open.
+const burnTimers = new Map(); // pk -> Timeout
+const devScheduler = {
+	async arm({ pk, segmentPks, atEpoch }) {
+		clearTimeout(burnTimers.get(pk));
+		const timer = setTimeout(
+			() => {
+				burnTimers.delete(pk);
+				videoHandlers.burnVideo({ pk, segmentPks }).catch((e) => console.error('burn:', e));
+			},
+			Math.max(0, atEpoch * 1000 - Date.now())
+		);
+		timer.unref();
+		burnTimers.set(pk, timer);
+	}
+};
+
+const videoHandlers = makeVideoHandlers(doc, devS3, {
+	capabilities: devGate,
+	statusTokens: devStatusTokens,
+	scheduler: devScheduler
+});
 
 async function ensureTable() {
 	try {
@@ -173,6 +217,19 @@ const server = createServer(async (req, res) => {
 			return res.end(message);
 		}
 
+		// The dev twin of a presigned segment GET: authorized only while an
+		// unexpired read grant exists for the key, which the handler only
+		// issues inside an open watch window.
+		if (req.method === 'GET' && bucket) {
+			const read = readGrants.get(bucket[1]);
+			if (!read || Date.now() > read.expiresAtMs || !objects.has(bucket[1])) {
+				res.writeHead(403, { ...cors, 'content-type': 'text/plain' });
+				return res.end('no such read grant');
+			}
+			res.writeHead(200, { ...cors, 'content-type': 'application/octet-stream' });
+			return res.end(objects.get(bucket[1]).body);
+		}
+
 		const burn = url.pathname.match(/^\/notes\/([^/]+)\/burn$/);
 		if (req.method === 'POST' && url.pathname === '/notes') {
 			result = await createNote({ body: (await readBody(req)).toString() });
@@ -186,6 +243,21 @@ const server = createServer(async (req, res) => {
 			result = await statusFile({ body: (await readBody(req)).toString() });
 		} else if (req.method === 'POST' && url.pathname === '/files/claim') {
 			result = await claimFile({ body: (await readBody(req)).toString() });
+		} else if (req.method === 'POST' && url.pathname.startsWith('/videos')) {
+			const videoRoutes = {
+				'/videos': videoHandlers.createVideo,
+				'/videos/finalize': videoHandlers.finalizeVideo,
+				'/videos/claim': videoHandlers.claimVideo,
+				'/videos/segment-url': videoHandlers.segmentUrl,
+				'/videos/finished': videoHandlers.finishedVideo,
+				'/videos/extend': videoHandlers.extendVideo,
+				'/videos/status': videoHandlers.statusVideo,
+				'/videos/destroy': videoHandlers.destroyVideo
+			};
+			const handler = videoRoutes[url.pathname];
+			result = handler
+				? await handler({ body: (await readBody(req)).toString() })
+				: { statusCode: 404, body: JSON.stringify({ error: 'not found' }) };
 		} else {
 			result = { statusCode: 404, body: JSON.stringify({ error: 'not found' }) };
 		}
