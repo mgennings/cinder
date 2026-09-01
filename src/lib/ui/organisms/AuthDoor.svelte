@@ -29,6 +29,7 @@
 	import Button from '../atoms/Button.svelte';
 	import Wordmark from '../atoms/Wordmark.svelte';
 	import LiveRegion from '../atoms/LiveRegion.svelte';
+	import { terrain } from '../terrain';
 
 	let {
 		title,
@@ -109,59 +110,222 @@
 	});
 </script>
 
-<main class="bench mx-auto flex min-h-dvh max-w-md flex-col justify-center px-5 py-16">
-	<Wordmark />
+<main class="auth-arrival">
+	<section class="auth-panel" aria-label={title}>
+		<div class="auth-panel-inner">
+			<Wordmark />
 
-	<LiveRegion message={announcement} />
+			<LiveRegion message={announcement} />
 
-	<Card class="mt-8 p-6">
-		{#if view === 'loading'}
-			<p class="text-sm text-mist">Checking this browser…</p>
-		{:else if view === 'unavailable'}
-			<h1 class="text-xl font-semibold">Accounts are not available yet</h1>
-			<p class="mt-2 text-sm leading-relaxed text-mist">
-				Cinder Pro has not launched here. Sending under the free size limit works exactly as it
-				always has, with no account at all.
-			</p>
-			<Button href="/" class="mt-5 px-4">Back to Cinder</Button>
-		{:else if view === 'signed-in'}
-			<h1 class="text-xl font-semibold">You are already signed in</h1>
-			<p class="mt-2 text-sm leading-relaxed text-mist">
-				Nothing to do here. This browser already holds a session.
-			</p>
-			<div class="mt-5 flex flex-col gap-2 sm:flex-row">
-				<Button variant="ember" class="px-5" href={next ?? '/account'}>Continue</Button>
-				{#if next}
-					<Button class="px-5" href="/account">Your account</Button>
-				{/if}
-			</div>
-		{:else}
-			<h1 class="text-xl font-semibold">{title}</h1>
-			<p class="mt-2 mb-5 text-sm leading-relaxed text-mist">
-				{#if view === 'expired'}
-					That session ended — it was revoked, or it simply ran out. Nothing was lost and nothing
-					was charged. Signing in again restores the balance on this account.
+			<Card class="mt-8 p-6">
+				{#if view === 'loading'}
+					<p class="text-sm text-mist">Checking this browser…</p>
+				{:else if view === 'unavailable'}
+					<h1 class="text-xl font-semibold">Accounts are not available yet</h1>
+					<p class="mt-2 text-sm leading-relaxed text-mist">
+						Cinder Pro has not launched here. Sending under the free size limit works exactly as it
+						always has, with no account at all.
+					</p>
+					<Button href="/" class="mt-5 px-4">Back to Cinder</Button>
+				{:else if view === 'signed-in'}
+					<h1 class="text-xl font-semibold">You are already signed in</h1>
+					<p class="mt-2 text-sm leading-relaxed text-mist">
+						Nothing to do here. This browser already holds a session.
+					</p>
+					<div class="mt-5 flex flex-col gap-2 sm:flex-row">
+						<Button variant="ember" class="px-5" href={next ?? '/account'}>Continue</Button>
+						{#if next}
+							<Button class="px-5" href="/account">Your account</Button>
+						{/if}
+					</div>
 				{:else}
-					{lede}
+					<h1 class="text-xl font-semibold">{title}</h1>
+					<p class="mt-2 mb-5 text-sm leading-relaxed text-mist">
+						{#if view === 'expired'}
+							That session ended. It was revoked, or it simply ran out. Nothing was lost and nothing
+							was charged. Signing in again restores the balance on this account.
+						{:else}
+							{lede}
+						{/if}
+					</p>
+
+					<SignInPanel {verb} returnTo={next} {error} onstatus={say} />
+
+					<div class="mt-5 text-sm leading-relaxed text-mist">
+						{@render note()}
+					</div>
 				{/if}
+			</Card>
+
+			{#if view === 'ready' || view === 'expired'}
+				<p class="mt-6 text-center text-sm text-mist">
+					{@render otherDoor()}
+				</p>
+			{/if}
+
+			<p class="mt-6 text-center text-xs leading-relaxed text-ghost">
+				Sending a note or file never needs an account. Accounts only keep a Cinder Pro balance.
 			</p>
+		</div>
+	</section>
 
-			<SignInPanel {verb} returnTo={next} {error} onstatus={say} />
-
-			<div class="mt-5 text-sm leading-relaxed text-mist">
-				{@render note()}
-			</div>
-		{/if}
-	</Card>
-
-	{#if view === 'ready' || view === 'expired'}
-		<p class="mt-6 text-center text-sm text-mist">
-			{@render otherDoor()}
-		</p>
-	{/if}
-
-	<p class="mt-6 text-center text-xs leading-relaxed text-ghost">
-		Sending a note or a file needs no account and never will. An account exists only so a Cinder
-		Pro balance survives a closed tab.
-	</p>
+	<section class="auth-field vault-glow" {@attach terrain()} aria-labelledby="identity-promise">
+		<div class="auth-field-copy">
+			<p class="font-mono text-xs font-bold tracking-[0.16em] text-ember-ink uppercase">
+				Cinder identity
+			</p>
+			<h2 id="identity-promise">Remember the balance. Leave the secret&nbsp;alone.</h2>
+			<p class="auth-field-lede">
+				Your account keeps a Cinder Pro balance with you. Notes and transfers never carry it.
+			</p>
+			<dl class="auth-proof">
+				<div>
+					<dt>Purpose</dt>
+					<dd>Sign in and keep your balance</dd>
+				</div>
+				<div>
+					<dt>Account data</dt>
+					<dd>Never used for tracking or sold</dd>
+				</div>
+				<div>
+					<dt>Notes + transfers</dt>
+					<dd>Never attached to an account</dd>
+				</div>
+			</dl>
+		</div>
+	</section>
 </main>
+
+<style>
+	.auth-arrival {
+		display: flex;
+		flex-wrap: wrap;
+		min-height: 100dvh;
+	}
+
+	.auth-panel,
+	.auth-field {
+		min-width: 0;
+	}
+
+	.auth-panel {
+		display: flex;
+		flex: 9 1 28rem;
+		align-items: center;
+		justify-content: center;
+		padding: clamp(2rem, 6vw, 5rem);
+	}
+
+	.auth-panel-inner {
+		width: min(100%, 32rem);
+	}
+
+	.auth-panel h1 {
+		text-wrap: balance;
+	}
+
+	.auth-field {
+		isolation: isolate;
+		display: flex;
+		flex: 11 1 28rem;
+		align-items: center;
+		padding: clamp(3rem, 8vw, 8rem);
+		box-shadow:
+			inset 1px 0 0 var(--color-line),
+			inset 0 1px 0 var(--color-line);
+	}
+
+	.auth-field-copy {
+		position: relative;
+		z-index: 1;
+		width: min(100%, 38rem);
+	}
+
+	.auth-field h2 {
+		max-width: 11ch;
+		margin-top: 1rem;
+		color: var(--color-body);
+		font-size: clamp(2.75rem, 6vw, 6rem);
+		font-weight: 800;
+		line-height: 0.92;
+		letter-spacing: -0.06em;
+		text-wrap: balance;
+	}
+
+	.auth-field-lede {
+		max-width: 30rem;
+		margin-top: 1.5rem;
+		color: var(--color-mist);
+		font-size: clamp(1rem, 2vw, 1.25rem);
+		line-height: 1.55;
+		text-wrap: pretty;
+	}
+
+	.auth-proof {
+		display: grid;
+		gap: 0;
+		margin-top: clamp(2rem, 5vw, 4rem);
+		border-block: 1px solid var(--color-line);
+	}
+
+	.auth-proof > div {
+		display: grid;
+		grid-template-columns: minmax(7rem, 0.75fr) minmax(0, 1.25fr);
+		gap: 1rem;
+		padding: 1rem 0;
+	}
+
+	.auth-proof > div + div {
+		border-block-start: 1px solid var(--color-line);
+	}
+
+	.auth-proof dt,
+	.auth-proof dd {
+		margin: 0;
+	}
+
+	.auth-proof dt {
+		color: var(--color-ghost);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		line-height: 1.5;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.auth-proof dd {
+		color: var(--color-body);
+		font-size: 0.875rem;
+		font-weight: 650;
+		line-height: 1.5;
+		text-wrap: pretty;
+	}
+
+	@media (max-width: 56rem) {
+		.auth-panel {
+			padding: 2rem 1.25rem;
+		}
+
+		.auth-field {
+			padding: clamp(2.5rem, 10vw, 5rem) 1.25rem;
+		}
+
+		.auth-field-copy {
+			width: min(100%, 32rem);
+			margin-inline: auto;
+		}
+
+		.auth-field h2 {
+			max-width: none;
+			font-size: clamp(1.75rem, 10vw, 4.5rem);
+		}
+	}
+
+	@media (max-width: 28rem) {
+		.auth-proof > div {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 0.25rem;
+		}
+	}
+</style>

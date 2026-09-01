@@ -10,31 +10,31 @@
 	<title>Create a Cinder account</title>
 	<meta
 		name="description"
-		content="Creating a Cinder account asks for no email, no password, and no name. Apple or Google hand over one opaque number and that is the whole account."
+		content="Create a Cinder account with Apple or Google. Cinder keeps only the account data needed to sign you in and carry your Pro balance."
 	/>
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
 <AuthDoor
-	title="Create an account"
-	lede="There is no form. Apple or Google hand Cinder one opaque number, Cinder stores a one-way hash of it, and that is the entire account."
+	title="Sign up"
+	lede="There is no form. Choose Apple or Google, and Cinder creates the smallest account needed to sign you in and keep your Cinder Pro balance with you."
 	verb="Sign up"
 >
 	{#snippet note()}
 		<p>
-			What Cinder never asks for: an email address, a name, a password, a phone number. Not hidden
-			behind a relay, not optional — never requested at all. The whole record is a hash, a count of
-			sends remaining, and the date of the last purchase.
+			Account data is used only to sign you in and keep your balance. Cinder does not use it for
+			tracking or sell it, and notes and transfers never carry the account.
 		</p>
 		<p class="mt-3">
-			The cost of storing nothing is real and worth knowing now: there is no way to look you up
-			afterward, so a lost account cannot be recovered and unspent credits cannot be moved to a new
-			one. <a class="text-ember-ink underline" href="/account">The full list is on the account page.</a>
+			Choose a provider you expect to keep using. Account recovery is limited today, and unspent
+			credits cannot be moved to a new account. <a class="text-ember-ink underline" href="/account"
+				>The full account record is listed&nbsp;here.</a
+			>
 		</p>
 	{/snippet}
 	{#snippet otherDoor()}
 		Already used Apple or Google here? <a class="text-ember-ink underline" href="/signin"
-			>Sign in instead.</a
+			>Sign in&nbsp;instead.</a
 		>
 	{/snippet}
 </AuthDoor>

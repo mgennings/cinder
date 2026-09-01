@@ -12,13 +12,16 @@
 //   sessionStorage  the PKCE verifier, deleted the moment the code is exchanged
 //   sessionStorage  the same-origin path to return to after signing in, which
 //                   is consumed on success and cleared on sign-out and delete
-// That list is the whole of it. It omitted the third key until a review read
-// the file against itself, which is the failure this kind of list exists to
-// prevent — so if a line of code ever writes a fourth, this list is the defect.
-// sessionStorage rather than localStorage: closing the tab ends the session,
-// which is the behavior someone using a self-destructing-notes product would
-// expect if they thought about it. Nothing about an account is written to a
-// cookie, so no note request can carry one.
+//   localStorage    the last provider button selected on this browser, with no
+//                   timestamp, identity, or proof that sign-in finished
+// That list is the whole of it. It omitted the third session key until a review
+// read the file against itself, which is the failure this kind of list exists
+// to prevent — so if a line of code ever writes another, this list is the
+// defect.
+// Session credentials stay in sessionStorage, so closing the tab ends the
+// session. The provider cue survives separately because it is only a choice of
+// button, never an account identifier. Nothing about an account is written to
+// a cookie, so no note request can carry one.
 
 import { bytesToBase64Url } from './crypto/codec';
 
@@ -32,6 +35,30 @@ export type Provider = 'SignInWithApple' | 'Google';
 const VERIFIER_KEY = 'cinder.pkce';
 const TOKENS_KEY = 'cinder.tokens';
 const RETURN_KEY = 'cinder.returnto';
+const LAST_PROVIDER_KEY = 'cinder.last-provider';
+
+const isProvider = (value: string | null): value is Provider =>
+	value === 'SignInWithApple' || value === 'Google';
+
+/** The provider button this browser selected last, never a claim about authentication. */
+export function lastSelectedProvider(): Provider | null {
+	try {
+		const provider = localStorage.getItem(LAST_PROVIDER_KEY);
+		return isProvider(provider) ? provider : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Remember one provider id locally. Storage refusal must never block sign-in. */
+export function rememberSelectedProvider(provider: Provider): void {
+	try {
+		localStorage.setItem(LAST_PROVIDER_KEY, provider);
+	} catch {
+		// Private browsing and storage policy can refuse localStorage. The cue is
+		// optional; the provider handoff is not.
+	}
+}
 
 export const identityConfigured = () => Boolean(HOSTED_UI && CLIENT_ID && API_BASE);
 
@@ -407,13 +434,15 @@ export async function signOut(): Promise<void> {
 	sessionStorage.removeItem(TOKENS_KEY);
 	sessionStorage.removeItem(VERIFIER_KEY);
 	// Where this browser was headed before it signed in. Cleared here too,
-	// because "signed out" has to mean every key this file wrote is gone.
+	// because "signed out" has to mean every session key this file wrote is
+	// gone. The last-provider cue intentionally remains: it records a button
+	// choice on this browser, not a session or proof that authentication worked.
 	sessionStorage.removeItem(RETURN_KEY);
 	if (!tokens) return;
 
-	// Local storage is already cleared above, on purpose: this browser is signed
-	// out whether or not the origin can be reached to say so. A throw here used
-	// to escape into the caller.
+	// Session storage is already cleared above, on purpose: this browser is
+	// signed out whether or not the origin can be reached to say so. A throw here
+	// used to escape into the caller.
 	await reach(new URL('/oauth2/revoke', HOSTED_UI), {
 		method: 'POST',
 		headers: { 'content-type': 'application/x-www-form-urlencoded' },

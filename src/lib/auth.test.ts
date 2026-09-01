@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { intendedPath, takeReturnTo, peekReturnTo, startSignIn } from './auth';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+	intendedPath,
+	takeReturnTo,
+	peekReturnTo,
+	startSignIn,
+	lastSelectedProvider,
+	rememberSelectedProvider,
+	signOut
+} from './auth';
 
 // THE OPEN-REDIRECT GUARD, and nothing else. Everything else in auth.ts talks
 // to Cognito, and a test that mocked Cognito would only be asserting the mock.
@@ -11,7 +19,11 @@ import { intendedPath, takeReturnTo, peekReturnTo, startSignIn } from './auth';
 // somebody else's page having just signed in — the classic phishing shape.
 
 describe('the destination a sign-in is allowed to return to', () => {
-	beforeEach(() => sessionStorage.clear());
+	beforeEach(() => {
+		sessionStorage.clear();
+		localStorage.clear();
+		vi.restoreAllMocks();
+	});
 
 	it('accepts an ordinary same-origin path', () => {
 		expect(intendedPath('?next=/pro')).toBe('/pro');
@@ -127,5 +139,43 @@ describe('the destination a sign-in is allowed to return to', () => {
 		// way. Awaiting the rejection keeps it from surfacing as an unhandled one.
 		await startSignIn('Google').catch(() => {});
 		expect(peekReturnTo()).toBeNull();
+	});
+});
+
+describe('the last provider selected on this browser', () => {
+	beforeEach(() => {
+		sessionStorage.clear();
+		localStorage.clear();
+		vi.restoreAllMocks();
+	});
+
+	it('stores only a valid provider id and restores it across sessions', () => {
+		rememberSelectedProvider('Google');
+		expect(localStorage.getItem('cinder.last-provider')).toBe('Google');
+		expect(lastSelectedProvider()).toBe('Google');
+	});
+
+	it('ignores a value that is not one of the two hosted providers', () => {
+		localStorage.setItem('cinder.last-provider', 'email');
+		expect(lastSelectedProvider()).toBeNull();
+	});
+
+	it('fails safely when browser policy refuses local storage', () => {
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('storage refused');
+		});
+		expect(lastSelectedProvider()).toBeNull();
+
+		vi.restoreAllMocks();
+		vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new Error('storage refused');
+		});
+		expect(() => rememberSelectedProvider('SignInWithApple')).not.toThrow();
+	});
+
+	it('survives sign-out because it is a browser preference, not a session', async () => {
+		rememberSelectedProvider('SignInWithApple');
+		await signOut();
+		expect(lastSelectedProvider()).toBe('SignInWithApple');
 	});
 });

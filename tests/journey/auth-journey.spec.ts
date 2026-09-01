@@ -17,6 +17,7 @@ import { test, expect } from '@playwright/test';
 // screen — which is the part this file is about.
 
 const APPLE = /sign in with apple|sign up with apple|continue with apple/i;
+const IDENTITY = process.env.CINDER_TEST_IDENTITY_ORIGIN ?? 'http://127.0.0.1:4100';
 
 test.describe('the doors', () => {
 	test('both providers are offered, Apple first and not subordinate', async ({ page }) => {
@@ -44,9 +45,30 @@ test.describe('the doors', () => {
 
 	test('the sign-up door says the same two buttons are the whole form', async ({ page }) => {
 		await page.goto('/signup');
-		await expect(page.getByRole('heading', { name: /create an account/i })).toBeVisible();
+		await expect(page.getByRole('heading', { name: /^sign up$/i })).toBeVisible();
 		await expect(page.getByText(/there is no form/i)).toBeVisible();
 		await expect(page.locator('.btn-provider')).toHaveCount(2);
+	});
+
+	test('the most recently selected provider is a browser cue, not a session', async ({
+		page,
+		context
+	}) => {
+		await page.goto('/signin');
+		const googleButton = page.getByRole('button', { name: /sign in with google/i });
+		await expect(googleButton).toBeVisible();
+		await context.setOffline(true);
+		await googleButton.click();
+
+		const google = page.locator('[data-provider="Google"]');
+		await expect(google.getByText(/last used/i)).toBeVisible();
+		await expect(page.getByRole('alert')).toContainText(/offline.*cannot reach Google/i);
+		expect(await page.evaluate(() => sessionStorage.getItem('cinder.tokens'))).toBeNull();
+
+		await context.setOffline(false);
+		await page.reload();
+		await expect(google.getByText(/last used/i)).toBeVisible();
+		await expect(page.getByText(/does not mean the sign-in\s+finished/i)).toBeVisible();
 	});
 });
 
@@ -154,14 +176,14 @@ test.describe('the failures, which are the point', () => {
 		// Revoked elsewhere: the token in this tab is still there, and the origin
 		// no longer honors it. The distinction only exists because the page asks
 		// the origin rather than reading its own storage.
-		await page.evaluate(async () => {
+		await page.evaluate(async (identity) => {
 			const t = JSON.parse(sessionStorage.getItem('cinder.tokens')!);
-			await fetch('http://127.0.0.1:4100/oauth2/revoke', {
+			await fetch(`${identity}/oauth2/revoke`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/x-www-form-urlencoded' },
 				body: new URLSearchParams({ client_id: 'dev-cinder-client', token: t.refreshToken })
 			});
-		});
+		}, IDENTITY);
 
 		await page.reload();
 		await expect(page.getByRole('heading', { name: /that session ended/i })).toBeVisible({

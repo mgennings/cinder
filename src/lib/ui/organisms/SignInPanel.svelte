@@ -13,7 +13,13 @@
 	// WHAT IT DOES NOT: any word about accounts, credits, or Cinder. The page
 	// says those. That line is what makes this file copyable to the next
 	// product without an edit.
-	import { startSignIn, type Provider } from '$lib/auth';
+	import { onMount } from 'svelte';
+	import {
+		lastSelectedProvider,
+		rememberSelectedProvider,
+		startSignIn,
+		type Provider
+	} from '$lib/auth';
 	import ProviderButtons from '../molecules/ProviderButtons.svelte';
 
 	let {
@@ -37,10 +43,17 @@
 	// throws away the verifier the first one is still waiting on.
 	let leaving = $state(false);
 	let offline = $state('');
+	let lastUsed = $state<Provider | null>(null);
+
+	onMount(() => {
+		lastUsed = lastSelectedProvider();
+	});
 
 	async function go(provider: Provider) {
 		if (leaving) return;
 		const name = provider === 'Google' ? 'Google' : 'Apple';
+		lastUsed = provider;
+		rememberSelectedProvider(provider);
 
 		// Asked before leaving rather than discovered after. navigator.onLine is
 		// only trustworthy in the negative — false means there is definitely no
@@ -79,7 +92,7 @@
 	</p>
 {/if}
 
-<ProviderButtons {verb} disabled={leaving} onchoose={go} />
+<ProviderButtons {verb} disabled={leaving} {lastUsed} onchoose={go} />
 
 {#if leaving}
 	<p class="mt-3 text-sm text-mist">Handing you over…</p>
