@@ -100,7 +100,7 @@ try {
 	});
 	await waitForPort(4100);
 
-	start('Cinder web', 'pnpm', ['dev', '--host', HOST, '--port', '5190'], {
+	start('Cinder web', 'pnpm', ['dev', '--host', HOST, '--port', '5190', '--strictPort'], {
 		VITE_API_BASE: `http://${HOST}:4000`,
 		VITE_IDENTITY_API_BASE: `http://${HOST}:4100`,
 		VITE_IDENTITY_HOSTED_UI: `http://${HOST}:4100`,
