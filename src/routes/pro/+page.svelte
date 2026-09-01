@@ -138,24 +138,25 @@
 		</p>
 	{/if}
 
-	<PaymentDisclosure />
-
 	{#if view === 'loading'}
-		<p class="mt-8 text-sm text-ghost">Checking this account…</p>
+		<p class="mt-6 text-sm text-ghost">Checking this account…</p>
 	{:else if view === 'unavailable'}
-		<p class="mt-8 text-sm leading-relaxed text-mist">
+		<p class="mt-6 text-sm leading-relaxed text-mist">
 			Cinder Pro is not available in this build. Everything up to {freeLabel} works exactly as it
 			always has.
 		</p>
 	{:else if view === 'signed-out' || view === 'expired'}
-		<div in:fade={{ duration: dur(200) }} class="mt-8 max-w-sm">
-			<p class="mb-4 text-sm leading-relaxed text-mist">
+		<section in:fade={{ duration: dur(200) }} aria-labelledby="account-heading" class="mt-6 max-w-sm">
+			<h2 id="account-heading" class="text-base font-semibold text-body text-balance">
+				Sign in or create an account
+			</h2>
+			<p class="mb-4 mt-2 text-sm leading-relaxed text-mist text-pretty">
 				{#if view === 'expired'}
-					That session ended, so this browser cannot buy anything right now. Nothing was charged.
-					Signing in again puts you straight back on this page with whatever balance you had.
+					That session ended. Sign in again to return here with the balance you had. Nothing was
+					charged.
 				{:else}
-					Pro needs an account, because something has to remember you paid. Sending does not, and
-					never will — an account is only ever about the purchase.
+					Use Apple or Google. The account remembers only your credit balance and last purchase date;
+					notes and transfers remain separate.
 				{/if}
 			</p>
 			<!-- returnTo is the whole point of this being a panel rather than a link
@@ -163,17 +164,23 @@
 			     the pay point, ready to buy, instead of landing on /account with the
 			     thing they wanted two clicks away. -->
 			<SignInPanel verb="Continue" returnTo="/pro" onstatus={(s) => (announcement = s)} />
-		</div>
+		</section>
 	{:else}
-		<div in:fade={{ duration: dur(200) }} class="mt-8">
-			<Button variant="ember" onclick={buy} disabled={working}>
+		<section in:fade={{ duration: dur(200) }} aria-labelledby="purchase-heading" class="mt-6">
+			<h2 id="purchase-heading" class="text-sm font-semibold text-body">Before you pay</h2>
+			<ul class="mt-2 space-y-1 text-sm leading-relaxed text-mist">
+				<li>Stripe handles payment on its own page.</li>
+				<li>A credit is spent before encryption or upload, when Cinder approves the large send.</li>
+				<li>Spent credits are not refundable, even if you cancel or a delivery fails.</li>
+			</ul>
+			<Button class="mt-4 w-full sm:w-auto" variant="ember" onclick={buy} disabled={working}>
 				{working ? 'Opening Stripe…' : `Pay ${PRICE} for ${PRO_CREDITS} sends`}
 			</Button>
 			<!-- mist, not ghost. Ghost is placeholder weight and theme.md says so; at
 			     12px on the light floor beneath the error fill it measured 4.48:1,
 			     which is 0.02 under AA and still under. -->
 			<p class="mt-3 text-xs text-mist">This opens Stripe. You can stop there and pay nothing.</p>
-		</div>
+		</section>
 	{/if}
 
 	{#if error}
@@ -181,4 +188,6 @@
 			<Alert class="mt-4">{error}</Alert>
 		</div>
 	{/if}
+
+	<PaymentDisclosure />
 </BenchPage>
