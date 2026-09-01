@@ -189,6 +189,28 @@
 				? ''
 				: `, out of the ${creditWord(credits)} on this account`}.
 		</p>
+		<!-- The door to credits, on the surface that spends them. It used to
+		     appear ONLY at a balance of exactly zero, so a signed-out sender —
+		     the common case, since video is the first thing here that costs
+		     anything — read a price with no way to pay it and no account named.
+		     Matt hit exactly that on 2026-09-01 and could not find credits at
+		     all. Anyone who cannot pay for this send now gets the next step. -->
+		{#if credits === null}
+			<p class="mt-1 text-xs leading-relaxed text-mist text-pretty">
+				Credits live on an account, so this needs one. It is an opaque number from Apple or
+				Google, no email and no name.
+				<a class="underline underline-offset-2" href="/signin">Sign in</a>
+				or
+				<a class="underline underline-offset-2" href="/pro">see what Pro costs</a>. Notes and
+				files under 4 MiB stay free, with no account, always.
+			</p>
+		{:else if credits < totalCredits}
+			<p class="mt-1 text-xs leading-relaxed text-mist text-pretty">
+				This send needs {totalCredits} and the account has {creditWord(credits)}. {PRO_PRICE} adds
+				{PRO_CREDITS}.
+				<a class="underline underline-offset-2" href="/pro">Top up</a>.
+			</p>
+		{/if}
 		<p class="mt-1 text-xs leading-relaxed text-ghost text-pretty">
 			Cinder never sees the video, its name, or your key.
 		</p>
@@ -216,14 +238,6 @@
 			</Disclosure>
 		</div>
 	</div>
-	{#if credits === 0}
-		<!-- Zero is a state, not a fault. -->
-		<p in:fade={{ duration: dur(200) }} class="mt-2 text-xs leading-relaxed text-mist text-pretty">
-			This account has no credits left. Notes and files under 4 MiB still send free, the way
-			they always have. {PRO_PRICE} adds {PRO_CREDITS} credits.
-			<a class="underline underline-offset-2" href="/pro">Top up</a>.
-		</p>
-	{/if}
 {/if}
 
 {#if error}
