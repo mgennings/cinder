@@ -4,6 +4,15 @@ All notable changes to Cinder are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- **Gated end-to-end encrypted video sharing.** `?video=on` enables the review experience for the current tab, with signed-in sending, one-time links, and complete in-browser playback.
+- **A shared account dashboard and direct sign-in journey.** Send, account, and Cinder Pro now use one responsive shell with Apple and Google provider continuity.
+
+### Fixed
+
+- **Safari now carries every encrypted video piece through delivery.** Large MOV files reassemble into playable media, and the native file picker remains usable at narrow widths and 200% text.
+
 ## [0.3.0] — 2026-07-31
 
 Files larger than 4 MiB, with the guarantee untouched.
