@@ -186,6 +186,13 @@ export type WatchSessionState =
 			segments: number;
 			playable: boolean;
 	  }
+	/** A bounded transfer failure. The server clock still owns the window. */
+	| {
+			phase: 'transfer-error';
+			deadlineEpoch: number;
+			received: number;
+			segments: number;
+	  }
 	/** Everything local. Seeking and rewatching cost zero server reads. */
 	| { phase: 'watching'; deadlineEpoch: number; objectUrl: string; meta: VideoMeta }
 	/**
@@ -228,6 +235,8 @@ export interface PlaybackStore {
 	subscribe(run: (state: WatchSessionState) => void): () => void;
 	/** The gate's Start watching. Opens the window; the claim is the consent. */
 	claim(): Promise<void>;
+	/** Retries a transfer that exhausted its automatic attempts. */
+	retry(): Promise<void>;
 	/** The gate's Decline. Destroys unwatched; costs nothing; looks identical
 	 *  to watching from the sender's side. */
 	decline(): Promise<void>;

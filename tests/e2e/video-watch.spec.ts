@@ -85,7 +85,10 @@ const epoch = () => Math.floor(Date.now() / 1000);
 async function mockSession(
 	page: Page,
 	sealed: Sealed,
-	{ finishedDeadlineIn }: { finishedDeadlineIn: number }
+	{
+		finishedDeadlineIn,
+		segmentFailures = 0
+	}: { finishedDeadlineIn: number; segmentFailures?: number }
 ) {
 	await page.route('**/videos/claim', (route) =>
 		route.fulfill({
@@ -104,12 +107,16 @@ async function mockSession(
 	await page.route('**/videos/segment-url', (route) =>
 		route.fulfill({ json: { url: `${API}/__mock-seg-0`, expiresIn: 480 } })
 	);
-	await page.route('**/__mock-seg-0', (route) =>
-		route.fulfill({
+	await page.route('**/__mock-seg-0', (route) => {
+		if (segmentFailures > 0) {
+			segmentFailures -= 1;
+			return route.abort('internetdisconnected');
+		}
+		return route.fulfill({
 			body: Buffer.from(sealed.envelopes[0].ciphertext),
 			contentType: 'application/octet-stream'
-		})
-	);
+		});
+	});
 	await page.route('**/videos/finished', (route) =>
 		route.fulfill({ json: { deadlineEpoch: epoch() + finishedDeadlineIn } })
 	);
@@ -205,6 +212,43 @@ test('the countdown renders the server deadline, never a theatrical 8:00', async
 
 	// The timer is not color-alone: numeral, label, and shape all present.
 	await expect(page.getByRole('timer')).toHaveAttribute('aria-label', /left on Cinder's copy/);
+});
+
+test('a stalled transfer stops retrying and gives the recipient a working recovery', async ({
+	page
+}) => {
+	const sealed = await seal(pattern(48_000));
+	await mockSession(page, sealed, { finishedDeadlineIn: 300, segmentFailures: 4 });
+	await page.setViewportSize({ width: 375, height: 667 });
+	await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+
+	await page.goto(`/v/mockedvideolocator#${sealed.fragmentKey}.1`);
+	await page.getByRole('button', { name: /^start watching$/i }).click();
+
+	await expect(page.getByRole('heading', { name: 'The video stopped arriving' })).toBeVisible({
+		timeout: 15_000
+	});
+	await expect(page.getByRole('alert')).toContainText(
+		/watch window keeps counting down on the server/i
+	);
+
+	// The recovery remains reachable at the smallest supported width and at
+	// 200% text in both schemes. Horizontal overflow is the clipping failure
+	// this journey can never hide behind a passing unit test.
+	await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+	const overflow = () =>
+		page.evaluate(
+			() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+		);
+	expect(await overflow(), 'light mode overflow at 375px and 200% text').toBeLessThanOrEqual(0);
+	await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+	expect(await overflow(), 'dark mode overflow at 375px and 200% text').toBeLessThanOrEqual(0);
+
+	const retry = page.getByRole('button', { name: 'Try again' });
+	await retry.focus();
+	await expect(retry).toBeFocused();
+	await retry.click();
+	await expect(page.locator('video')).toBeVisible({ timeout: 10_000 });
 });
 
 test('an extension moves the clock to the new server deadline', async ({ page }) => {

@@ -60,7 +60,10 @@
 	let nowEpoch = $state(Math.floor(Date.now() / 1000));
 
 	const deadline = $derived(
-		view.phase === 'downloading' || view.phase === 'watching' || view.phase === 'countdown'
+		view.phase === 'downloading' ||
+		view.phase === 'transfer-error' ||
+		view.phase === 'watching' ||
+		view.phase === 'countdown'
 			? view.deadlineEpoch
 			: 0
 	);
@@ -93,6 +96,9 @@
 					announcement = 'Your watch window is open. The video is downloading.';
 				} else if (next.phase === 'watching') {
 					announcement = 'The whole video is here. Playback is ready.';
+				} else if (next.phase === 'transfer-error') {
+					announcement =
+						"The video stopped arriving. Check your connection, then try again. Cinder's watch window keeps counting down on the server.";
 				} else if (next.phase === 'countdown') {
 					showFinishedCopy = true;
 					announcement =
@@ -211,6 +217,17 @@
 				<VideoWatchDownload received={view.received} segments={view.segments} />
 				<p class="mt-4 text-center text-xs text-ghost">
 					Watch window: <span class="tabular-nums">{clock}</span> left. Finishing the video starts a visible 8-minute countdown.
+				</p>
+			</div>
+		{:else if view.phase === 'transfer-error'}
+			<div in:fade={{ duration: dur(300) }} class="text-center">
+				<h1 class="text-lg font-semibold text-balance">The video stopped arriving</h1>
+				<Alert tone="boxed" class="mt-4 text-left">
+					Check your connection, then try again. Cinder's watch window keeps counting down on the server.
+				</Alert>
+				<Button variant="ember" onclick={() => void store.retry()} class="mt-5">Try again</Button>
+				<p class="mt-4 text-xs leading-relaxed text-ghost text-pretty">
+					{view.received} of {view.segments} pieces are already here. If it keeps stopping, ask the sender for a new link.
 				</p>
 			</div>
 		{:else if view.phase === 'watching'}

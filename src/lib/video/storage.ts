@@ -30,9 +30,12 @@ const fname = (key: string) => encodeURIComponent(key);
 
 const OPFS_DIR = 'cinder-video';
 
-export function opfsStore(): ScratchStore {
-	const dir = async () =>
-		(await navigator.storage.getDirectory()).getDirectoryHandle(OPFS_DIR, { create: true });
+export function opfsStore(
+	directory = navigator.storage
+		.getDirectory()
+		.then((root) => root.getDirectoryHandle(OPFS_DIR, { create: true }))
+): ScratchStore {
+	const dir = () => directory;
 
 	return {
 		async put(key, bytes) {
@@ -99,11 +102,60 @@ export function memoryStore(): ScratchStore {
  * is honest for the product too: everything staged here is discardable by
  * design, and a browser without OPFS simply pays the RAM.
  */
-export function scratchStore(): ScratchStore {
-	// The DOM types say getDirectory always exists; shipped browsers disagree,
-	// so the probe is a typeof rather than a truthiness the compiler folds away.
-	return typeof navigator !== 'undefined' &&
-		typeof navigator.storage?.getDirectory === 'function'
-		? opfsStore()
-		: memoryStore();
+export function scratchStore(preferred?: Promise<ScratchStore>): ScratchStore {
+	const fallback = memoryStore();
+	const available =
+		preferred ??
+		(typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function'
+			? navigator.storage
+					.getDirectory()
+					.then((root) => root.getDirectoryHandle(OPFS_DIR, { create: true }))
+					.then((directory) => opfsStore(Promise.resolve(directory)))
+			: Promise.resolve(fallback));
+
+	let backend = available.catch(() => fallback);
+	let primaryHasBytes = false;
+	const switchToFallback = () => {
+		backend = Promise.resolve(fallback);
+		return fallback;
+	};
+
+	return {
+		async put(key, bytes) {
+			const store = await backend;
+			try {
+				await store.put(key, bytes);
+				if (store !== fallback) primaryHasBytes = true;
+			} catch (error) {
+				// Falling back before the first successful write loses nothing. Once
+				// OPFS holds bytes, changing stores would split one transfer across
+				// two backends; surface that failure so the caller can retry instead.
+				if (store === fallback || primaryHasBytes) throw error;
+				await switchToFallback().put(key, bytes);
+			}
+		},
+		async get(key) {
+			const store = await backend;
+			try {
+				return await store.get(key);
+			} catch (error) {
+				if (store === fallback || primaryHasBytes) throw error;
+				return switchToFallback().get(key);
+			}
+		},
+		async remove(key) {
+			try {
+				await (await backend).remove(key);
+			} catch {
+				await fallback.remove(key);
+			}
+		},
+		async removeAll(prefix) {
+			try {
+				await (await backend).removeAll(prefix);
+			} catch {
+				await fallback.removeAll(prefix);
+			}
+		}
+	};
 }

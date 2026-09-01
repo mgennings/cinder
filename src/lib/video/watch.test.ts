@@ -39,7 +39,7 @@ type FakeOpts = {
 	claimError?: Error;
 	extendError?: Error;
 	finishedAtClaim?: boolean;
-	failFetchOnce?: boolean;
+	fetchFailures?: number;
 	now?: () => number;
 };
 
@@ -59,7 +59,7 @@ async function fakeWatch(opts: FakeOpts = {}) {
 	};
 	let prepaidRemaining = 2;
 	let extensionsUsed = 0;
-	let fetchFailuresLeft = opts.failFetchOnce ? 1 : 0;
+	let fetchFailuresLeft = opts.fetchFailures ?? 0;
 
 	const storage = opts.storage ?? memoryStore();
 	const store = createWatchStore({
@@ -187,13 +187,31 @@ describe('the watch store', () => {
 	});
 
 	it('a dropped segment fetch retries with a FRESH issued URL and still completes', async () => {
-		const w = await fakeWatch({ failFetchOnce: true });
+		const w = await fakeWatch({ fetchFailures: 1 });
 		const watching = when(w.store, (s) => s.phase === 'watching');
 		await w.store.claim();
 		await watching;
 		// Segment 0 was asked for twice — a lapsed presigned URL is reissued, not
 		// retried stale.
 		expect(w.calls.segmentUrls).toEqual([0, 0, 1]);
+	});
+
+	it('stops retrying after four failed attempts and lets the person resume', async () => {
+		const w = await fakeWatch({ fetchFailures: 4 });
+		const settled = when(
+			w.store,
+			(s) => s.phase === 'transfer-error' || s.phase === 'watching'
+		);
+		await w.store.claim();
+		const failed = await settled;
+
+		expect(failed.phase).toBe('transfer-error');
+		expect(w.calls.fetches).toHaveLength(4);
+
+		const watching = when(w.store, (s) => s.phase === 'watching');
+		await w.store.retry();
+		await watching;
+		expect(w.calls.fetches).toHaveLength(6);
 	});
 
 	it('reportFinished shortens the deadline into a countdown carrying the extension doors', async () => {

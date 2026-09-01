@@ -350,6 +350,7 @@ body::before {
 		/* Secondary buttons measured 42px. Nothing that can be pressed
 		   should be smaller than a fingertip. */
 		min-height: 2.75rem;
+		padding-inline: 1rem;
 		align-items: center;
 		justify-content: center;
 		gap: 0.5rem;

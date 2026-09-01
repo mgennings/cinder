@@ -1,7 +1,7 @@
 // The recipient's playback store — the one stateful object the watch UI talks
 // to. It owns the claim, the segment download, the OPFS staging, the deadline
 // clock, and the best-effort local discard; the UI only renders the
-// discriminated WatchSessionState and calls the four verbs.
+// discriminated WatchSessionState and calls its small set of verbs.
 //
 // Playback honesty, non-negotiable: phone MP4s routinely carry the moov atom
 // at the end of the file, so progressive playback of a partial download is not
@@ -34,6 +34,7 @@ import { MAX_EXTENSIONS, type PlaybackStore, type VideoMeta, type WatchSessionSt
 // before asking for a fresh segment URL again.
 const TICK_MS = 1024;
 const RETRY_MS = 2048;
+const MAX_SEGMENT_ATTEMPTS = 4;
 
 export type WatchStoreOptions = {
 	locator: string;
@@ -99,6 +100,7 @@ export function createWatchStore(options: WatchStoreOptions): WatchStore {
 	let objectUrl: string | null = null;
 	let watched = false;
 	let ended = false;
+	let finishedAtClaim = false;
 	let ticker: ReturnType<typeof setInterval> | null = null;
 
 	const extensions = () => ({
@@ -145,7 +147,7 @@ export function createWatchStore(options: WatchStoreOptions): WatchStore {
 		// Segment zero's cached bytes are only usable when its meta survived too.
 		if ((index > 0 || cachedMeta) && (await storage.get(segKey(index)))) return true;
 
-		while (!ended) {
+		for (let attempt = 0; attempt < MAX_SEGMENT_ATTEMPTS && !ended; attempt++) {
 			try {
 				const { url } = await segmentUrl(locator, index);
 				const ciphertext = await fetchSegment(url);
@@ -158,13 +160,13 @@ export function createWatchStore(options: WatchStoreOptions): WatchStore {
 				return true;
 			} catch (error) {
 				// The window closing is the only unrecoverable answer. Everything
-				// else — a lapsed presigned URL, an elevator — waits and asks for a
-				// fresh URL. Reissue is free while the session is open.
+				// else gets four fresh attempts before the page asks the person to
+				// act. Reissue is free while the session is open.
 				if (error instanceof VideoGoneError) {
 					await expire();
 					return false;
 				}
-				await sleep(RETRY_MS);
+				if (attempt + 1 < MAX_SEGMENT_ATTEMPTS) await sleep(RETRY_MS);
 			}
 		}
 		return false;
@@ -173,7 +175,10 @@ export function createWatchStore(options: WatchStoreOptions): WatchStore {
 	async function download(segments: number, alreadyFinished: boolean) {
 		for (let index = 0; index < segments; index++) {
 			if (ended) return;
-			if (!(await obtainSegment(index, segments))) return;
+			if (!(await obtainSegment(index, segments))) {
+				if (!ended) set({ phase: 'transfer-error', deadlineEpoch, received: index, segments });
+				return;
+			}
 			set({
 				phase: 'downloading',
 				deadlineEpoch,
@@ -234,9 +239,17 @@ export function createWatchStore(options: WatchStoreOptions): WatchStore {
 			deadlineEpoch = session.deadlineEpoch;
 			prepaidRemaining = session.prepaidRemaining;
 			extensionsUsed = session.extensionsUsed;
+			finishedAtClaim = session.finished;
 			set({ phase: 'downloading', deadlineEpoch, received: 0, segments: session.segments, playable: false });
 			startTicker();
-			void download(session.segments, session.finished);
+			void download(session.segments, finishedAtClaim);
+		},
+
+		async retry() {
+			if (state.phase !== 'transfer-error') return;
+			const { received, segments } = state;
+			set({ phase: 'downloading', deadlineEpoch, received, segments, playable: false });
+			void download(segments, finishedAtClaim);
 		},
 
 		async decline() {

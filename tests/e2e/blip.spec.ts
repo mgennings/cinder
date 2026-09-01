@@ -1,6 +1,26 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 
+test('the shared action atom keeps a fingertip target and text breathing room', async ({ page }) => {
+	await page.goto('/');
+	const geometry = await page.evaluate(() => {
+		const button = document.createElement('button');
+		button.className = 'btn btn-ember';
+		button.textContent = 'Send something';
+		document.body.append(button);
+		const style = getComputedStyle(button);
+		const result = {
+			minHeight: style.minHeight,
+			paddingLeft: style.paddingLeft,
+			paddingRight: style.paddingRight
+		};
+		button.remove();
+		return result;
+	});
+
+	expect(geometry).toEqual({ minHeight: '44px', paddingLeft: '16px', paddingRight: '16px' });
+});
+
 // Deterministic bytes generated at runtime — no binary fixtures in the repo.
 function pattern(n: number): Buffer {
 	const out = Buffer.alloc(n);
