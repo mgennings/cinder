@@ -23,7 +23,7 @@
 		peekReturnTo
 	} from '$lib/auth';
 	import SignInPanel from '$lib/ui/organisms/SignInPanel.svelte';
-	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
+	import DashboardPage from '$lib/ui/templates/DashboardPage.svelte';
 	import Card from '$lib/ui/atoms/Card.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
 	import RuleHead from '$lib/ui/atoms/RuleHead.svelte';
@@ -148,7 +148,7 @@
 			body: 'Sign in with Apple usually offers to hide your address behind a private relay. Cinder asks for no name and no address at all, so there is not even a relay address to hold. Google is asked for the same: a subject identifier, nothing else.'
 		},
 		{
-			title: 'The stored value is one-way',
+			title: 'The stored value cannot be reversed',
 			body: 'What lands in the database is a keyed hash of the account number, not the number. It cannot be reversed, and it cannot be matched against the same person on any other site that uses this sign-in, because each product hashes with its own key.'
 		},
 		{
@@ -157,7 +157,7 @@
 		},
 		{
 			title: 'Signing out ends within five minutes',
-			body: 'Signing out revokes this browser’s session immediately. The short-lived token already issued expires within five minutes and cannot be recalled before then — no system that hands out a signed token can honestly claim otherwise.'
+			body: 'Signing out revokes this browser’s session immediately. A signed token already issued remains valid until its five-minute window closes for good.'
 		}
 	];
 </script>
@@ -170,14 +170,12 @@
 	/>
 </svelte:head>
 
-<BenchPage>
-	<h1 class="mt-8 text-2xl font-bold">An account, and nothing else</h1>
-	<p class="mt-3 leading-relaxed text-mist">
-		Sending a note or a file needs no account, and it never will. This exists for one reason: so a
-		Cinder Pro balance can be honored on the browser you are using now, and on the next one. It is
-		the smallest thing that can do that job.
-	</p>
-
+<DashboardPage
+	current="/account"
+	location="Account"
+	title="An account, and nothing else"
+	lede="Sending a note or a file needs no account, and it never will. This account exists only to honor a Cinder Pro balance on the browser you are using now, and on the next one. Nothing else belongs here."
+>
 	<!-- The announcement is the same information the buttons carry, said once,
 	     for anyone who is not looking at the buttons. -->
 	<LiveRegion message={announcement} />
@@ -205,7 +203,7 @@
 					The session on this browser was revoked or ran out. Nothing was lost and nothing was
 					charged — signing in again brings the balance back.
 				{:else}
-					Either door stores the same thing: one opaque number. Apple’s asks for the least.
+					Either door stores the same thing: one opaque number. Apple asks for only that.
 				{/if}
 			</p>
 			<!-- The same two buttons as /signin and /signup, from the same file. Three
@@ -272,4 +270,4 @@
 			>the security page</a
 		>.
 	</p>
-</BenchPage>
+</DashboardPage>
