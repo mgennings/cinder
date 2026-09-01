@@ -159,7 +159,8 @@ function makeApi({
 	peppers = { [PRODUCT]: PEPPER },
 	capabilitySecret = CAPABILITY_SECRET,
 	capabilityLimits = LIMITS,
-	capabilityCosts = COSTS
+	capabilityCosts = COSTS,
+	developmentBypass = false
 } = {}) {
 	const deleted = [];
 	// A DynamoDB small enough to read, and it enforces the ONE thing the mint
@@ -205,7 +206,8 @@ function makeApi({
 		productPeppers: peppers,
 		capabilitySecret,
 		capabilityLimits,
-		capabilityCosts
+		capabilityCosts,
+		developmentBypass
 	});
 	return { api, rows, deleted };
 }
@@ -379,6 +381,33 @@ test('capability: a valid token with no purchase mints nothing', async () => {
 		grant: null,
 		expiresIn: null
 	});
+});
+
+test('capability: the explicit development bypass mints without a purchase or spend', async () => {
+	const { api, rows } = makeApi({ developmentBypass: true });
+	const body = JSON.parse((await mintCap(api, mint(pool, {}), 'video.send')).body);
+
+	assert.ok(body.grant);
+	assert.equal(rows.size, 0, 'the bypass must not manufacture or mutate an entitlement row');
+	assert.deepEqual(
+		verifyCapabilityGrant(body.grant, { secret: CAPABILITY_SECRET, capability: 'video.send' })
+			.limits,
+		{ maxSegments: 128 }
+	);
+});
+
+test('capability: the development bypass never bypasses identity', async () => {
+	const { api } = makeApi({ developmentBypass: true });
+	const denials = [
+		api.mintCapability({ headers: {}, body: '{"capability":"video.send"}' }),
+		mintCap(api, mint(pool, {}, { sign: false }), 'video.send'),
+		mintCap(api, mint(makePool('key-1'), {}), 'video.send'),
+		mintCap(api, mint(pool, { aud: 'another-client' }), 'video.send')
+	];
+
+	for (const response of denials) {
+		assert.equal(JSON.parse((await response).body).grant, null);
+	}
 });
 
 test('capability: anonymous, forged, foreign-pool, and wrong-audience mint nothing', async () => {

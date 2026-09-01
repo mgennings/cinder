@@ -64,6 +64,7 @@ const PRODUCT = 'cinder';
 // over there. Two processes, one secret, no other coupling — which is the
 // production topology.
 const CAPABILITY_SECRET = process.env.CAPABILITY_SECRET || 'dev-capability-secret';
+const DEVELOPMENT_ENTITLEMENT_BYPASS = process.env.CINDER_DEV_ENTITLEMENT_BYPASS === '1';
 
 // Two modes, and which one is running is printed at startup so it is never a
 // guess. DOUBLE is the default: a local stand-in for the hosted checkout page,
@@ -193,7 +194,10 @@ const handlers = makeEntitlementHandlers(doc, {
 			'video.send': { credits: 2, prepaidExtensionCredits: 1 },
 			'video.extend': { credits: 1 }
 		}
-	}
+	},
+	// This switch exists only in the local identity harness. The production
+	// Lambda never reads this environment variable or passes this option.
+	developmentBypass: DEVELOPMENT_ENTITLEMENT_BYPASS
 });
 
 const { checkout: startCheckout, webhook: purchaseWebhook } = makePurchaseHandlers(doc, {
@@ -329,8 +333,13 @@ async function ensureTable() {
 }
 
 await ensureTable();
-server.listen(PORT, HOST, () =>
+server.listen(PORT, HOST, () => {
 	console.log(
-		`dev-identity on ${ORIGIN}  stripe=${REAL_STRIPE ? `LIVE-TEST (${PRICE_ID})` : 'DOUBLE'}`
-	)
-);
+		`dev-identity on ${ORIGIN}  stripe=${REAL_STRIPE ? `LIVE-TEST (${PRICE_ID})` : 'DOUBLE'}  entitlement-bypass=${DEVELOPMENT_ENTITLEMENT_BYPASS ? 'ON' : 'off'}`
+	);
+	if (DEVELOPMENT_ENTITLEMENT_BYPASS) {
+		console.warn(
+			'DEVELOPMENT ENTITLEMENT BYPASS ACTIVE: authenticated capability mints do not read or spend credits'
+		);
+	}
+});

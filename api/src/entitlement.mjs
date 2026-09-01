@@ -50,7 +50,8 @@ export function makeEntitlementHandlers(
 		productPeppers,
 		capabilitySecret,
 		capabilityLimits,
-		capabilityCosts
+		capabilityCosts,
+		developmentBypass = false
 	}
 ) {
 	const clients = typeof clientProducts === 'string' ? parseMap(clientProducts) : clientProducts;
@@ -117,11 +118,13 @@ export function makeEntitlementHandlers(
 	// with no configured limits, no purchase. Telling them apart would be an
 	// oracle and buys the caller nothing they can act on.
 	//
-	// THE CREDITS SEAM, now wired. This function spends one credit per grant and
-	// nothing downstream can tell: the grant format, the gate, the transfer API,
-	// and the client are all unaware of which pricing model is in force. What must
-	// NOT move into the grant is the remaining balance — see the note in
-	// capability-grant.mjs about a rare count being a fingerprint.
+	// THE CREDITS SEAM, now wired. Production spends the configured credit cost
+	// per grant and nothing downstream can tell: the grant format, the gate, the
+	// transfer API, and the client are all unaware of which pricing model is in
+	// force. The local identity harness may explicitly bypass only this spend for
+	// human review; every identity and capability check above it remains real.
+	// What must NOT move into the grant is the remaining balance — see the note
+	// in capability-grant.mjs about a rare count being a fingerprint.
 	async function mintCapability(event) {
 		const nothing = json(200, { grant: null, expiresIn: null });
 
@@ -185,8 +188,11 @@ export function makeEntitlementHandlers(
 		//
 		// The whole cost — base plus any prepaid extensions — is one atomic
 		// spend. All or nothing: a balance short of the total takes no credits
-		// and mints no grant.
-		if (!(await spendCredit(doc, who.product, who.pairwise, cost))) return nothing;
+		// and mints no grant. The explicit local-review bypass skips this line
+		// without manufacturing an entitlement row or weakening identity.
+		if (developmentBypass !== true && !(await spendCredit(doc, who.product, who.pairwise, cost))) {
+			return nothing;
+		}
 
 		return json(200, {
 			grant: mintCapabilityGrant({

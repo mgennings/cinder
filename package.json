@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+		"review:local": "node scripts/dev-review.mjs",
 		"build": "vite build && node scripts/build-social-shell.mjs",
     "test": "vitest run && npm run test:charts",
     "test:charts": "node stats/test-charts.mjs",

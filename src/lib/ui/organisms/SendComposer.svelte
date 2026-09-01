@@ -37,6 +37,7 @@
 		file,
 		parts,
 		credits,
+		videoEnabled,
 		busy,
 		phase,
 		uploaded,
@@ -59,6 +60,8 @@
 		parts: number;
 		/** null means "we have no idea" — signed out, or a build with no identity API. */
 		credits: number | null;
+		/** Whether this tab captured the hidden local-review fragment. */
+		videoEnabled: boolean;
 		busy: boolean;
 		phase: Phase;
 		/** 0..1, real bytes on the wire. */
@@ -85,11 +88,11 @@
 	const maxLabel = `${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MiB`;
 	const maxProLabel = `${Math.round(MAX_TRANSFER_BYTES / (1024 * 1024))} MiB`;
 
-	const modeOptions = [
+	const modeOptions = $derived([
 		{ value: 'note', label: 'Note' },
 		{ value: 'file', label: 'File' },
-		{ value: 'video', label: 'Video' }
-	];
+		...(videoEnabled ? [{ value: 'video', label: 'Video' }] : [])
+	]);
 
 	const ttlOptions = [
 		{ value: '3600', label: '1 hour' },
@@ -114,7 +117,7 @@
 		disabled={busy}
 	/>
 
-	{#if mode === 'video'}
+	{#if mode === 'video' && videoEnabled}
 		{@render video?.()}
 	{:else}
 	{#if mode === 'note'}

@@ -54,7 +54,7 @@ const decodeGrant = (grant: string) =>
 	JSON.parse(Buffer.from(grant.split('.')[0], 'base64url').toString());
 
 async function attemptVideoSend(page: Page, prepaidLabel?: RegExp): Promise<void> {
-	await page.goto('/');
+	await page.goto('/#video=on');
 	await page.getByRole('radio', { name: /^video$/i }).check();
 	await page.setInputFiles('#video-input', {
 		name: 'checkin.mp4',

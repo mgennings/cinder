@@ -16,7 +16,7 @@ function pattern(n: number): Buffer {
 }
 
 async function startVideoSend(page: Page, bytes: Buffer, name = 'checkin.mp4'): Promise<void> {
-	await page.goto('/');
+	await page.goto('/#video=on');
 	await page.getByRole('radio', { name: /^video$/i }).check();
 	await page.setInputFiles('#video-input', { name, mimeType: 'video/mp4', buffer: bytes });
 }
@@ -30,6 +30,27 @@ async function finishVideoSend(page: Page): Promise<{ link: string; locator: str
 	expect(locator, `no video locator in ${link}`).toBeTruthy();
 	return { link, locator: locator! };
 }
+
+test('the hidden fragment enables video for one tab and disappears immediately', async ({
+	page,
+	browser
+}) => {
+	await page.goto('/');
+	await expect(page.getByRole('radio', { name: /^video$/i })).toHaveCount(0);
+
+	await page.goto('/#video=on');
+	await expect(page.getByRole('radio', { name: /^video$/i })).toBeVisible();
+	await expect(page).toHaveURL(/\/$/);
+
+	await page.goto('/');
+	await expect(page.getByRole('radio', { name: /^video$/i })).toBeVisible();
+
+	const ordinarySession = await browser.newContext();
+	const ordinaryPage = await ordinarySession.newPage();
+	await ordinaryPage.goto('/');
+	await expect(ordinaryPage.getByRole('radio', { name: /^video$/i })).toHaveCount(0);
+	await ordinarySession.close();
+});
 
 test('the disclosure is on screen before anything encrypts or uploads', async ({ page }) => {
 	// Every request to the video API, from page load onward. The order proof is

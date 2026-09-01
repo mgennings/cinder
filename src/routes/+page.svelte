@@ -3,6 +3,7 @@
 	// the orchestration between this browser's crypto and the server that will
 	// hold the ciphertext. Every pixel below it belongs to a component.
 	import { onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 	import { fly } from 'svelte/transition';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { encryptNote } from '$lib/crypto/note-crypto';
@@ -38,6 +39,7 @@
 		CAPABILITY_VIDEO_SEND
 	} from '$lib/entitlement';
 	import { videoSegmenter } from '$lib/video/crypto';
+	import { videoEnabledForSession } from '$lib/video/feature-flag';
 	import { createVideoUploader, type VideoUploader } from '$lib/video/uploader';
 	import { VideoNotEntitledError } from '$lib/video/api';
 	import {
@@ -70,6 +72,7 @@
 	// string comparison would silently stop offering the link.
 	let needsPro = $state(false);
 	let link = $state('');
+	let videoEnabled = $state(false);
 
 	// The balance, if this browser is signed in and this build has accounts at
 	// all. null means "we have no idea" — signed out, or a build with no identity
@@ -80,7 +83,12 @@
 	const readCredits = async () => {
 		credits = identityConfigured() && signedIn() ? (await entitlement()).credits : null;
 	};
-	onMount(readCredits);
+	afterNavigate(() => {
+		videoEnabled = videoEnabledForSession();
+	});
+	onMount(() => {
+		void readCredits();
+	});
 
 	let aborter: AbortController | null = null;
 
@@ -480,6 +488,7 @@
 			{file}
 			{parts}
 			{credits}
+			{videoEnabled}
 			busy={busy || videoBusy}
 			{phase}
 			{uploaded}

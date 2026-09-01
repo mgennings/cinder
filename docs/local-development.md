@@ -55,6 +55,20 @@ VITE_API_BASE=http://localhost:4000 pnpm dev --port 5173
 
 Open `http://localhost:5173`, write a note, copy the link, open it in a new tab, and reveal it. Open it again — it is gone.
 
+## Complete local review
+
+One command starts DynamoDB Local, the transfer API, the local identity API, and the web app:
+
+```bash
+pnpm review:local
+```
+
+Open `http://127.0.0.1:5190/#video=on`. Cinder captures that hidden fragment into this tab's session and removes it from the address bar immediately. Video remains available in that tab, while ordinary sessions continue to show only Note and File.
+
+Use the normal sign-up or sign-in journey. This review command starts the local identity server with an explicit development-only entitlement bypass, so a verified local identity can mint real capability grants without a Stripe purchase and without manufacturing or spending credits. The identity server prints a loud warning while the bypass is active. The production Lambda has no environment switch or code path that enables it.
+
+Press Ctrl-C once to stop every process the command started. The command refuses to start when one of its review ports is already occupied, so it never kills or shadows another local stack.
+
 ## Accounts, payment, and Cinder Pro, locally
 
 Sending a large file needs a capability grant, and a grant needs an account and a purchase. `scripts/dev-identity.mjs` stands the whole of that up on port 4100 without an AWS account and without a Stripe key.
