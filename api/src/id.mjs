@@ -54,6 +54,18 @@ export function deriveChunkLocator(locator, index) {
 	return createHash('sha256').update(`${locator}:part:${index}`, 'utf8').digest('base64url');
 }
 
+// A video's segment locators are derived from its transfer locator EXACTLY the
+// way a file's part locators are: same string, same hash, same encoding. This
+// is a name for that reuse, not a third derivation — the design doc
+// (docs/ephemeral-video-design.md) forbids inventing one, and the byte-for-byte
+// agreement with src/lib/link.ts is already pinned by tests on both sides. No
+// collision is possible: every transfer's locator is its own 256 random bits,
+// and a video grant row is additionally distinguished by its `kind`.
+//
+// If you are tempted to give video its own separator string, you are signing up
+// to keep FOUR implementations in agreement instead of two. Do not.
+export const deriveSegmentLocator = deriveChunkLocator;
+
 // The authoritative capability check is still the DynamoDB condition
 // expression, which is atomic with the write it guards. This comparison exists
 // for a different reason: finalize has to reject a wrong capability BEFORE it

@@ -174,13 +174,13 @@ The `410` is byte-identical whether the link never existed, was malformed, is st
 - **Exactly one server delivery attempt.** The claim is a conditional DynamoDB `DeleteItem`. Twenty simultaneous claims produce one body and nineteen identical refusals.
 - **Deletion precedes delivery, structurally.** The order is claim, open, delete, verify absence, respond. Because this is a buffered Lambda proxy integration, the response object does not exist until every prior step has returned — API Gateway cannot send a byte of a response it has not received. See [architecture](architecture.md#why-the-delete-before-delivery-guarantee-actually-holds).
 - **Any post-claim failure is permanent.** A crash, timeout, S3 error, or dropped connection consumes the transfer. The grant is never restored and the object is never recreated.
-- **No presigned GET, Range, retry, resume, or preview.** The only way ciphertext leaves the bucket is through the claim path above.
+- **No presigned GET, Range, retry, resume, or preview.** The only way file ciphertext leaves the bucket is through the claim path above. Video is a different artifact with a different promise and its segments do use presigned GETs, but that departure is confined structurally to objects under the `v/` prefix, which no file object ever has — see [video-api-contract.md](video-api-contract.md).
 - **Sender status is separate and read-only.** It returns one availability bit to a second capability kept on the creating device. It never returns content, identity, or a timestamp and never consumes a transfer.
 - **Orphans expire.** Abandoned uploads and unclaimed expired grants are removed by a DynamoDB TTL and an eight-day S3 lifecycle rule. That cleanup is asynchronous and best-effort; it is a backstop, not the guarantee.
 
 ## CORS
 
-The API sends CORS headers for `POST` and `OPTIONS` restricted to Cinder's exact origins (`cinder.ink`, `www.cinder.ink`, `cinder.uxuiai.org`, `blip.uxuiai.org`) rather than `*`. The media bucket allows `PUT` from the same four origins and nothing else. If you fork this, replace those origins with your own.
+The API sends CORS headers for `POST` and `OPTIONS` restricted to Cinder's exact origins (`cinder.ink`, `www.cinder.ink`, `cinder.uxuiai.org`, `blip.uxuiai.org`) rather than `*`. The media bucket allows `PUT` and `GET` from the same four origins and nothing else — `GET` exists solely for presigned video-segment reads, and CORS is not the authorization there; the presigned signature is. If you fork this, replace those origins with your own.
 
 ## Rate limiting
 

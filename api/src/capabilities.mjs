@@ -26,7 +26,13 @@
 /** Capability names are namespaced strings, never booleans named after a plan. */
 export const CAPABILITY = {
 	// Create a transfer made of more than one independently claimed envelope.
-	MULTIPART_TRANSFER: 'transfer.multipart'
+	MULTIPART_TRANSFER: 'transfer.multipart',
+	// Send an ephemeral video (docs/video-api-contract.md). Always paid —
+	// there is no free video shape. Limits: maxSegments, and optionally
+	// prepaidExtensions the sender bought for their recipient at mint.
+	VIDEO_SEND: 'video.send',
+	// Add one 8-minute extension to an open watch window. Limits: extensions.
+	VIDEO_EXTEND: 'video.extend'
 };
 
 /**

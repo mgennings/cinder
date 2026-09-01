@@ -158,7 +158,7 @@ Globals:
     # function, so the atomic claim never runs and no transfer is consumed.
     #
     # It collects nothing about anyone. That is the rare property here — it
-    # sheds by "no worker is free", never by recognising who is asking.
+    # sheds by "no worker is free", never by recognizing who is asking.
     ReservedConcurrentExecutions: 10
     Environment:
       Variables:
@@ -286,18 +286,47 @@ Resources:
             Status: Enabled
             Prefix: d8/
             ExpirationInDays: 8
+          # Video segments live under v/ — the prefix that scopes the
+          # segment-url role's GetObject (docs/video-api-contract.md). Same
+          # band logic, own rules, because a prefix rule on d1/ does not match
+          # v/d1/. These are the stated backstop under the scheduled burn: the
+          # at-read guard ends availability exactly on time, the one-shot
+          # schedule removes objects within about a minute, and this collects
+          # anything a crash orphaned.
+          #
+          # TWO days for v/d1/, not one, and the extra day is load-bearing: a
+          # video claimed in the last minutes of a just-under-24-hour expiry
+          # holds its watch window open past creation + 24h (up to +26.2h with
+          # every extension), and S3's day-granular sweep can run as soon as
+          # ~24h after creation. One day here could destroy segments inside an
+          # open window — the exact promise the window makes. Files never have
+          # this tail (delivery is instantaneous at claim), which is why d1/
+          # stays at 1.
+          - Id: expire-short-lived-video-ciphertext
+            Status: Enabled
+            Prefix: v/d1/
+            ExpirationInDays: 2
+          - Id: expire-orphaned-video-ciphertext
+            Status: Enabled
+            Prefix: v/d8/
+            ExpirationInDays: 8
           - Id: abort-incomplete-uploads
             Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
       CorsConfiguration:
         CorsRules:
+          # GET exists for exactly one caller shape: the watch page fetching a
+          # presigned segment GET (video ciphertext under v/). CORS is not the
+          # authorization — the presigned signature is, and only the
+          # SegmentUrlFn role, scoped to v/*, can produce one. No presigned GET
+          # exists for a file object; that stance is unchanged.
           - AllowedOrigins:
               - !Sub 'https://${PrimaryDomain}'
               - !Sub 'https://${WwwDomain}'
               - !Sub 'https://${SiteDomain}'
               - !Sub 'https://${LegacyDomain}'
-            AllowedMethods: [PUT]
+            AllowedMethods: [PUT, GET]
             AllowedHeaders: [content-type, x-amz-checksum-sha256]
             MaxAge: 300
 
@@ -459,6 +488,339 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub '/aws/lambda/${ClaimFileFn}'
+      RetentionInDays: 14
+
+  # =====================================================================
+  # EPHEMERAL VIDEO — docs/video-api-contract.md is the wire contract,
+  # docs/ephemeral-video-design.md the promise. A third artifact on the same
+  # transfer API and the same table; the note and file functions above are
+  # untouched. The one departure from the file path — presigned GETs for
+  # segment ciphertext — is bounded structurally here: video objects live
+  # under v/, and only SegmentUrlVideoFn's GetObject is scoped to v/*, so no
+  # role that can sign a video GET can name a burn-mode file object.
+  #
+  # DEPLOY GATE, standing rule: shipping video changes privacy-relevant
+  # strings and what leaves the device (the presigned-GET path), so the deploy
+  # that turns this on sits behind the existing privacy-deploy gate.
+  # =====================================================================
+
+  CreateVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.createVideo
+      # Presigning up to 128 uploads and writing 129 rows is real work.
+      Timeout: 15
+      Environment:
+        Variables:
+          CAPABILITY_SECRET: !Ref CinderCapabilitySecret
+          STATUS_SECRET: !Ref CinderStatusSecret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt NotesTable.Arn
+            # Presigned PUT authority, video keys only.
+            - Effect: Allow
+              Action: [s3:PutObject]
+              Resource: !Sub '${MediaBucket.Arn}/v/*'
+      Events:
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos
+            Method: POST
+
+  FinalizeVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.finalizeVideo
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt NotesTable.Arn
+            # Same caveat as FinalizeFileFn: GetObject rides along with
+            # GetObjectAttributes whether wanted or not. Scoped to v/*, so
+            # this role cannot read a file object either way.
+            - Effect: Allow
+              Action: [s3:GetObject, s3:GetObjectAttributes]
+              Resource: !Sub '${MediaBucket.Arn}/v/*'
+      Events:
+        Finalize:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/finalize
+            Method: POST
+
+  ClaimVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.claimVideo
+      Environment:
+        Variables:
+          BURN_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cinder-video-burn'
+          BURN_SCHEDULER_ROLE_ARN: !GetAtt BurnSchedulerRole.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt NotesTable.Arn
+        - !Ref BurnArmPolicy
+      Events:
+        Claim:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/claim
+            Method: POST
+
+  SegmentUrlVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.segmentUrl
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt NotesTable.Arn
+            # THE STRUCTURAL BOUNDARY of the presigned-GET departure. v/* and
+            # nothing else: a role that cannot name a file object cannot sign
+            # a GET for one, so the file promise's no-presigned-GET stance is
+            # provable rather than promised.
+            - Effect: Allow
+              Action: [s3:GetObject]
+              Resource: !Sub '${MediaBucket.Arn}/v/*'
+      Events:
+        SegmentUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/segment-url
+            Method: POST
+
+  FinishedVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.finishedVideo
+      Environment:
+        Variables:
+          BURN_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cinder-video-burn'
+          BURN_SCHEDULER_ROLE_ARN: !GetAtt BurnSchedulerRole.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt NotesTable.Arn
+        - !Ref BurnArmPolicy
+      Events:
+        Finished:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/finished
+            Method: POST
+
+  ExtendVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.extendVideo
+      # The only video function beyond create that verifies a grant: a
+      # recipient extending with their own credits presents video.extend.
+      Environment:
+        Variables:
+          CAPABILITY_SECRET: !Ref CinderCapabilitySecret
+          BURN_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cinder-video-burn'
+          BURN_SCHEDULER_ROLE_ARN: !GetAtt BurnSchedulerRole.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt NotesTable.Arn
+        - !Ref BurnArmPolicy
+      Events:
+        Extend:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/extend
+            Method: POST
+
+  StatusVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.statusVideo
+      Environment:
+        Variables:
+          STATUS_SECRET: !Ref CinderStatusSecret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt NotesTable.Arn
+      Events:
+        Status:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/status
+            Method: POST
+
+  DestroyVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: src/video-lambda.destroyVideo
+      Timeout: 15
+      Environment:
+        Variables:
+          STATUS_SECRET: !Ref CinderStatusSecret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:DeleteItem]
+              Resource: !GetAtt NotesTable.Arn
+            - Effect: Allow
+              Action: [s3:DeleteObject]
+              Resource: !Sub '${MediaBucket.Arn}/v/*'
+      Events:
+        Destroy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /videos/destroy
+            Method: POST
+
+  # The one-shot burn target. NOT an API route: EventBridge Scheduler invokes
+  # it with { pk, segmentPks } — hashes only, never a locator, so the schedule
+  # store holds nothing replayable against the API. The explicit FunctionName
+  # is what the armers' BURN_FUNCTION_ARN is built from; it breaks the circular
+  # reference a GetAtt would create for the self-healing re-arm below.
+  BurnVideoFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cinder-video-burn
+      CodeUri: api/
+      Handler: src/video-lambda.burnVideo
+      # Sweeping 128 rows and objects.
+      Timeout: 30
+      Environment:
+        Variables:
+          # Its own ARN, for the self-healing re-arm: a stale schedule that
+          # fires before a moved deadline re-schedules itself at the row's
+          # live deadline instead of leaving the sweep to the lifecycle rule.
+          BURN_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cinder-video-burn'
+          BURN_SCHEDULER_ROLE_ARN: !GetAtt BurnSchedulerRole.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:DeleteItem]
+              Resource: !GetAtt NotesTable.Arn
+            - Effect: Allow
+              Action: [s3:DeleteObject]
+              Resource: !Sub '${MediaBucket.Arn}/v/*'
+        - !Ref BurnArmPolicy
+
+  # What the schedule assumes to invoke the burn. Scheduler is the only
+  # principal that can wear it, and invoking cinder-video-burn is the only
+  # thing it can do.
+  BurnSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+      Policies:
+        - PolicyName: invoke-burn
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cinder-video-burn'
+
+  # Shared by every function that arms or re-arms the burn: claim, finished,
+  # extend, and the burn itself. Names are cinder-video-burn-<hash>, one per
+  # video, in the default group.
+  BurnArmPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [scheduler:CreateSchedule, scheduler:UpdateSchedule]
+            Resource: !Sub 'arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/cinder-video-burn-*'
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt BurnSchedulerRole.Arn
+            Condition:
+              StringEquals:
+                'iam:PassedToService': scheduler.amazonaws.com
+
+  # Retention pinned at birth for every video function — none has ever
+  # deployed, so none of these groups exists to collide with, and a default of
+  # forever is exactly the accumulation this product refuses.
+  CreateVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${CreateVideoFn}'
+      RetentionInDays: 14
+  FinalizeVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${FinalizeVideoFn}'
+      RetentionInDays: 14
+  ClaimVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ClaimVideoFn}'
+      RetentionInDays: 14
+  SegmentUrlVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${SegmentUrlVideoFn}'
+      RetentionInDays: 14
+  FinishedVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${FinishedVideoFn}'
+      RetentionInDays: 14
+  ExtendVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ExtendVideoFn}'
+      RetentionInDays: 14
+  StatusVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${StatusVideoFn}'
+      RetentionInDays: 14
+  DestroyVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${DestroyVideoFn}'
+      RetentionInDays: 14
+  BurnVideoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${BurnVideoFn}'
       RetentionInDays: 14
 
   # THESE FOUR ARE NOT DECLARED HERE YET, ON PURPOSE.
