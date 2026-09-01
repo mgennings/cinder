@@ -45,7 +45,7 @@ export async function readCredits(doc, product, pairwise) {
 	return Number.isSafeInteger(Number(credits)) && credits > 0 ? Number(credits) : 0;
 }
 
-// SPEND ONE, ATOMICALLY. True if a credit was actually taken.
+// SPEND, ATOMICALLY. True if the credits were actually taken.
 //
 // A read-then-write here would be a money bug wearing a race condition: two
 // mints in flight against a balance of one would both read 1, both write 0, and
@@ -58,15 +58,20 @@ export async function readCredits(doc, product, pairwise) {
 // `credits` attribute does not match — a comparison against a missing attribute
 // is false, never true — so a person who never bought anything fails here too,
 // with no extra branch and no second read.
-export async function spendCredit(doc, product, pairwise) {
+// `count` defaults to 1 (a multipart send); a video send spends 2 and a video
+// extension 1 (docs/video-api-contract.md), through this same call so the
+// atomicity story never forks. All-or-nothing: a balance of 1 against a spend
+// of 2 takes nothing, because a partial charge would be a partial grant.
+export async function spendCredit(doc, product, pairwise, count = 1) {
+	if (!Number.isSafeInteger(count) || count < 1) throw new Error('spendCredit: bad count');
 	try {
 		await doc.send(
 			new UpdateCommand({
 				TableName: TABLE(),
 				Key: { pk: key(product, pairwise) },
-				UpdateExpression: 'SET credits = credits - :one',
-				ConditionExpression: 'attribute_exists(pk) AND credits >= :one',
-				ExpressionAttributeValues: { ':one': 1 }
+				UpdateExpression: 'SET credits = credits - :n',
+				ConditionExpression: 'attribute_exists(pk) AND credits >= :n',
+				ExpressionAttributeValues: { ':n': count }
 			})
 		);
 		return true;

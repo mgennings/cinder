@@ -61,7 +61,29 @@ const handlers = makeEntitlementHandlers(doc, {
 	// is a counter now and the mint spends one, but nothing here grows a balance
 	// field — see the note in capability-grant.mjs about a rare balance being a
 	// fingerprint.
-	capabilityLimits: { cinder: { 'transfer.multipart': { maxParts: 64 } } }
+	capabilityLimits: {
+		cinder: {
+			'transfer.multipart': { maxParts: 64 },
+			// Video (docs/video-api-contract.md): maxSegments matches the
+			// transport's own ceiling; the transport takes the smaller, so
+			// raising this alone cannot raise the real limit. `prepaidExtensions`
+			// is NOT here — it is per-request, added at mint when the sender
+			// buys some (entitlement.mjs), never a standing limit.
+			'video.send': { maxSegments: 128 },
+			'video.extend': { extensions: 1 }
+		}
+	},
+	// What each capability costs in credits, and what a sender-prepaid
+	// extension adds at mint. EVERY number is Matt's pricing gate
+	// (docs/ephemeral-video-design.md, "What is Matt's to decide"): these are
+	// the design doc's recommendation, wired so the seam works, not a decision.
+	// transfer.multipart is deliberately absent — absent means 1, unchanged.
+	capabilityCosts: {
+		cinder: {
+			'video.send': { credits: 2, prepaidExtensionCredits: 1 },
+			'video.extend': { credits: 1 }
+		}
+	}
 });
 
 export const { checkEntitlement, mintCapability, deleteAccount } = handlers;

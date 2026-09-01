@@ -138,13 +138,28 @@ test('parseMap fails closed on garbage', () => {
 // --- the routes -------------------------------------------------------------
 
 const CAPABILITY_SECRET = 'mint-secret-for-tests';
-const LIMITS = { [PRODUCT]: { 'transfer.multipart': { maxParts: 64 } } };
+const LIMITS = {
+	[PRODUCT]: {
+		'transfer.multipart': { maxParts: 64 },
+		'video.send': { maxSegments: 128 },
+		'video.extend': { extensions: 1 }
+	}
+};
+// Mirrors identity-lambda.mjs: transfer.multipart deliberately absent (absent
+// means 1 credit, unchanged), video priced per docs/video-api-contract.md.
+const COSTS = {
+	[PRODUCT]: {
+		'video.send': { credits: 2, prepaidExtensionCredits: 1 },
+		'video.extend': { credits: 1 }
+	}
+};
 
 function makeApi({
 	rows = new Map(),
 	peppers = { [PRODUCT]: PEPPER },
 	capabilitySecret = CAPABILITY_SECRET,
-	capabilityLimits = LIMITS
+	capabilityLimits = LIMITS,
+	capabilityCosts = COSTS
 } = {}) {
 	const deleted = [];
 	// A DynamoDB small enough to read, and it enforces the ONE thing the mint
@@ -157,14 +172,17 @@ function makeApi({
 			assert.equal(TableName, 'mattos-entitlements');
 			if (Item) return rows.set(Item.pk, Item), {};
 			if (cmd.constructor.name === 'DeleteCommand') return rows.delete(Key.pk), {};
-			if (UpdateExpression?.includes('credits - :one')) {
+			if (UpdateExpression?.includes('credits - :n')) {
+				// The spend: conditional decrement of :n, all or nothing, exactly
+				// the shape entitlement-store.mjs sends.
+				const n = ExpressionAttributeValues[':n'];
 				const item = rows.get(Key.pk);
-				if (!item || !(item.credits >= 1)) {
+				if (!item || !(item.credits >= n)) {
 					throw Object.assign(new Error('conditional'), {
 						name: 'ConditionalCheckFailedException'
 					});
 				}
-				rows.set(Key.pk, { ...item, credits: item.credits - 1 });
+				rows.set(Key.pk, { ...item, credits: item.credits - n });
 				return {};
 			}
 			if (UpdateExpression) {
@@ -186,7 +204,8 @@ function makeApi({
 		clientProducts: { [CLIENT]: PRODUCT },
 		productPeppers: peppers,
 		capabilitySecret,
-		capabilityLimits
+		capabilityLimits,
+		capabilityCosts
 	});
 	return { api, rows, deleted };
 }
@@ -292,8 +311,8 @@ const entitle = (rows, credits = 5) =>
 const balance = (rows) =>
 	rows.get(`${PRODUCT}#${pairwiseSubject('cognito-subject-0001', PRODUCT, PEPPER)}`)?.credits ?? 0;
 
-const mintCap = (api, token, capability = 'transfer.multipart') =>
-	api.mintCapability({ ...authed(token), body: JSON.stringify({ capability }) });
+const mintCap = (api, token, capability = 'transfer.multipart', extra = {}) =>
+	api.mintCapability({ ...authed(token), body: JSON.stringify({ capability, ...extra }) });
 
 test('capability: an entitled caller gets a grant the real gate accepts', async () => {
 	const { api, rows } = makeApi();
@@ -385,6 +404,96 @@ test('capability: an unknown capability name mints nothing', async () => {
 	// A malformed body is a refusal, not a 500.
 	const bad = await api.mintCapability({ ...authed(mint(pool, {})), body: 'not json' });
 	assert.equal(JSON.parse(bad.body).grant, null);
+});
+
+// --- video pricing (docs/video-api-contract.md; every number is Matt's gate) --
+
+test('capability: a video send spends 2 credits, all or nothing', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows, 3);
+
+	const body = JSON.parse((await mintCap(api, mint(pool, {}), 'video.send')).body);
+	assert.ok(body.grant);
+	assert.equal(balance(rows), 1);
+	assert.deepEqual(
+		verifyCapabilityGrant(body.grant, { secret: CAPABILITY_SECRET, capability: 'video.send' })
+			.limits,
+		{ maxSegments: 128 }
+	);
+
+	// One credit left against a cost of two: nothing is taken, nothing minted.
+	// A partial charge would be a partial grant.
+	const short = JSON.parse((await mintCap(api, mint(pool, {}), 'video.send')).body);
+	assert.equal(short.grant, null);
+	assert.equal(balance(rows), 1);
+});
+
+test('capability: prepaid extensions are bought at mint and ride in the limits', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows, 8);
+
+	// 2 for the send + 4 × 1 per prepaid extension = 6.
+	const body = JSON.parse(
+		(await mintCap(api, mint(pool, {}), 'video.send', { prepaidExtensions: 4 })).body
+	);
+	assert.ok(body.grant);
+	assert.equal(balance(rows), 2);
+	assert.deepEqual(
+		verifyCapabilityGrant(body.grant, { secret: CAPABILITY_SECRET, capability: 'video.send' })
+			.limits,
+		{ maxSegments: 128, prepaidExtensions: 4 }
+	);
+});
+
+test('capability: only the ladder shapes of prepaid exist, and zero means absent', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows, 20);
+
+	for (const prepaidExtensions of [3, 1, -2, 16, '4', 4.5]) {
+		const res = JSON.parse(
+			(await mintCap(api, mint(pool, {}), 'video.send', { prepaidExtensions })).body
+		);
+		assert.equal(res.grant, null, String(prepaidExtensions));
+	}
+	assert.equal(balance(rows), 20, 'refusals spend nothing');
+
+	// prepaidExtensions: 0 is a plain send — no key in the limits, because the
+	// grant format refuses non-positive limit values and a missing limit
+	// already reads as zero.
+	const zero = JSON.parse(
+		(await mintCap(api, mint(pool, {}), 'video.send', { prepaidExtensions: 0 })).body
+	);
+	assert.deepEqual(
+		verifyCapabilityGrant(zero.grant, { secret: CAPABILITY_SECRET, capability: 'video.send' })
+			.limits,
+		{ maxSegments: 128 }
+	);
+	assert.equal(balance(rows), 18);
+});
+
+test('capability: prepaid extensions on an unpriced capability mint nothing', async () => {
+	// transfer.multipart has no prepaidExtensionCredits configured, so asking
+	// for prepaid on it is refused rather than silently unpaid-for.
+	const { api, rows } = makeApi();
+	entitle(rows, 10);
+	const res = JSON.parse(
+		(await mintCap(api, mint(pool, {}), 'transfer.multipart', { prepaidExtensions: 2 })).body
+	);
+	assert.equal(res.grant, null);
+	assert.equal(balance(rows), 10);
+});
+
+test('capability: a video extension costs 1 credit', async () => {
+	const { api, rows } = makeApi();
+	entitle(rows, 1);
+	const body = JSON.parse((await mintCap(api, mint(pool, {}), 'video.extend')).body);
+	assert.ok(body.grant);
+	assert.equal(balance(rows), 0);
+	assert.deepEqual(
+		verifyCapabilityGrant(body.grant, { secret: CAPABILITY_SECRET, capability: 'video.extend' })
+			.limits,
+		{ extensions: 1 }
+	);
 });
 
 test('capability: an unconfigured product or missing secret fails closed', async () => {

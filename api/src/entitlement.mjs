@@ -42,7 +42,16 @@ const GRANT_TTL_SECONDS = 900;
 
 export function makeEntitlementHandlers(
 	doc,
-	{ getJwks, deleteUser, issuer, clientProducts, productPeppers, capabilitySecret, capabilityLimits }
+	{
+		getJwks,
+		deleteUser,
+		issuer,
+		clientProducts,
+		productPeppers,
+		capabilitySecret,
+		capabilityLimits,
+		capabilityCosts
+	}
 ) {
 	const clients = typeof clientProducts === 'string' ? parseMap(clientProducts) : clientProducts;
 	const peppers = typeof productPeppers === 'string' ? parseMap(productPeppers) : productPeppers;
@@ -117,8 +126,11 @@ export function makeEntitlementHandlers(
 		const nothing = json(200, { grant: null, expiresIn: null });
 
 		let requested;
+		let prepaidExtensions;
 		try {
-			requested = JSON.parse(event.body || '{}').capability;
+			const body = JSON.parse(event.body || '{}');
+			requested = body.capability;
+			prepaidExtensions = body.prepaidExtensions;
 		} catch {
 			return nothing;
 		}
@@ -130,8 +142,31 @@ export function makeEntitlementHandlers(
 		// Fail closed on a config gap, exactly as `identify` does for a missing
 		// pepper: an unconfigured product or an unknown capability name denies
 		// rather than falling back to a default set of limits.
-		const limits = capabilityLimits?.[who.product]?.[requested];
-		if (!limits || !capabilitySecret) return nothing;
+		const baseLimits = capabilityLimits?.[who.product]?.[requested];
+		if (!baseLimits || !capabilitySecret) return nothing;
+
+		// What this capability costs, in credits. Absent config means 1, which
+		// keeps transfer.multipart exactly as it was. EVERY number here is
+		// Matt's pricing gate (docs/ephemeral-video-design.md, "What is Matt's
+		// to decide") — the maps in identity-lambda.mjs are the recommendation,
+		// and this code only reads them.
+		const pricing = capabilityCosts?.[who.product]?.[requested];
+		let cost = Number.isInteger(pricing?.credits) && pricing.credits > 0 ? pricing.credits : 1;
+
+		// Sender-prepaid extensions (video.send only, and only because its
+		// pricing names a per-extension price). The sender pays for them at
+		// mint; the recipient later spends them with one tap, no account, no
+		// card. The paid-for count travels in the grant's LIMITS — the grant is
+		// the authority the transfer API reads it from — and never as a subject.
+		let limits = baseLimits;
+		if (prepaidExtensions !== undefined && prepaidExtensions !== 0) {
+			const perExtension = pricing?.prepaidExtensionCredits;
+			// Only the ladder's shapes exist: 2, 4, or 8, and only where priced.
+			if (![2, 4, 8].includes(prepaidExtensions)) return nothing;
+			if (!Number.isInteger(perExtension) || perExtension < 1) return nothing;
+			cost += prepaidExtensions * perExtension;
+			limits = { ...baseLimits, prepaidExtensions };
+		}
 
 		// THE CHARGE. One grant is one prepaid send, and this is the line that
 		// spends it — the last authenticated moment in the chain, before any bytes
@@ -147,7 +182,11 @@ export function makeEntitlementHandlers(
 		// A retry never reaches this line: the client presents its cached grant,
 		// byte for byte, and the gate verifies it again without a mint. That is the
 		// property tests/journey/full-journey.spec.ts pins.
-		if (!(await spendCredit(doc, who.product, who.pairwise))) return nothing;
+		//
+		// The whole cost — base plus any prepaid extensions — is one atomic
+		// spend. All or nothing: a balance short of the total takes no credits
+		// and mints no grant.
+		if (!(await spendCredit(doc, who.product, who.pairwise, cost))) return nothing;
 
 		return json(200, {
 			grant: mintCapabilityGrant({
