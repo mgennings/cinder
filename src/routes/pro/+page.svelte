@@ -24,7 +24,7 @@
 	import SignInPanel from '$lib/ui/organisms/SignInPanel.svelte';
 	import { MAX_FILE_BYTES, MAX_TRANSFER_BYTES } from '$lib/crypto/file-crypto';
 	import { PRO_PRICE, PRO_CREDITS, creditWord } from '$lib/pro';
-	import BenchPage from '$lib/ui/templates/BenchPage.svelte';
+	import DashboardPage from '$lib/ui/templates/DashboardPage.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
 	import Alert from '$lib/ui/atoms/Alert.svelte';
 	import LiveRegion from '$lib/ui/atoms/LiveRegion.svelte';
@@ -117,15 +117,13 @@
 	/>
 </svelte:head>
 
-<BenchPage wordmark={false} pad="tight">
+<DashboardPage
+	current="/pro"
+	location="Cinder Pro"
+	title="Cinder Pro"
+	lede={`${PRICE} for ${PRO_CREDITS} large sends, each one up to the ${maxProLabel} ceiling. Not a subscription, not a plan, not a renewal. The credits sit there until you use them, and anything under ${freeLabel} stays free forever, with no account.`}
+>
 	<LiveRegion message={announcement} />
-
-	<h1 class="text-2xl font-semibold text-body">Cinder Pro</h1>
-	<p class="mt-3 text-base leading-relaxed text-mist">
-		{PRICE} for {PRO_CREDITS} large sends, each one up to the {maxProLabel} ceiling. Not a subscription,
-		not a plan, not a renewal — the credits sit there until you use them, and anything under
-		{freeLabel} stays free forever, with no account.
-	</p>
 
 	<!-- The balance, stated before the button rather than after the purchase.
 	     Someone with credits left needs to know that before they decide whether
@@ -190,4 +188,4 @@
 	{/if}
 
 	<PaymentDisclosure />
-</BenchPage>
+</DashboardPage>
