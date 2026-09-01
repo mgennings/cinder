@@ -9,6 +9,18 @@ const loadAuth = async (instantSession: boolean) => {
 	return import('./auth');
 };
 
+const malformedSuccess = () =>
+	new Response('{"id_token":', {
+		status: 200,
+		headers: { 'content-type': 'application/json' }
+	});
+
+const tokenSuccess = () =>
+	new Response(JSON.stringify({ id_token: 'fresh-id-token', refresh_token: 'refresh-token' }), {
+		status: 200,
+		headers: { 'content-type': 'application/json' }
+	});
+
 describe('the explicit local-review session', () => {
 	beforeEach(() => {
 		sessionStorage.clear();
@@ -41,5 +53,53 @@ describe('the explicit local-review session', () => {
 		await expect(sessionState()).resolves.toBe('none');
 		expect(signedIn()).toBe(false);
 		expect(request).not.toHaveBeenCalled();
+	});
+
+	it('fails closed when the review session answer is truncated', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(malformedSuccess());
+		const { sessionState, signedIn } = await loadAuth(true);
+
+		await expect(sessionState()).resolves.toBe('none');
+		expect(signedIn()).toBe(false);
+	});
+});
+
+describe('untrusted successful auth responses', () => {
+	beforeEach(() => {
+		sessionStorage.clear();
+		vi.restoreAllMocks();
+	});
+
+	afterEach(() => vi.unstubAllEnvs());
+
+	it('returns bounded failures for wrong-shaped and truncated token answers', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response('null', { status: 200 }))
+			.mockResolvedValueOnce(malformedSuccess());
+		const { completeSignIn, freshIdToken } = await loadAuth(false);
+
+		sessionStorage.setItem('cinder.pkce', 'verifier');
+		await expect(completeSignIn('code')).resolves.toEqual({ ok: false, reason: 'incomplete' });
+
+		sessionStorage.setItem(
+			'cinder.tokens',
+			JSON.stringify({ idToken: 'old-id-token', refreshToken: 'refresh-token' })
+		);
+		await expect(freshIdToken()).resolves.toBeNull();
+	});
+
+	it('fails closed for every malformed account API answer', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+			String(input).includes('/oauth2/token') ? tokenSuccess() : malformedSuccess()
+		);
+		const { entitlement, startCheckout, deleteAccount } = await loadAuth(false);
+		sessionStorage.setItem(
+			'cinder.tokens',
+			JSON.stringify({ idToken: 'old-id-token', refreshToken: 'refresh-token' })
+		);
+
+		await expect(entitlement()).resolves.toEqual({ entitled: false, credits: 0 });
+		await expect(startCheckout()).resolves.toBeNull();
+		await expect(deleteAccount()).resolves.toBe(false);
 	});
 });

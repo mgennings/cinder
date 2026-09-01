@@ -261,17 +261,20 @@ export async function completeSignIn(code: string): Promise<SignInResult> {
 		// Cognito names the reason, and the name is worth keeping: `invalid_grant`
 		// on a second visit to the same callback URL is a completely different
 		// story from `invalid_client`, and only one of them is the person's doing.
-		let detail: string | undefined;
-		try {
-			detail = ((await res.json()) as { error?: string }).error;
-		} catch {
-			detail = `HTTP ${res.status}`;
-		}
+		const body = await readJsonObject(res);
+		const detail = typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`;
 		return { ok: false, reason: 'rejected', detail };
 	}
 
-	const body = (await res.json()) as { id_token?: string; refresh_token?: string };
-	if (!body.id_token || !body.refresh_token) return { ok: false, reason: 'incomplete' };
+	const body = await readJsonObject(res);
+	if (
+		typeof body?.id_token !== 'string' ||
+		!body.id_token ||
+		typeof body.refresh_token !== 'string' ||
+		!body.refresh_token
+	) {
+		return { ok: false, reason: 'incomplete' };
+	}
 
 	sessionStorage.setItem(
 		TOKENS_KEY,
@@ -324,6 +327,22 @@ async function reach(input: URL | string, init?: RequestInit): Promise<Response 
 	}
 }
 
+type JsonObject = Record<string, unknown>;
+
+// A 2xx response is still untrusted input. Proxies can truncate a body and a
+// service can answer valid JSON with the wrong shape; neither gets to escape
+// into a page lifecycle as an unhandled rejection.
+async function readJsonObject(res: Response): Promise<JsonObject | null> {
+	try {
+		const body: unknown = await res.json();
+		return body !== null && typeof body === 'object' && !Array.isArray(body)
+			? (body as JsonObject)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 // Local review can ask the local identity server for a signed session without
 // crossing Apple or Google. The server owns the switch and the credential: this
 // flag can only ask, never mint. Production has no matching endpoint.
@@ -333,8 +352,15 @@ async function instantDevSession(): Promise<Tokens | null> {
 	const res = await reach(`${API_BASE}/dev/session`, { method: 'POST' });
 	if (!res?.ok) return null;
 
-	const body = (await res.json()) as { id_token?: string; refresh_token?: string };
-	if (!body.id_token || !body.refresh_token) return null;
+	const body = await readJsonObject(res);
+	if (
+		typeof body?.id_token !== 'string' ||
+		!body.id_token ||
+		typeof body.refresh_token !== 'string' ||
+		!body.refresh_token
+	) {
+		return null;
+	}
 
 	const tokens = { idToken: body.id_token, refreshToken: body.refresh_token };
 	sessionStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
@@ -367,8 +393,8 @@ export async function freshIdToken(): Promise<string | null> {
 		return null;
 	}
 
-	const body = (await res.json()) as { id_token?: string };
-	if (!body.id_token) return null;
+	const body = await readJsonObject(res);
+	if (typeof body?.id_token !== 'string' || !body.id_token) return null;
 	sessionStorage.setItem(TOKENS_KEY, JSON.stringify({ ...tokens, idToken: body.id_token }));
 	return body.id_token;
 }
@@ -415,8 +441,12 @@ export async function entitlement(): Promise<Entitlement> {
 	});
 	if (!res || !res.ok) return none;
 
-	const body = (await res.json()) as { entitled?: boolean; credits?: number };
-	const credits = Number.isFinite(body.credits) ? Math.max(0, Math.trunc(body.credits!)) : 0;
+	const body = await readJsonObject(res);
+	if (!body) return none;
+	const credits =
+		typeof body.credits === 'number' && Number.isFinite(body.credits)
+			? Math.max(0, Math.trunc(body.credits))
+			: 0;
 	// `entitled` is the server's own answer, not a comparison recomputed here:
 	// one place decides what a balance means and it is the place that holds it.
 	return { entitled: body.entitled === true, credits };
@@ -444,8 +474,8 @@ export async function startCheckout(): Promise<string | null> {
 	// Unreachable reads as a refusal here, which is the safe direction: the
 	// caller says nothing was charged, and nothing was.
 	if (!res || !res.ok) return null;
-	const body = (await res.json()) as { url?: string | null };
-	return typeof body.url === 'string' ? body.url : null;
+	const body = await readJsonObject(res);
+	return typeof body?.url === 'string' ? body.url : null;
 }
 
 // Sign out: revoke the refresh token at Cognito, then forget everything here.
@@ -489,7 +519,8 @@ export async function deleteAccount(): Promise<boolean> {
 	// is still there, on the one screen where being wrong is unrecoverable.
 	if (!res) return false;
 
-	const deleted = res.ok && ((await res.json()) as { deleted?: boolean }).deleted === true;
+	const body = res.ok ? await readJsonObject(res) : null;
+	const deleted = body?.deleted === true;
 	if (deleted) {
 		sessionStorage.removeItem(TOKENS_KEY);
 		sessionStorage.removeItem(VERIFIER_KEY);
