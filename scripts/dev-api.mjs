@@ -36,7 +36,16 @@ const HOST = process.env.DEV_API_HOST || '127.0.0.1';
 process.env.CAPABILITY_SECRET = process.env.CAPABILITY_SECRET || 'dev-capability-secret';
 const DEV_STATUS_SECRET = 'dev-status-secret-separate-from-capability-grants';
 
-const ORIGIN = `http://${HOST}:${PORT}`;
+// Phone review needs the ADVERTISED origin to differ from the bound one. A
+// presigned URL is handed to the browser, so it has to name an address that
+// browser can actually reach: on this Mac that is 127.0.0.1, but on Matt's
+// iPhone over the tailnet it is the tailnet name, and 127.0.0.1 there is the
+// phone itself. Worse, the app's CSP `connect-src` is derived from
+// VITE_API_BASE, so a mismatched presign origin is refused by the browser
+// before any request leaves — which surfaces as "the connection dropped"
+// rather than as a configuration problem. Bind with DEV_API_HOST=0.0.0.0 and
+// advertise with DEV_API_PUBLIC_ORIGIN=https://<tailnet-name>:4000.
+const ORIGIN = process.env.DEV_API_PUBLIC_ORIGIN || `http://${HOST}:${PORT}`;
 process.env.TABLE_NAME = process.env.TABLE_NAME || 'blip-notes';
 
 const raw = new DynamoDBClient({
