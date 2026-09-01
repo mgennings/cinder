@@ -2,7 +2,7 @@
 // Ctrl-C tears the whole stack down, so a review cannot leave stale servers
 // occupying ports and silently serving yesterday's code.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createConnection, createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -12,11 +12,35 @@ const HOST = '127.0.0.1';
 const REVIEW_PORTS = [8000, 4000, 4100, 5190];
 const children = [];
 let stopping = false;
+const phone = process.argv.includes('--phone');
 
 if (process.argv.includes('--help')) {
-	console.log('Usage: pnpm review:local');
-	console.log('Starts DynamoDB Local, both local APIs, and the review web app.');
+	console.log('Usage: pnpm review:local | pnpm dev:phone');
+	console.log('Starts DynamoDB Local, both local APIs, and the review web app. Phone mode advertises secure Tailscale origins.');
 	process.exit(0);
+}
+
+function phoneHost() {
+	if (process.env.CINDER_PHONE_HOST) return process.env.CINDER_PHONE_HOST.replace(/\.$/, '');
+	const status = JSON.parse(execFileSync('tailscale', ['status', '--json'], { encoding: 'utf8' }));
+	const host = status?.Self?.DNSName?.replace(/\.$/, '');
+	if (!host) throw new Error('Tailscale did not report this device\'s tailnet hostname');
+	return host;
+}
+
+function publishPhonePorts(host) {
+	for (const port of [4000, 4100, 5190]) {
+		execFileSync(
+			'tailscale',
+			['serve', '--bg', `--https=${port}`, `http://${HOST}:${port}`],
+			{ stdio: 'inherit' }
+		);
+	}
+	return {
+		api: `https://${host}:4000`,
+		identity: `https://${host}:4100`,
+		web: `https://${host}:5190`
+	};
 }
 
 /** Refuse to shadow another local stack or stop a process this command did not start. */
@@ -87,29 +111,42 @@ process.on('SIGTERM', () => shutdown(0));
 
 try {
 	await Promise.all(REVIEW_PORTS.map(assertPortAvailable));
+	const advertisedPhoneHost = phone ? phoneHost() : '';
+	const origins = phone
+		? publishPhonePorts(advertisedPhoneHost)
+		: {
+				api: `http://${HOST}:4000`,
+				identity: `http://${HOST}:4100`,
+				web: `http://${HOST}:5190`
+			};
 
 	start('DynamoDB Local', 'bash', ['./scripts/dynamodb-local.sh']);
 	await waitForPort(8000);
 
-	start('Cinder API', 'node', ['./scripts/dev-api.mjs']);
+	start('Cinder API', 'node', ['./scripts/dev-api.mjs'], {
+		DEV_API_PUBLIC_ORIGIN: origins.api
+	});
 	await waitForPort(4000);
 
 	start('Cinder identity', 'node', ['./scripts/dev-identity.mjs'], {
 		CINDER_DEV_ENTITLEMENT_BYPASS: '1',
-		DEV_WEB_ORIGIN: `http://${HOST}:5190`
+		DEV_IDENTITY_PUBLIC_ORIGIN: origins.identity,
+		DEV_WEB_ORIGIN: origins.web
 	});
 	await waitForPort(4100);
 
 	start('Cinder web', 'pnpm', ['dev', '--host', HOST, '--port', '5190', '--strictPort'], {
-		VITE_API_BASE: `http://${HOST}:4000`,
-		VITE_IDENTITY_API_BASE: `http://${HOST}:4100`,
-		VITE_IDENTITY_HOSTED_UI: `http://${HOST}:4100`,
+		CINDER_PHONE_HOST: advertisedPhoneHost,
+		VITE_API_BASE: origins.api,
+		VITE_VIDEO_REVIEW_DEFAULT: '1',
+		VITE_IDENTITY_API_BASE: origins.identity,
+		VITE_IDENTITY_HOSTED_UI: origins.identity,
 		VITE_IDENTITY_CLIENT_ID: 'dev-cinder-client'
 	});
 	await waitForPort(5190);
 
-	console.log('\nLocal review is ready:');
-	console.log(`  http://${HOST}:5190/#video=on`);
+	console.log(`\n${phone ? 'Phone' : 'Local'} review is ready:`);
+	console.log(`  ${origins.web}/`);
 	console.log('Sign in through the normal account journey. Paid capabilities mint without credits.');
 	console.log('Press Ctrl-C to stop the complete stack.\n');
 } catch (error) {

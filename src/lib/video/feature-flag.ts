@@ -10,6 +10,7 @@ const VIDEO_SESSION_KEY = 'cinder.video-review';
  */
 export function videoEnabledForSession(): boolean {
 	if (typeof window === 'undefined') return false;
+	if (import.meta.env.VITE_VIDEO_REVIEW_DEFAULT === '1') return true;
 
 	const captured = new URLSearchParams(location.hash.slice(1)).get('video') === 'on';
 	if (captured) {

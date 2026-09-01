@@ -8,8 +8,16 @@ import { videoEnabledForSession } from './feature-flag';
 
 describe('video review feature flag', () => {
 	beforeEach(() => {
+		vi.unstubAllEnvs();
 		sessionStorage.clear();
 		history.replaceState(null, '', '/');
+	});
+
+	it('shows video by default only when the review build says so', () => {
+		vi.stubEnv('VITE_VIDEO_REVIEW_DEFAULT', '1');
+
+		expect(videoEnabledForSession()).toBe(true);
+		expect(sessionStorage.getItem('cinder.video-review')).toBeNull();
 	});
 
 	it('keeps video hidden in an ordinary browser session', () => {
